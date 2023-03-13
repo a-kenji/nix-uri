@@ -18,7 +18,7 @@ jobs:
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v17
+      - uses: cachix/install-nix-action@v20
       - run: |
           nix build || nix build --substituters 'https://cache.nixos.org' --extra-substituters ''
 
@@ -31,7 +31,7 @@ jobs:
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v17
+      - uses: cachix/install-nix-action@v20
       - run: nix flake check
 
   deny:
@@ -43,5 +43,5 @@ jobs:
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v17
+      - uses: cachix/install-nix-action@v20
       - run: nix develop .#ciShell --command cargo deny check 
