@@ -28,7 +28,7 @@ jobs:
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v20
+      - uses: cachix/install-nix-action@v23
       - run: nix develop .#fmtShell --command treefmt --fail-on-change
       ## nix flake check still fails on IFD
       #- run: nix flake check --print-build-logs --show-trace
@@ -41,5 +41,5 @@ jobs:
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
-      - uses: cachix/install-nix-action@v20
+      - uses: cachix/install-nix-action@v23
       - run: nix develop --profile devShell
