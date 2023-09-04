@@ -16,7 +16,7 @@
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
-    character::complete::alphanumeric0,
+    character::complete::{alphanumeric0, anychar},
     combinator::{opt, rest},
     multi::many_m_n,
     sequence::preceded,
@@ -64,12 +64,14 @@ fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefAttributes>> {
     use nom::sequence::separated_pair;
 
     // This is the inverse of the general control flow
-    let (input, param_tag) = opt(take_until("?"))(input)?;
+    let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
 
     println!("Input: {input}");
-    println!("flake_type: {param_tag:?}");
+    println!("flake_type: {maybe_flake_type:?}");
 
-    if param_tag.is_some() {
+    if let Some(flake_type) = maybe_flake_type {
+        // discard leading "?"
+        let (input, _) = anychar(input)?;
         let (input, param_values) = many_m_n(
             0,
             11,
@@ -81,7 +83,8 @@ fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefAttributes>> {
 
         let mut attrs = FlakeRefAttributes::default();
         for (param, value) in param_values {
-            // Can start with "&"
+            // param can start with "&"
+            // TODO: actual error handling instead of unwrapping
             match param.parse().unwrap() {
                 FlakeRefParam::Dir => {
                     attrs.dir(Some(value.into()));
@@ -91,7 +94,7 @@ fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefAttributes>> {
                 }
             }
         }
-        Ok((input, Some(attrs)))
+        Ok((flake_type, Some(attrs)))
     } else {
         Ok((input, None))
     }
@@ -104,8 +107,6 @@ fn parse_nix_uri(input: &str) -> IResult<&str, FlakeRef> {
     let mut flake_ref = FlakeRef::default();
     let (input, flake_ref_type) = FlakeRefType::parse_type(input)?;
     flake_ref.r#type(flake_ref_type);
-    // TODO: parse params before type information
-    let (input, attrs) = parse_params(input)?;
     if let Some(attrs) = attrs {
         flake_ref.attrs(attrs);
     }
@@ -229,7 +230,7 @@ impl FlakeRefType {
             }
             "path" => {
                 let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                Ok((input, flake_ref_type))
+                Ok(("", flake_ref_type))
             }
 
             _ => todo!("Error"),
