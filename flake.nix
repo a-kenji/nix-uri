@@ -1,5 +1,5 @@
 {
-  description = "flk - a tui for your flakes.";
+  description = "nix-uri - parse the nix-uri scheme.";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
@@ -60,12 +60,8 @@
       cargo = rustToolchainTOML;
 
       buildInputs = [
-        pkgs.installShellFiles
-        pkgs.sqlite
-        pkgs.openssl
       ];
       nativeBuildInputs = [
-        pkgs.pkg-config
       ];
       devInputs = [
         rustToolchainDevTOML
@@ -90,13 +86,6 @@
 
         # snapshot testing
         pkgs.cargo-insta
-
-        pkgs.openssl # for `cargo xtask`
-
-        # database cli
-        pkgs.diesel-cli
-        # tokio tui
-        pkgs.tokio-console
 
         pkgs.reuse
 
@@ -157,10 +146,6 @@
       commonArgs = {
         inherit src buildInputs nativeBuildInputs stdenv version name;
         pname = name;
-        # src = pkgs.lib.cleanSourceWith {
-        #   src = craneLib.path ./.; # The original, unfiltered source
-        #   filter = migrationsOrCargo;
-        # };
       };
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchainTOML;
       # Build *just* the cargo dependencies, so we can reuse
@@ -172,14 +157,8 @@
           buildInputs = shellInputs ++ fmtInputs ++ devInputs ++ buildInputs ++ nativeBuildInputs;
           inherit name;
           FLK_LOG = "debug";
-          DATABASE_URL = "/tmp/flk/flk-database.db";
           RUST_BACKTRACE = true;
-          # RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold -C target-cpu=native";
           RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold";
-          # RUSTFLAGS = "-C linker=clang -C link-arg=--ld-path=${pkgs.mold}/bin/mold -C link-arg=-Wl,--warn-unresolved-symbols -C debuginfo=1";
-          shellHook = ''
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.lib.makeLibraryPath buildInputs}"
-          '';
         };
         editorConfigShell = pkgs.mkShell {
           buildInputs = editorConfigInputs;
@@ -228,10 +207,6 @@
               name
               cargoArtifacts
               stdenv
-              # cargoLock
-
-              # postInstall
-
               ;
           });
       };

@@ -12,14 +12,16 @@
 //!
 //! The uri syntax representation is parsed by this library:
 //! example `github:a-kenji/nala`
-use nom::branch::alt;
 // use nom::complete::tag;
-use nom::bytes::complete::{tag, take_until};
-use nom::character::complete::alphanumeric0;
-use nom::combinator::{opt, rest};
-use nom::multi::many_m_n;
-use nom::sequence::preceded;
-use nom::IResult;
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    character::complete::alphanumeric0,
+    combinator::{opt, rest},
+    multi::many_m_n,
+    sequence::preceded,
+    IResult,
+};
 use serde::{Deserialize, Serialize};
 
 /// The General Flake Ref Schema
