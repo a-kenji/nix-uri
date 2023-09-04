@@ -39,7 +39,7 @@
       RUST_TOOLCHAIN = src + "/rust-toolchain.toml";
       RUSTFMT_TOOLCHAIN = src + "/.rustfmt-toolchain.toml";
       cargoTOML = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
-      inherit (cargoTOML.workspace.package) version;
+      inherit (cargoTOML.package) version;
       # rustToolchainTOML = rustPkgs.rust-bin.fromRustupToolchainFile RUST_TOOLCHAIN;
       rustToolchainTOML = rustPkgs.rust-bin.stable.latest.minimal;
       rustFmtToolchainTOML = rustPkgs.rust-bin.fromRustupToolchainFile RUSTFMT_TOOLCHAIN;
@@ -47,7 +47,6 @@
         extensions = ["clippy" "rust-analysis" "rust-docs"];
         targets = [];
       };
-      buildAndTestSubdir = "./crate/flk";
       gitDate = "${builtins.substring 0 4 self.lastModifiedDate}-${builtins.substring 4 2 self.lastModifiedDate}-${builtins.substring 6 2 self.lastModifiedDate}";
       gitRev = self.shortRev or "Not committed yet.";
       cargoLock = {
@@ -154,19 +153,6 @@
         pkgs.actionlint
       ];
       targetDir = "target/${pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform}/release";
-      assetDir = "crate/flk/${targetDir}/assets";
-      postInstall = ''
-        # install the manpage
-        installManPage ${assetDir}/${name}.1
-        # explicit behavior
-        cp ${assetDir}/${name}.bash ./completions.bash
-        installShellCompletion --bash --name ${name}.bash ./completions.bash
-        cp ${assetDir}/${name}.fish ./completions.fish
-        installShellCompletion --fish --name ${name}.fish ./completions.fish
-        cp ${assetDir}/_${name} ./completions.zsh
-        installShellCompletion --zsh --name _${name} ./completions.zsh
-      '';
-      ASSET_DIR = "./target/assets";
       # Common arguments for the crane build
       commonArgs = {
         inherit src buildInputs nativeBuildInputs stdenv version name;
@@ -184,7 +170,7 @@
       devShells = {
         default = (pkgs.mkShell.override {inherit stdenv;}) {
           buildInputs = shellInputs ++ fmtInputs ++ devInputs ++ buildInputs ++ nativeBuildInputs;
-          inherit name ASSET_DIR;
+          inherit name;
           FLK_LOG = "debug";
           DATABASE_URL = "/tmp/flk/flk-database.db";
           RUST_BACKTRACE = true;
@@ -227,8 +213,6 @@
               nativeBuildInputs
               buildInputs
               cargoLock
-              buildAndTestSubdir
-              postInstall
               ;
           };
         crane = craneLib.buildPackage (commonArgs
@@ -244,11 +228,10 @@
               name
               cargoArtifacts
               stdenv
-              buildAndTestSubdir
               # cargoLock
-              
+
               # postInstall
-              
+
               ;
           });
       };
