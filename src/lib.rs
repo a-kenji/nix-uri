@@ -92,6 +92,7 @@ fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefAttributes>> {
                 FlakeRefParam::NarHash => {
                     attrs.nar_hash(Some(value.into()));
                 }
+                FlakeRefParam::Host => todo!(),
             }
         }
         Ok((flake_type, Some(attrs)))
@@ -141,12 +142,14 @@ impl FlakeRef {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
-struct FlakeRefAttributes {
+pub struct FlakeRefAttributes {
     dir: Option<String>,
     #[serde(rename = "narHash")]
     nar_hash: Option<String>,
     rev: Option<String>,
     r#ref: Option<String>,
+    // Only available to certain types
+    host: Option<String>,
     // Not available to user
     #[serde(rename = "revCount")]
     rev_count: Option<String>,
@@ -170,6 +173,7 @@ impl FlakeRefAttributes {
 pub enum FlakeRefParam {
     Dir,
     NarHash,
+    Host,
 }
 
 impl std::str::FromStr for FlakeRefParam {
@@ -180,6 +184,7 @@ impl std::str::FromStr for FlakeRefParam {
         match s {
             "dir" | "&dir" => Ok(Dir),
             "nar_hash" | "&nar_hash" => Ok(NarHash),
+            "host" | "&host" => Ok(Host),
             _ => Err(()),
         }
     }

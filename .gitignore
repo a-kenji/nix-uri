@@ -5,4 +5,5 @@
 
 # rust support
 /target
+tarpaulin-report.html
 
