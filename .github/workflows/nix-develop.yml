@@ -24,7 +24,7 @@ jobs:
     name: "nix check develop"
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
@@ -37,7 +37,7 @@ jobs:
     name: "nix develop"
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           # Nix Flakes doesn't work on shallow clones
           fetch-depth: 0
