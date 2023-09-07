@@ -1,6 +1,6 @@
 # nix-uri
-[![Crates](https://img.shields.io/crates/v/rust-toolchain-manifest?style=flat-square)](https://crates.io/crates/nix-uri)
-[![Documentation](https://img.shields.io/badge/callee-documentation-fc0060?style=flat-square)](https://docs.rs/nix-uri)
+[![Crates](https://img.shields.io/crates/v/nix-uri?style=flat-square)](https://crates.io/crates/nix-uri)
+[![Documentation](https://img.shields.io/badge/nix_uri-documentation-fc0060?style=flat-square)](https://docs.rs/nix-uri)
 
 
 <!-- cargo-rdme start -->
