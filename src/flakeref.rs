@@ -18,7 +18,7 @@ use crate::{
 pub struct FlakeRef {
     r#type: FlakeRefType,
     flake: Option<bool>,
-    params: FlakeRefParameters,
+    pub params: FlakeRefParameters,
 }
 
 impl FlakeRef {
@@ -35,7 +35,13 @@ impl FlakeRef {
 
 impl Display for FlakeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.r#type)
+        // TODO: convert into Option
+        let params = self.params.to_string();
+        if params.is_empty() {
+            write!(f, "{}", self.r#type)
+        } else {
+            write!(f, "{}?{params}", self.r#type)
+        }
     }
 }
 
@@ -58,6 +64,40 @@ pub struct FlakeRefParameters {
     // Not available to user
     #[serde(rename = "lastModified")]
     last_modified: Option<String>,
+}
+
+// TODO: convert into macro!
+// or have params in a vec of tuples? with param and option<string>
+impl Display for FlakeRefParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res = String::new();
+        if let Some(dir) = &self.dir {
+            res.push_str("dir=");
+            res.push_str(dir);
+        }
+        if let Some(branch) = &self.branch {
+            if !res.is_empty() {
+                res.push('?');
+            }
+            res.push_str("branch=");
+            res.push_str(branch);
+        }
+        if let Some(host) = &self.host {
+            if !res.is_empty() {
+                res.push('?');
+            }
+            res.push_str("host=");
+            res.push_str(host);
+        }
+        if let Some(r#ref) = &self.r#ref {
+            if !res.is_empty() {
+                res.push('?');
+            }
+            res.push_str("ref=");
+            res.push_str(r#ref);
+        }
+        write!(f, "{res}")
+    }
 }
 
 impl FlakeRefParameters {
@@ -205,29 +245,54 @@ pub enum FlakeRefType {
 impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FlakeRefType::File { url } => todo!(),
+            FlakeRefType::File { url } => write!(f, "file:{url}"),
             FlakeRefType::Git { url, r#type } => todo!(),
             FlakeRefType::GitHub {
                 owner,
                 repo,
                 ref_or_rev,
             } => {
-                write!(f, "github:{owner}/{repo}")
+                if let Some(ref_or_rev) = ref_or_rev {
+                    write!(f, "github:{owner}/{repo}/{ref_or_rev}")
+                } else {
+                    write!(f, "github:{owner}/{repo}")
+                }
             }
             FlakeRefType::GitLab {
                 owner,
                 repo,
                 ref_or_rev,
-            } => todo!(),
-            FlakeRefType::Indirect { id, ref_or_rev } => todo!(),
+            } => {
+                if let Some(ref_or_rev) = ref_or_rev {
+                    write!(f, "gitlab:{owner}/{repo}/{ref_or_rev}")
+                } else {
+                    write!(f, "gitlab:{owner}/{repo}")
+                }
+            }
+            FlakeRefType::Indirect { id, ref_or_rev } => {
+                if let Some(ref_or_rev) = ref_or_rev {
+                    write!(f, "{id}/{ref_or_rev}")
+                } else {
+                    write!(f, "{id}")
+                }
+            }
             FlakeRefType::Mercurial { url, r#type } => todo!(),
             FlakeRefType::Path { path } => todo!(),
             FlakeRefType::Sourcehut {
                 owner,
                 repo,
                 ref_or_rev,
-            } => todo!(),
-            FlakeRefType::Tarball { url, r#type } => todo!(),
+            } => {
+                if let Some(ref_or_rev) = ref_or_rev {
+                    write!(f, "sourcehut:{owner}/{repo}/{ref_or_rev}")
+                } else {
+                    write!(f, "sourcehut:{owner}/{repo}")
+                }
+            }
+            // TODO: alternate tarball representation
+            FlakeRefType::Tarball { url, r#type } => {
+                write!(f, "file:{url}")
+            }
             FlakeRefType::None => todo!(),
         }
     }
@@ -274,62 +339,91 @@ impl FlakeRefType {
     pub fn parse_type(input: &str) -> IResult<&str, FlakeRefType> {
         use nom::sequence::separated_pair;
         // TODO: for some types the : is optional!
-        let (_, (flake_ref_type, input)) = separated_pair(take_until(":"), tag(":"), rest)(input)?;
-        match flake_ref_type {
-            "github" => {
-                let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let flake_ref_type = FlakeRefType::GitHub {
-                    owner: owner_and_repo_or_ref[0].into(),
-                    repo: owner_and_repo_or_ref[1].into(),
-                    ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
-                };
-                Ok((input, flake_ref_type))
-            }
-            "gitlab" => {
-                let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let flake_ref_type = FlakeRefType::GitLab {
-                    owner: owner_and_repo_or_ref[0].into(),
-                    repo: owner_and_repo_or_ref[1].into(),
-                    ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
-                };
-                Ok((input, flake_ref_type))
-            }
-            "sourcehut" => {
-                let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let flake_ref_type = FlakeRefType::Sourcehut {
-                    owner: owner_and_repo_or_ref[0].into(),
-                    repo: owner_and_repo_or_ref[1].into(),
-                    ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
-                };
-                Ok((input, flake_ref_type))
-            }
-            "path" => {
-                // TODO: check if path is an absolute path, if not error
-                let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                Ok(("", flake_ref_type))
-            }
+        let (_, maybe_explicit_type) = opt(separated_pair(take_until(":"), tag(":"), rest))(input)?;
+        // println!("flake_ref_type: {flake_ref_type}, input: {input}");
+        // let (_, (flake_ref_type, input)) =
+        if let Some((flake_ref_type, input)) = maybe_explicit_type {
+            match flake_ref_type {
+                "github" => {
+                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let flake_ref_type = FlakeRefType::GitHub {
+                        owner: owner_and_repo_or_ref[0].into(),
+                        repo: owner_and_repo_or_ref[1].into(),
+                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
+                    };
+                    Ok((input, flake_ref_type))
+                }
+                "gitlab" => {
+                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let flake_ref_type = FlakeRefType::GitLab {
+                        owner: owner_and_repo_or_ref[0].into(),
+                        repo: owner_and_repo_or_ref[1].into(),
+                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
+                    };
+                    Ok((input, flake_ref_type))
+                }
+                "sourcehut" => {
+                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let flake_ref_type = FlakeRefType::Sourcehut {
+                        owner: owner_and_repo_or_ref[0].into(),
+                        repo: owner_and_repo_or_ref[1].into(),
+                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
+                    };
+                    Ok((input, flake_ref_type))
+                }
+                "path" => {
+                    // TODO: check if path is an absolute path, if not error
+                    let flake_ref_type = FlakeRefType::Path { path: input.into() };
+                    Ok(("", flake_ref_type))
+                }
 
-            _ => {
-                if flake_ref_type.starts_with("git+") {
-                    let url_type = parse_url_type(flake_ref_type).unwrap();
-                    let (input, _tag) = opt(tag("//"))(input)?;
-                    let flake_ref_type = FlakeRefType::Git {
-                        url: input.into(),
-                        r#type: url_type,
-                    };
-                    Ok(("", flake_ref_type))
-                } else if flake_ref_type.starts_with("hg+") {
-                    let url_type = parse_url_type(flake_ref_type).unwrap();
-                    let (input, _tag) = tag("//")(input)?;
-                    let flake_ref_type = FlakeRefType::Mercurial {
-                        url: input.into(),
-                        r#type: url_type,
-                    };
-                    Ok(("", flake_ref_type))
-                } else {
-                    todo!("Error");
+                _ => {
+                    if flake_ref_type.starts_with("git+") {
+                        let url_type = parse_url_type(flake_ref_type).unwrap();
+                        let (input, _tag) = opt(tag("//"))(input)?;
+                        let flake_ref_type = FlakeRefType::Git {
+                            url: input.into(),
+                            r#type: url_type,
+                        };
+                        Ok(("", flake_ref_type))
+                    } else if flake_ref_type.starts_with("hg+") {
+                        let url_type = parse_url_type(flake_ref_type).unwrap();
+                        let (input, _tag) = tag("//")(input)?;
+                        let flake_ref_type = FlakeRefType::Mercurial {
+                            url: input.into(),
+                            r#type: url_type,
+                        };
+                        Ok(("", flake_ref_type))
+                    } else {
+                        todo!("Error");
+                    }
                 }
             }
+        } else {
+            // Implicit types can be paths, indirect flake_refs, or uri's.
+            if input.starts_with('/') || input == "." {
+                let flake_ref_type = FlakeRefType::Path { path: input.into() };
+                return Ok(("", flake_ref_type));
+            }
+            //TODO: parse uri
+            let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+            if !owner_and_repo_or_ref.is_empty() {
+                let flake_ref_type = FlakeRefType::Indirect {
+                    id: owner_and_repo_or_ref[0].into(),
+                    ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
+                };
+                Ok(("", flake_ref_type))
+            } else {
+                Ok((
+                    "",
+                    FlakeRefType::Indirect {
+                        id: input.to_owned(),
+                        ref_or_rev: None,
+                    },
+                ))
+            }
+
+            // todo!("Implicit Type not yet implemented.");
         }
     }
 }
@@ -875,30 +969,85 @@ mod tests {
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
     }
+    #[test]
+    fn display_simple_sourcehut_uri_ref_or_rev() {
+        let expected = "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de";
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::Sourcehut {
+                owner: "~misterio".to_owned(),
+                repo: "nix-colors".to_owned(),
+                ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
+            })
+            .to_string();
+        assert_eq!(expected, flake_ref);
+    }
+    #[test]
+    fn display_simple_sourcehut_uri_ref_or_rev_host_param() {
+        let expected =
+            "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de?host=hg.sr.ht";
+        let mut params = FlakeRefParameters::default();
+        params.set_host(Some("hg.sr.ht".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::Sourcehut {
+                owner: "~misterio".to_owned(),
+                repo: "nix-colors".to_owned(),
+                ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
+            })
+            .params(params)
+            .to_string();
+        assert_eq!(expected, flake_ref);
+    }
 
-    // #[test]
-    // fn parse_simple_path_uri_indirect_local_without_prefix() {
-    //     let uri = ".";
-    //     let expected = FlakeRef::default()
-    //         .r#type(FlakeRefType::Path {
-    //             path: ".".to_owned(),
-    //         })
-    //         .clone();
-    //     let parsed: FlakeRef = uri.try_into().unwrap();
-    //     assert_eq!(expected, parsed);
-    // }
-    //
-    // #[test]
-    // fn parse_simple_path_uri_indirect_local_without_prefix() {
-    //     let uri = ".";
-    //     let expected = FlakeRef::default()
-    //         .r#type(FlakeRefType::Path {
-    //             path: ".".to_owned(),
-    //         })
-    //         .clone();
-    //     let parsed: FlakeRef = uri.try_into().unwrap();
-    //     assert_eq!(expected, parsed);
-    // }
+    #[test]
+    fn parse_simple_path_uri_indirect_absolute_without_prefix() {
+        let uri = "/home/kenji/git";
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::Path {
+                path: "/home/kenji/git".to_owned(),
+            })
+            .clone();
+        let parsed: FlakeRef = uri.try_into().unwrap();
+        assert_eq!(expected, parsed);
+    }
+    #[test]
+    fn parse_simple_path_uri_indirect_absolute_without_prefix_with_params() {
+        let uri = "/home/kenji/git?dir=dev";
+        let mut params = FlakeRefParameters::default();
+        params.set_dir(Some("dev".into()));
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::Path {
+                path: "/home/kenji/git".to_owned(),
+            })
+            .params(params)
+            .clone();
+        let parsed: FlakeRef = uri.try_into().unwrap();
+        assert_eq!(expected, parsed);
+    }
+
+    #[test]
+    fn parse_simple_path_uri_indirect_local_without_prefix() {
+        let uri = ".";
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::Path {
+                path: ".".to_owned(),
+            })
+            .clone();
+        let parsed: FlakeRef = uri.try_into().unwrap();
+        assert_eq!(expected, parsed);
+    }
+
+    #[test]
+    fn parse_simple_indirect() {
+        let uri = "nixos/nixpkgs";
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::Indirect {
+                id: "nixos/nixpkgs".to_owned(),
+                ref_or_rev: None,
+            })
+            .clone();
+        let parsed: FlakeRef = uri.try_into().unwrap();
+        assert_eq!(expected, parsed);
+    }
 
     // TODO: indirect uris
     // #[test]
