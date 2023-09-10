@@ -22,6 +22,20 @@ pub struct FlakeRef {
 }
 
 impl FlakeRef {
+    pub fn new(r#type: FlakeRefType) -> Self {
+        Self {
+            r#type,
+            ..Self::default()
+        }
+    }
+
+    pub fn from<S>(input: S) -> Result<Self, NixUriError>
+    where
+        S: AsRef<str>,
+    {
+        TryInto::<Self>::try_into(input.as_ref())
+    }
+
     pub fn r#type(&mut self, r#type: FlakeRefType) -> &mut Self {
         self.r#type = r#type;
         self
