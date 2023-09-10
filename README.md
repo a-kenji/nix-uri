@@ -55,4 +55,4 @@ The uri syntax representation is parsed by this library:
 
 # Note 
 
-This library is still a WIP.
+This library is still a WIP and not all cases are covered yet.
