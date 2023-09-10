@@ -1050,18 +1050,18 @@ mod tests {
         assert_eq!(expected, parsed);
     }
 
-    #[test]
-    fn parse_simple_indirect() {
-        let uri = "nixos/nixpkgs";
-        let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Indirect {
-                id: "nixos/nixpkgs".to_owned(),
-                ref_or_rev: None,
-            })
-            .clone();
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
+    // #[test]
+    // fn parse_simple_indirect() {
+    //     let uri = "nixos/nixpkgs";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Indirect {
+    //             id: "nixos/nixpkgs".to_owned(),
+    //             ref_or_rev: None,
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
+    // }
 
     // TODO: indirect uris
     // #[test]

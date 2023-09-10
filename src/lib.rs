@@ -25,13 +25,12 @@
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
 //!   let uri = "github:nixos/nixpkgs";
-//!   let expected = FlakeRef::default()
-//!                 .r#type(FlakeRefType::GitHub {
+//!   let expected = FlakeRef::new(
+//!                 FlakeRefType::GitHub {
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
-//!                 })
-//!                .clone();
+//!                 });
 //!      let parsed: FlakeRef = uri.try_into().unwrap();
 //!      assert_eq!(expected, parsed);
 //!   ```
@@ -42,8 +41,8 @@
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
 //!   let expected = "github:nixos/nixpkgs";
-//!   let uri = FlakeRef::default()
-//!                 .r#type(FlakeRefType::GitHub {
+//!   let uri = FlakeRef::new(
+//!                 FlakeRefType::GitHub {
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
