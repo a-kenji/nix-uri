@@ -352,7 +352,6 @@ impl FlakeRefType {
     /// and the unparsed input
     pub fn parse_type(input: &str) -> IResult<&str, FlakeRefType> {
         use nom::sequence::separated_pair;
-        // TODO: for some types the : is optional!
         let (_, maybe_explicit_type) = opt(separated_pair(take_until(":"), tag(":"), rest))(input)?;
         // println!("flake_ref_type: {flake_ref_type}, input: {input}");
         // let (_, (flake_ref_type, input)) =
