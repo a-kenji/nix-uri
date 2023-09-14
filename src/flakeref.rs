@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub struct FlakeRef {
-    r#type: FlakeRefType,
+    pub r#type: FlakeRefType,
     flake: Option<bool>,
     pub params: FlakeRefParameters,
 }
@@ -438,6 +438,24 @@ impl FlakeRefType {
 
             // todo!("Implicit Type not yet implemented.");
         }
+    }
+    pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
+        match self {
+            FlakeRefType::GitHub { ref_or_rev, .. }
+            | FlakeRefType::GitLab { ref_or_rev, .. }
+            | FlakeRefType::Indirect { ref_or_rev, .. }
+            | FlakeRefType::Sourcehut { ref_or_rev, .. } => {
+                *ref_or_rev = ref_or_rev_alt;
+            }
+            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            FlakeRefType::Mercurial { .. }
+            | FlakeRefType::Path { .. }
+            | FlakeRefType::Tarball { .. }
+            | FlakeRefType::File { .. }
+            | FlakeRefType::Git { .. }
+            | FlakeRefType::None => todo!(),
+        }
+        Ok(())
     }
 }
 
