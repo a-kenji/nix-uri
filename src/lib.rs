@@ -57,4 +57,5 @@ mod error;
 mod flakeref;
 mod parser;
 
+pub use error::*;
 pub use flakeref::*;
