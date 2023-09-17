@@ -57,15 +57,19 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
         for (param, value) in param_values {
             // param can start with "&"
             // TODO: actual error handling instead of unwrapping
-            match param.parse().unwrap() {
-                FlakeRefParam::Dir => params.set_dir(Some(value.into())),
-                FlakeRefParam::NarHash => params.set_nar_hash(Some(value.into())),
-                FlakeRefParam::Host => params.set_host(Some(value.into())),
-                FlakeRefParam::Ref => params.set_ref(Some(value.into())),
-                FlakeRefParam::Rev => params.set_rev(Some(value.into())),
-                FlakeRefParam::Branch => params.set_branch(Some(value.into())),
-                FlakeRefParam::Submodules => params.set_submodules(Some(value.into())),
-                FlakeRefParam::Shallow => params.set_shallow(Some(value.into())),
+            // TODO: allow check of the parameters
+            if let Ok(param) = param.parse() {
+                match param {
+                    FlakeRefParam::Dir => params.set_dir(Some(value.into())),
+                    FlakeRefParam::NarHash => params.set_nar_hash(Some(value.into())),
+                    FlakeRefParam::Host => params.set_host(Some(value.into())),
+                    FlakeRefParam::Ref => params.set_ref(Some(value.into())),
+                    FlakeRefParam::Rev => params.set_rev(Some(value.into())),
+                    FlakeRefParam::Branch => params.set_branch(Some(value.into())),
+                    FlakeRefParam::Submodules => params.set_submodules(Some(value.into())),
+                    FlakeRefParam::Shallow => params.set_shallow(Some(value.into())),
+                    FlakeRefParam::Arbitrary(param) => params.add_arbitrary((param, value.into())),
+                }
             }
         }
         Ok((flake_type, Some(params)))
@@ -77,8 +81,8 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
 pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
     let (input, params) = parse_params(input)?;
     let mut flake_ref = FlakeRef::default();
-    let (_input, flake_ref_type) = FlakeRefType::parse_type(input)?;
-    flake_ref.r#type(flake_ref_type?);
+    let flake_ref_type = FlakeRefType::parse_type(input)?;
+    flake_ref.r#type(flake_ref_type);
     if let Some(params) = params {
         flake_ref.params(params);
     }

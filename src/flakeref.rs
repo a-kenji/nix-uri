@@ -78,6 +78,9 @@ pub struct FlakeRefParameters {
     // Not available to user
     #[serde(rename = "lastModified")]
     last_modified: Option<String>,
+    /// Arbitrary uri parameters will be allowed during initial parsing
+    /// in case they should be checked for known types run `self.check()`
+    arbitrary: Vec<(String, String)>,
 }
 
 // TODO: convert into macro!
@@ -173,6 +176,9 @@ impl FlakeRefParameters {
     pub fn set_shallow(&mut self, shallow: Option<String>) {
         self.shallow = shallow;
     }
+    pub fn add_arbitrary(&mut self, arbitrary: (String, String)) {
+        self.arbitrary.push(arbitrary);
+    }
 }
 
 pub enum FlakeRefParam {
@@ -184,10 +190,11 @@ pub enum FlakeRefParam {
     Branch,
     Submodules,
     Shallow,
+    Arbitrary(String),
 }
 
 impl std::str::FromStr for FlakeRefParam {
-    type Err = ();
+    type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use FlakeRefParam::*;
@@ -200,7 +207,8 @@ impl std::str::FromStr for FlakeRefParam {
             "branch" | "&branch" => Ok(Branch),
             "submodules" | "&submodules" => Ok(Submodules),
             "shallow" | "&shallow" => Ok(Shallow),
-            _ => Err(()),
+            arbitrary => Ok(Arbitrary(arbitrary.into())),
+            // unknown => Err(NixUriError::UnknownUriParameter(unknown.into())),
         }
     }
 }
@@ -331,7 +339,7 @@ impl TryFrom<&str> for UrlType {
             "https" => Ok(Https),
             "ssh" => Ok(Ssh),
             "file" => Ok(File),
-            err => Err(NixUriError::UnknownUriType(err.into())),
+            err => Err(NixUriError::UnknownUrlType(err.into())),
         }
     }
 }
@@ -350,65 +358,111 @@ impl Display for UrlType {
 impl FlakeRefType {
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
-    pub fn parse_type(input: &str) -> IResult<&str, NixUriResult<FlakeRefType>> {
+    pub fn parse_type(input: &str) -> NixUriResult<FlakeRefType> {
         use nom::sequence::separated_pair;
-        let (_, maybe_explicit_type) = opt(separated_pair(take_until(":"), tag(":"), rest))(input)?;
-        // println!("flake_ref_type: {flake_ref_type}, input: {input}");
-        // let (_, (flake_ref_type, input)) =
+        let (_, maybe_explicit_type) = opt(separated_pair(
+            take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
+            tag(":"),
+            rest,
+        ))(input)?;
         if let Some((flake_ref_type, input)) = maybe_explicit_type {
             match flake_ref_type {
                 "github" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let owner =
+                        owner_and_repo_or_ref
+                            .first()
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "owner".into(),
+                            ))?;
+                    let repo =
+                        owner_and_repo_or_ref
+                            .get(1)
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "repo".into(),
+                            ))?;
                     let flake_ref_type = FlakeRefType::GitHub {
-                        owner: owner_and_repo_or_ref[0].into(),
-                        repo: owner_and_repo_or_ref[1].into(),
+                        owner: owner.to_string(),
+                        repo: repo.to_string(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, Ok(flake_ref_type)))
+                    Ok(flake_ref_type)
                 }
                 "gitlab" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let owner =
+                        owner_and_repo_or_ref
+                            .first()
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "owner".into(),
+                            ))?;
+                    let repo =
+                        owner_and_repo_or_ref
+                            .get(1)
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "repo".into(),
+                            ))?;
                     let flake_ref_type = FlakeRefType::GitLab {
-                        owner: owner_and_repo_or_ref[0].into(),
-                        repo: owner_and_repo_or_ref[1].into(),
+                        owner: owner.to_string(),
+                        repo: repo.to_string(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, Ok(flake_ref_type)))
+                    Ok(flake_ref_type)
                 }
                 "sourcehut" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let owner =
+                        owner_and_repo_or_ref
+                            .first()
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "owner".into(),
+                            ))?;
+                    let repo =
+                        owner_and_repo_or_ref
+                            .get(1)
+                            .ok_or(NixUriError::MissingTypeParameter(
+                                flake_ref_type.into(),
+                                "repo".into(),
+                            ))?;
                     let flake_ref_type = FlakeRefType::Sourcehut {
-                        owner: owner_and_repo_or_ref[0].into(),
-                        repo: owner_and_repo_or_ref[1].into(),
+                        owner: owner.to_string(),
+                        repo: repo.to_string(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, Ok(flake_ref_type)))
+                    Ok(flake_ref_type)
                 }
                 "path" => {
                     // TODO: check if path is an absolute path, if not error
                     let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                    Ok(("", Ok(flake_ref_type)))
+                    Ok(flake_ref_type)
                 }
 
                 _ => {
                     if flake_ref_type.starts_with("git+") {
-                        let url_type = parse_url_type(flake_ref_type).unwrap();
-                        let (input, _tag) = opt(tag("//"))(input)?;
+                        let url_type = parse_url_type(flake_ref_type)?;
+                        let (input, _tag) =
+                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
                         let flake_ref_type = FlakeRefType::Git {
                             url: input.into(),
                             r#type: url_type,
                         };
-                        Ok(("", Ok(flake_ref_type)))
+                        Ok(flake_ref_type)
                     } else if flake_ref_type.starts_with("hg+") {
-                        let url_type = parse_url_type(flake_ref_type).unwrap();
-                        let (input, _tag) = tag("//")(input)?;
+                        let url_type = parse_url_type(flake_ref_type)?;
+                        let (input, _tag) =
+                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
                         let flake_ref_type = FlakeRefType::Mercurial {
                             url: input.into(),
                             r#type: url_type,
                         };
-                        Ok(("", Ok(flake_ref_type)))
+                        Ok(flake_ref_type)
                     } else {
-                        Ok(("", Err(NixUriError::UnknownUriType(flake_ref_type.into()))))
+                        Err(NixUriError::UnknownUriType(flake_ref_type.into()))
                     }
                 }
             }
@@ -416,7 +470,7 @@ impl FlakeRefType {
             // Implicit types can be paths, indirect flake_refs, or uri's.
             if input.starts_with('/') || input == "." {
                 let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                return Ok(("", Ok(flake_ref_type)));
+                return Ok(flake_ref_type);
             }
             //TODO: parse uri
             let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
@@ -425,15 +479,12 @@ impl FlakeRefType {
                     id: owner_and_repo_or_ref[0].into(),
                     ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
                 };
-                Ok(("", Ok(flake_ref_type)))
+                Ok(flake_ref_type)
             } else {
-                Ok((
-                    "",
-                    Ok(FlakeRefType::Indirect {
-                        id: input.to_owned(),
-                        ref_or_rev: None,
-                    }),
-                ))
+                Ok(FlakeRefType::Indirect {
+                    id: input.to_owned(),
+                    ref_or_rev: None,
+                })
             }
 
             // todo!("Implicit Type not yet implemented.");
@@ -521,7 +572,7 @@ mod tests {
             })
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_uri_nom_params() {
@@ -550,7 +601,7 @@ mod tests {
             })
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_uri_ref_or_rev_attr_nom() {
@@ -567,7 +618,7 @@ mod tests {
             .clone();
 
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_uri_attr_nom() {
@@ -583,7 +634,7 @@ mod tests {
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_uri_attr_nom_alt() {
@@ -599,7 +650,7 @@ mod tests {
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_uri_params_nom_alt() {
@@ -616,7 +667,7 @@ mod tests {
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_path_nom() {
@@ -627,7 +678,7 @@ mod tests {
             })
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_simple_path_params_nom() {
@@ -641,7 +692,7 @@ mod tests {
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_gitlab_simple() {
@@ -654,7 +705,7 @@ mod tests {
             })
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev() {
@@ -667,7 +718,7 @@ mod tests {
                 ref_or_rev: Some("master".into()),
             })
             .clone();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev_alt() {
@@ -680,7 +731,7 @@ mod tests {
                 ref_or_rev: Some("19742bb9300fb0be9fdc92f30766c95230a8a371".into()),
             })
             .clone();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     // TODO: replace / with %2F
     // #[test]
@@ -710,7 +761,7 @@ mod tests {
             })
             .params(params)
             .clone();
-        assert_eq!(("", flake_ref), parsed);
+        assert_eq!(flake_ref, parsed);
     }
     #[test]
     fn parse_git_and_https_simple() {
@@ -1063,6 +1114,28 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+    }
+
+    #[test]
+    fn parse_wrong_git_uri_extension_type() {
+        let uri = "git+(:z";
+        let expected = NixUriError::UnknownUrlType("(".into());
+        let parsed: NixUriResult<FlakeRef> = uri.try_into();
+        assert_eq!(expected, parsed.unwrap_err());
+    }
+    #[test]
+    fn parse_github_missing_parameter() {
+        let uri = "github:";
+        let expected = NixUriError::MissingTypeParameter("github".into(), ("owner".into()));
+        let parsed: NixUriResult<FlakeRef> = uri.try_into();
+        assert_eq!(expected, parsed.unwrap_err());
+    }
+    #[test]
+    fn parse_github_missing_parameter_repo() {
+        let uri = "github:nixos/";
+        let expected = NixUriError::MissingTypeParameter("github".into(), ("repo".into()));
+        let parsed: NixUriResult<FlakeRef> = uri.try_into();
+        assert_eq!(expected, parsed.unwrap_err());
     }
 
     // #[test]

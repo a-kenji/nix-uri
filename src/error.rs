@@ -2,7 +2,7 @@ use thiserror::Error;
 
 pub(crate) type NixUriResult<T> = Result<T, NixUriError>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum NixUriError {
     /// Generic parsing fail
@@ -11,16 +11,25 @@ pub enum NixUriError {
     /// The path to directories must be absolute
     #[error("The path is not absolute.")]
     NotAbsolute,
+    /// The type doesn't have the required default parameter set
+    /// Example: Github needs to have an owner and a repo
+    // TODO collect multiple potentially missing parameters
+    #[error("FlakeRef Type: {0} is missing the following required parameter: {1}")]
+    MissingTypeParameter(String, String),
+    /// The type of the uri itself, for example `github`
     #[error("The type is not known: {0}")]
     UnknownUriType(String),
+    /// The type of the uri extensions for a uri type, for example `git+ssh`
+    /// the ssh part is the type here.
+    #[error("The type is not known: {0}")]
+    UnknownUrlType(String),
     /// Invalid Type
     #[error("Invalid FlakeRef Type: {0}")]
     InvalidType(String),
     #[error("The parameter: {0} is not supported by the flakeref type.")]
     UnsupportedParam(String),
-    /// Io Error
-    #[error("IoError: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("The parameter: {0} invalid.")]
+    UnknownUriParameter(String),
     /// Nom Error
     /// TODO: Implement real conversion instead of this hack.
     #[error("Nom Error: {0}")]
