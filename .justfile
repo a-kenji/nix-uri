@@ -72,3 +72,6 @@ cargo-watch:
 
 cargo-tarpaulin:
     cargo tarpaulin --avoid-cfg-tarpaulin --out html
+
+fuzz:
+    nix develop .#fuzzShell --command cargo-fuzz run fuzz_target_1

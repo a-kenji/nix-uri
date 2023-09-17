@@ -8,7 +8,7 @@ use nom::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::NixUriError,
+    error::{NixUriError, NixUriResult},
     parser::{parse_owner_repo_ref, parse_url_type},
 };
 
@@ -331,7 +331,7 @@ impl TryFrom<&str> for UrlType {
             "https" => Ok(Https),
             "ssh" => Ok(Ssh),
             "file" => Ok(File),
-            err => Err(NixUriError::UnknownUrlType(err.into())),
+            err => Err(NixUriError::UnknownUriType(err.into())),
         }
     }
 }
@@ -350,7 +350,7 @@ impl Display for UrlType {
 impl FlakeRefType {
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
-    pub fn parse_type(input: &str) -> IResult<&str, FlakeRefType> {
+    pub fn parse_type(input: &str) -> IResult<&str, NixUriResult<FlakeRefType>> {
         use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(take_until(":"), tag(":"), rest))(input)?;
         // println!("flake_ref_type: {flake_ref_type}, input: {input}");
@@ -364,7 +364,7 @@ impl FlakeRefType {
                         repo: owner_and_repo_or_ref[1].into(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, flake_ref_type))
+                    Ok((input, Ok(flake_ref_type)))
                 }
                 "gitlab" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
@@ -373,7 +373,7 @@ impl FlakeRefType {
                         repo: owner_and_repo_or_ref[1].into(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, flake_ref_type))
+                    Ok((input, Ok(flake_ref_type)))
                 }
                 "sourcehut" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
@@ -382,12 +382,12 @@ impl FlakeRefType {
                         repo: owner_and_repo_or_ref[1].into(),
                         ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
                     };
-                    Ok((input, flake_ref_type))
+                    Ok((input, Ok(flake_ref_type)))
                 }
                 "path" => {
                     // TODO: check if path is an absolute path, if not error
                     let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                    Ok(("", flake_ref_type))
+                    Ok(("", Ok(flake_ref_type)))
                 }
 
                 _ => {
@@ -398,7 +398,7 @@ impl FlakeRefType {
                             url: input.into(),
                             r#type: url_type,
                         };
-                        Ok(("", flake_ref_type))
+                        Ok(("", Ok(flake_ref_type)))
                     } else if flake_ref_type.starts_with("hg+") {
                         let url_type = parse_url_type(flake_ref_type).unwrap();
                         let (input, _tag) = tag("//")(input)?;
@@ -406,9 +406,9 @@ impl FlakeRefType {
                             url: input.into(),
                             r#type: url_type,
                         };
-                        Ok(("", flake_ref_type))
+                        Ok(("", Ok(flake_ref_type)))
                     } else {
-                        todo!("Error");
+                        Ok(("", Err(NixUriError::UnknownUriType(flake_ref_type.into()))))
                     }
                 }
             }
@@ -416,7 +416,7 @@ impl FlakeRefType {
             // Implicit types can be paths, indirect flake_refs, or uri's.
             if input.starts_with('/') || input == "." {
                 let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                return Ok(("", flake_ref_type));
+                return Ok(("", Ok(flake_ref_type)));
             }
             //TODO: parse uri
             let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
@@ -425,14 +425,14 @@ impl FlakeRefType {
                     id: owner_and_repo_or_ref[0].into(),
                     ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
                 };
-                Ok(("", flake_ref_type))
+                Ok(("", Ok(flake_ref_type)))
             } else {
                 Ok((
                     "",
-                    FlakeRefType::Indirect {
+                    Ok(FlakeRefType::Indirect {
                         id: input.to_owned(),
                         ref_or_rev: None,
-                    },
+                    }),
                 ))
             }
 
@@ -464,8 +464,7 @@ impl TryFrom<&str> for FlakeRef {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         use crate::parser::parse_nix_uri;
-        let (_, value) = parse_nix_uri(value).unwrap();
-        Ok(value)
+        parse_nix_uri(value)
     }
 }
 
@@ -474,8 +473,7 @@ impl std::str::FromStr for FlakeRef {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use crate::parser::parse_nix_uri;
-        let (_, value) = parse_nix_uri(s).unwrap();
-        Ok(value)
+        parse_nix_uri(s)
     }
 }
 

@@ -8,7 +8,7 @@ use nom::{
 };
 
 use crate::{
-    error::NixUriError,
+    error::{NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefParam, FlakeRefParameters, FlakeRefType, UrlType},
 };
 
@@ -74,16 +74,16 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
     }
 }
 
-pub(crate) fn parse_nix_uri(input: &str) -> IResult<&str, FlakeRef> {
+pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
     let (input, params) = parse_params(input)?;
     let mut flake_ref = FlakeRef::default();
-    let (input, flake_ref_type) = FlakeRefType::parse_type(input)?;
-    flake_ref.r#type(flake_ref_type);
+    let (_input, flake_ref_type) = FlakeRefType::parse_type(input)?;
+    flake_ref.r#type(flake_ref_type?);
     if let Some(params) = params {
         flake_ref.params(params);
     }
 
-    Ok((input, flake_ref))
+    Ok(flake_ref)
 }
 
 /// Parses the url raw url type out of: `+type`

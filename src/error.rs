@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+pub(crate) type NixUriResult<T> = Result<T, NixUriError>;
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NixUriError {
@@ -10,7 +12,7 @@ pub enum NixUriError {
     #[error("The path is not absolute.")]
     NotAbsolute,
     #[error("The type is not known: {0}")]
-    UnknownUrlType(String),
+    UnknownUriType(String),
     /// Invalid Type
     #[error("Invalid FlakeRef Type: {0}")]
     InvalidType(String),
