@@ -14,16 +14,39 @@ Also allows for building a `nix-uri` through the [`FlakeRef`](flakeref::FlakeRef
 Convenience functionality for working with nix `flake.nix` references (flakerefs).
 Provides types for the generic attribute set representation, but does not parse it:
 
-``no_run
+```rust
    {
      type = "github";
      owner = "NixOS";
      repo = "nixpkgs";
    }
-``
+```
+
+### Installation
+
+To use `nix-uri`, add it as a dependency in your `Cargo.toml` file:
+
+```rust
+[dependencies]
+nix-uri = "0.1.4"
+```
+
+or use `cargo add`:
+
+```rust
+cargo add nix-uri
+```
+
+## Examples
+Check out the examples directory, for more information, or run an example:
+
+```rust
+cargo run --example simple
+cargo run --example cli github:nixpkgs/nixos
+```
 
 The uri syntax representation is parsed by this library:
-## Example `github:a-kenji/nala`:
+### Example: Parsing from `github:nixos/nixpkgs`:
 
  ```rust
   let uri = "github:nixos/nixpkgs";
@@ -38,7 +61,7 @@ The uri syntax representation is parsed by this library:
   ```
 
   It can also be generated from [`FlakeRef`](flakeref::Flakeref).
-  ## Example: `github:nixos/nixpkgs`:
+  ### Example: Constructing the following uri `github:nixos/nixpkgs`:
   ```rust
   let expected = "github:nixos/nixpkgs";
   let uri = FlakeRef::new(
