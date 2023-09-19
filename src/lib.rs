@@ -10,7 +10,7 @@
 //! Convenience functionality for working with nix `flake.nix` references (flakerefs).
 //! Provides types for the generic attribute set representation, but does not parse it:
 //!
-//! ``` no_run
+//! ```no_run
 //!    {
 //!      type = "github";
 //!      owner = "NixOS";
@@ -79,6 +79,8 @@ mod error;
 #[allow(unused)]
 mod flakeref;
 mod parser;
+#[cfg(feature = "url")]
+mod url;
 
 pub use error::*;
 pub use flakeref::*;

@@ -38,6 +38,9 @@ pub enum NixUriError {
     NomParseError(#[from] nom::Err<nom::error::Error<String>>),
     #[error(transparent)]
     Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
+    #[cfg(feature = "url")]
+    #[error("Error parsing the following url: {0}")]
+    Url(#[from] url::ParseError),
 }
 
 impl From<nom::Err<nom::error::Error<&str>>> for NixUriError {

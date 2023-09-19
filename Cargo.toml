@@ -20,6 +20,10 @@ keywords = ["nix", "flakes", "uri", "url", "flakeref"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["from_url"]
+from_url = ["url"]
+
 [dependencies]
 nom = "7.1.3"
 proptest = "1.2.0"
