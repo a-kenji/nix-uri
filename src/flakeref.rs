@@ -1133,9 +1133,13 @@ mod tests {
     #[test]
     fn parse_github_missing_parameter_repo() {
         let uri = "github:nixos/";
-        let expected = NixUriError::MissingTypeParameter("github".into(), ("repo".into()));
-        let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_eq!(expected, parsed.unwrap_err());
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::MissingTypeParameter(
+                "github".into(),
+                ("repo".into())
+            ))
+        );
     }
 
     // #[test]

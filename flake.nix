@@ -1,46 +1,43 @@
 {
   description = "nix-uri - parse the nix-uri scheme.";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
-  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
 
-  inputs.rust-overlay = {
-    url = "github:oxalica/rust-overlay";
-    inputs.nixpkgs.follows = "nixpkgs";
-    inputs.flake-utils.follows = "flake-utils";
+    crane = {
+      url = "github:ipetkov/crane";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.rust-overlay.follows = "rust-overlay";
+      inputs.flake-utils.follows = "flake-utils";
+    };
+    cargo-rdme = {
+      url = "github:orium/cargo-rdme";
+      flake = false;
+    };
   };
 
-  inputs.crane = {
-    url = "github:ipetkov/crane";
-    inputs.nixpkgs.follows = "nixpkgs";
-    inputs.rust-overlay.follows = "rust-overlay";
-    inputs.flake-utils.follows = "flake-utils";
-  };
-  inputs.cargo-rdme = {
-    url = "github:orium/cargo-rdme";
-    flake = false;
-  };
-
-  outputs =
-    {
-      self,
-      cargo-rdme,
-      nixpkgs,
-      flake-utils,
-      rust-overlay,
-      crane,
-    }:
+  outputs = {
+    self,
+    cargo-rdme,
+    nixpkgs,
+    flake-utils,
+    rust-overlay,
+    crane,
+  }:
     flake-utils.lib.eachDefaultSystem (
-      system:
-      let
+      system: let
         pkgs = nixpkgs.legacyPackages.${system};
         stdenv =
-          if pkgs.stdenv.isLinux then
-            pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
-          else
-            pkgs.stdenv
-        ;
-        overlays = [ (import rust-overlay) ];
-        rustPkgs = import nixpkgs { inherit system overlays; };
+          if pkgs.stdenv.isLinux
+          then pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
+          else pkgs.stdenv;
+        overlays = [(import rust-overlay)];
+        rustPkgs = import nixpkgs {inherit system overlays;};
         src = self;
         RUST_TOOLCHAIN = src + "/rust-toolchain.toml";
         RUSTFMT_TOOLCHAIN = src + "/.rustfmt-toolchain.toml";
@@ -50,18 +47,18 @@
         rustToolchainTOML = rustPkgs.rust-bin.stable.latest.minimal;
         rustFmtToolchainTOML =
           rustPkgs.rust-bin.fromRustupToolchainFile
-            RUSTFMT_TOOLCHAIN;
+          RUSTFMT_TOOLCHAIN;
         rustToolchainDevTOML = rustToolchainTOML.override {
           extensions = [
             "clippy"
             "rust-analysis"
             "rust-docs"
           ];
-          targets = [ ];
+          targets = [];
         };
         gitDate = "${builtins.substring 0 4 self.lastModifiedDate}-${
-            builtins.substring 4 2 self.lastModifiedDate
-          }-${builtins.substring 6 2 self.lastModifiedDate}";
+          builtins.substring 4 2 self.lastModifiedDate
+        }-${builtins.substring 6 2 self.lastModifiedDate}";
         gitRev = self.shortRev or "Not committed yet.";
         cargoLock = {
           lockFile = builtins.path {
@@ -73,8 +70,8 @@
         rustc = rustToolchainTOML;
         cargo = rustToolchainTOML;
 
-        buildInputs = [ ];
-        nativeBuildInputs = [ ];
+        buildInputs = [];
+        nativeBuildInputs = [];
         devInputs = [
           rustToolchainDevTOML
           rustFmtToolchainTOML
@@ -104,30 +101,30 @@
 
           (pkgs.symlinkJoin {
             name = "cargo-udeps-wrapped";
-            paths = [ pkgs.cargo-udeps ];
-            nativeBuildInputs = [ pkgs.makeWrapper ];
+            paths = [pkgs.cargo-udeps];
+            nativeBuildInputs = [pkgs.makeWrapper];
             postBuild = ''
               wrapProgram $out/bin/cargo-udeps \
                 --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    (rustPkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
-                  ]
-                }
+                pkgs.lib.makeBinPath [
+                  (rustPkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
+                ]
+              }
             '';
           })
           (pkgs.symlinkJoin {
             name = "cargo-careful-wrapped";
-            paths = [ pkgs.cargo-careful ];
-            nativeBuildInputs = [ pkgs.makeWrapper ];
+            paths = [pkgs.cargo-careful];
+            nativeBuildInputs = [pkgs.makeWrapper];
             postBuild = ''
               wrapProgram $out/bin/cargo-careful \
                 --prefix PATH : ${
-                  pkgs.lib.makeBinPath [
-                    (rustPkgs.rust-bin.selectLatestNightlyWith (
-                      toolchain: toolchain.default.override { extensions = [ "rust-src" ]; }
-                    ))
-                  ]
-                }
+                pkgs.lib.makeBinPath [
+                  (rustPkgs.rust-bin.selectLatestNightlyWith (
+                    toolchain: toolchain.default.override {extensions = ["rust-src"];}
+                  ))
+                ]
+              }
             '';
           })
           (pkgs.rustPlatform.buildRustPackage {
@@ -135,7 +132,7 @@
               ((builtins.fromTOML (builtins.readFile (cargo-rdme + "/Cargo.toml"))).package)
               version
               name
-            ;
+              ;
             src = cargo-rdme;
             cargoLock.lockFile = cargo-rdme + "/Cargo.lock";
             doCheck = false;
@@ -160,11 +157,11 @@
           pkgs.taplo
           pkgs.typos
         ];
-        editorConfigInputs = [ pkgs.editorconfig-checker ];
-        actionlintInputs = [ pkgs.actionlint ];
+        editorConfigInputs = [pkgs.editorconfig-checker];
+        actionlintInputs = [pkgs.actionlint];
         targetDir = "target/${
-            pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform
-          }/release";
+          pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform
+        }/release";
         # Common arguments for the crane build
         commonArgs = {
           inherit
@@ -174,17 +171,28 @@
             stdenv
             version
             name
-          ;
+            ;
           pname = name;
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchainTOML;
+        mkExample = {example, ...}:
+          craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts stdenv;
+              pname = example;
+              cargoExtraArgs = "--example ${example}";
+              # Prevent cargo test and nextest from duplicating tests
+              doCheck = false;
+            }
+          );
+
         # Build *just* the cargo dependencies, so we can reuse
         # all of that work (e.g. via cachix) when running in CI
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-      in
-      rec {
+      in rec {
         devShells = {
-          default = (pkgs.mkShell.override { inherit stdenv; }) {
+          default = (pkgs.mkShell.override {inherit stdenv;}) {
             buildInputs =
               shellInputs ++ fmtInputs ++ devInputs ++ buildInputs ++ nativeBuildInputs;
             inherit name;
@@ -192,43 +200,48 @@
             RUST_BACKTRACE = true;
             RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold";
           };
-          editorConfigShell = pkgs.mkShell { buildInputs = editorConfigInputs; };
-          actionlintShell = pkgs.mkShell { buildInputs = actionlintInputs; };
-          fmtShell = pkgs.mkShell { buildInputs = fmtInputs; };
-          fuzzShell = pkgs.mkShell { buildInputs = fuzzInputs; };
+          editorConfigShell = pkgs.mkShell {buildInputs = editorConfigInputs;};
+          actionlintShell = pkgs.mkShell {buildInputs = actionlintInputs;};
+          fmtShell = pkgs.mkShell {buildInputs = fmtInputs;};
+          fuzzShell = pkgs.mkShell {buildInputs = fuzzInputs;};
         };
-        packages = {
-          default = packages.crane;
-          upstream = (pkgs.makeRustPlatform { inherit cargo rustc; }).buildRustPackage {
-            cargoDepsName = name;
-            GIT_DATE = gitDate;
-            GIT_REV = gitRev;
-            doCheck = false;
-            ASSET_DIR = "${targetDir}/assets/";
-            version = "unstable" + gitDate;
-            inherit
-              name
-              src
-              stdenv
-              nativeBuildInputs
-              buildInputs
-              cargoLock
-            ;
-          };
-          crane = craneLib.buildPackage (
-            commonArgs
-            // {
-              cargoExtraArgs = "-p ${name}";
+        packages =
+          {
+            default = packages.crane;
+            upstream = (pkgs.makeRustPlatform {inherit cargo rustc;}).buildRustPackage {
+              cargoDepsName = name;
               GIT_DATE = gitDate;
               GIT_REV = gitRev;
               doCheck = false;
               ASSET_DIR = "${targetDir}/assets/";
-              version = "unstable-" + gitDate;
-              pname = name;
-              inherit name cargoArtifacts stdenv;
-            }
+              version = "unstable" + gitDate;
+              inherit
+                name
+                src
+                stdenv
+                nativeBuildInputs
+                buildInputs
+                cargoLock
+                ;
+            };
+            crane = craneLib.buildPackage (
+              commonArgs
+              // {
+                cargoExtraArgs = "-p ${name}";
+                GIT_DATE = gitDate;
+                GIT_REV = gitRev;
+                doCheck = false;
+                ASSET_DIR = "${targetDir}/assets/";
+                version = "unstable-" + gitDate;
+                pname = name;
+                inherit name cargoArtifacts stdenv;
+              }
+            );
+          }
+          // pkgs.lib.genAttrs ["cli"] (
+            example: mkExample {inherit example cargoArtifacts craneLib;}
           );
-        };
+
         apps.default = {
           type = "app";
           program = "${packages.default}/bin/${name}";
