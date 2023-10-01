@@ -54,7 +54,7 @@
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
 //!                 });
-//!      let parsed: FlakeRef = uri.try_into().unwrap();
+//!      let parsed: FlakeRef = uri.parse().unwrap();
 //!      assert_eq!(expected, parsed);
 //!   ```
 //!
