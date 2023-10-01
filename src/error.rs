@@ -8,6 +8,9 @@ pub enum NixUriError {
     /// Generic parsing fail
     #[error("Error parsing: {0}")]
     ParseError(String),
+    /// Invalid Url
+    #[error("Not a valid Url: {0}")]
+    InvalidUrl(String),
     /// The path to directories must be absolute
     #[error("The path is not absolute.")]
     NotAbsolute,
