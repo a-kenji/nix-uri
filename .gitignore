@@ -1,9 +1,9 @@
 # nix support
 /.direnv
-/result
-/result-*
+result
+result-*
 
 # rust support
-/target
+target
 tarpaulin-report.html
 

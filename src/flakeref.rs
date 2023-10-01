@@ -481,9 +481,18 @@ impl FlakeRefType {
                 };
                 Ok(flake_ref_type)
             } else {
+                let (_input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                let id = if let Some(id) = owner_and_repo_or_ref.get(0) {
+                    id
+                } else {
+                    input
+                };
+                if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
+                    return Err(NixUriError::InvalidUrl(input.into()));
+                }
                 Ok(FlakeRefType::Indirect {
-                    id: input.to_owned(),
-                    ref_or_rev: None,
+                    id: id.to_string(),
+                    ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
                 })
             }
 
@@ -1139,6 +1148,54 @@ mod tests {
                 "github".into(),
                 ("repo".into())
             ))
+        );
+    }
+    #[test]
+    fn parse_github_starts_with_whitespace() {
+        let uri = " github:nixos/nixpkgs";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
+        );
+    }
+    #[test]
+    fn parse_github_ends_with_whitespace() {
+        let uri = "github:nixos/nixpkgs ";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
+        );
+    }
+    #[test]
+    fn parse_empty_invalid_url() {
+        let uri = "";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
+        );
+    }
+    #[test]
+    fn parse_empty_trim_invalid_url() {
+        let uri = "  ";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
+        );
+    }
+    #[test]
+    fn parse_slash_trim_invalid_url() {
+        let uri = "   /   ";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
+        );
+    }
+    #[test]
+    fn parse_double_trim_invalid_url() {
+        let uri = "   :   ";
+        assert_eq!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri.into()))
         );
     }
 

@@ -25,3 +25,15 @@ name = "fuzz_target_1"
 path = "fuzz_targets/fuzz_target_1.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_invalid_compare"
+path = "fuzz_targets/fuzz_invalid_compare.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_comp_err"
+path = "fuzz_targets/fuzz_comp_err.rs"
+test = false
+doc = false

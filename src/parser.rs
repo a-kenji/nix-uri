@@ -79,6 +79,16 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
 }
 
 pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
+    if input.trim().is_empty()
+        || (input.trim() == "/")
+        || (input.trim() == ":")
+        || (input.trim() == "?")
+        || (input.ends_with(char::is_whitespace))
+        || (input.starts_with(char::is_whitespace))
+    {
+        return Err(NixUriError::InvalidUrl(input.into()));
+    }
+
     let (input, params) = parse_params(input)?;
     let mut flake_ref = FlakeRef::default();
     let flake_ref_type = FlakeRefType::parse_type(input)?;

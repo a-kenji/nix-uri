@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-pub(crate) type NixUriResult<T> = Result<T, NixUriError>;
+pub type NixUriResult<T> = Result<T, NixUriError>;
 
 #[derive(Debug, Error, PartialEq)]
 #[non_exhaustive]
