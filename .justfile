@@ -74,4 +74,21 @@ cargo-tarpaulin:
     cargo tarpaulin --avoid-cfg-tarpaulin --out html
 
 fuzz:
-    nix develop .#fuzzShell --command cargo-fuzz run fuzz_target_1
+    nix develop .#fuzzShell --command cargo-fuzz run fuzz_target_1 --release
+
+fuzz-cli:
+    nom build .#nixosModules.x86_64-linux.fuzz-cli.driverInteractive
+    ./result/bin/nixos-test-driver --no-interactive
+
+fuzz-cli-native:
+    nix develop .#fuzzShell --command cargo-fuzz run fuzz_comp_err --release
+
+fuzz-tmux:
+    #!/usr/bin/env bash
+    tmux new-window 'fuzz'
+    for _ in {0..8}
+    do
+    tmux split-window -h just fuzz
+    #tmux select-layout even-vertical
+    #tmux select-layout even-horizontal
+    done

@@ -79,11 +79,13 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
 }
 
 pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
-    fluent_uri::Uri::parse(input)?;
+    // fluent_uri::Uri::parse(input)?;
+    // Basic sanity checks
     if input.trim().is_empty()
         || (input.trim() == "/")
         || (input.trim() == ":")
         || (input.trim() == "?")
+        || (!input.chars().all(|c| c.is_ascii()))
         || (input.ends_with(char::is_whitespace))
         || (input.starts_with(char::is_whitespace))
     {

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use nix_uri::{FlakeRef, NixUriError, NixUriResult};
+use nix_uri::{FlakeRef, NixUriResult};
 
 // Check if the errors are the same.
 
@@ -10,15 +10,11 @@ fuzz_target!(|data: String| {
     let nix_cmd = check_ref(&data);
     match parsed {
         Err(err) => {
-            // Discard registry and file errors
-            if let Err(ref cmd_err) = nix_cmd {
-                if (cmd_err.contains("error: cannot find flake")
-                    && cmd_err.contains("in the flake registries"))
-                    || cmd_err.contains("No such file or directory")
-                {
-                } else {
-                    assert!(nix_cmd.ok().is_none())
-                }
+            if let Ok(output) = nix_cmd {
+                println!("Input: {data}");
+                println!("Nix Uri Err: {err:?}");
+                println!("Nix Cmd Output: {output:?}");
+                panic!();
             }
         }
         Ok(_) => {
@@ -27,8 +23,13 @@ fuzz_target!(|data: String| {
                 if (err.contains("error: cannot find flake")
                     && err.contains("in the flake registries"))
                     || err.contains("No such file or directory")
+                    || err.contains("error: unable to download")
+                    || err.contains("error: could not find a flake.nix file")
+                // || err.contains("unrecognised flag")
                 {
                 } else {
+                    println!("Input: {data}");
+                    println!("Nix Cmd Err: {err}");
                     panic!();
                 }
             }
@@ -38,22 +39,32 @@ fuzz_target!(|data: String| {
 
 fn check_ref(stream: &str) -> Result<(), String> {
     let cmd = "nix";
-    let mut args = vec!["flake", "check"];
+    let mut args = vec![
+        "--extra-experimental-features",
+        "nix-command flakes",
+        "flake",
+        "check",
+    ];
     args.push(stream);
-    let mut child = std::process::Command::new(cmd)
+    let child = std::process::Command::new(cmd)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .output()
-        .ok();
+        .output();
 
     // Discard IO Errors
-    if let Some(pipe) = child {
-        if !pipe.status.success() {
-            let stderr = pipe.stderr;
-            let stderr = std::str::from_utf8(&stderr).unwrap();
-            return Err(stderr.into());
+    match child {
+        Ok(pipe) => {
+            if !pipe.status.success() {
+                let stderr = pipe.stderr;
+                let stderr = std::str::from_utf8(&stderr).unwrap();
+                return Err(stderr.into());
+            }
+        }
+        Err(e) => {
+            // println!("{e}");
+            return Err(e.to_string());
         }
     }
     Ok(())

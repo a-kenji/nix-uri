@@ -14,11 +14,11 @@ libfuzzer-sys = "0.4"
 path = ".."
 
 # Prevent this from interfering with workspaces
-[workspace]
-members = ["."]
+# [workspace]
+# members = ["."]
 
-[profile.release]
-debug = 1
+# [profile.release]
+# debug = 1
 
 [[bin]]
 name = "fuzz_target_1"

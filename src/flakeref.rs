@@ -440,6 +440,7 @@ impl FlakeRefType {
                 "path" => {
                     // TODO: check if path is an absolute path, if not error
                     let path = Path::new(input);
+                    // TODO: make this check configurable for cli useage
                     if path.is_absolute() {
                         return Err(NixUriError::NotAbsolute(input.into()));
                     }
