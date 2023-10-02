@@ -1,5 +1,5 @@
-//! #![forbid(unsafe_code)]
-//! #![warn(clippy::pedantic, clippy::nursery, clippy::cargo, unused)]
+// #![forbid(unsafe_code)]
+// #![warn(clippy::pedantic, clippy::nursery, clippy::cargo, unused)]
 //!
 //! [nix-uri](https://crates.io/crates/nix-uri) is a rust crate that parses
 //! the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
@@ -10,36 +10,36 @@
 //! Convenience functionality for working with nix `flake.nix` references (flakerefs).
 //! Provides types for the generic attribute set representation, but does not parse it:
 //!
-//! `` no_run
+//! ``` markdown
 //!    {
 //!      type = "github";
 //!      owner = "NixOS";
 //!      repo = "nixpkgs";
 //!    }
-//! ``
+//! ```
 //!
 //! ## Installation
 //!
 //! To use `nix-uri`, add it as a dependency in your `Cargo.toml` file:
 //!
-//! ``
+//! ```markdown
 //! [dependencies]
 //! nix-uri = "0.1.4"
-//! ``
+//! ```
 //!
 //! or use `cargo add`:
 //!
-//! ``
+//! ```markdown
 //! cargo add nix-uri
-//! ``
+//! ```
 //!
 //! # Examples
 //! Check out the examples directory, for more information, or run an example:
 //!
-//! ``
+//! ```markdown
 //! cargo run --example simple
-//! cargo run --example cli github:nixpkgs/nixos
-//! ``
+//! cargo run --example cli github:nixos/nixpkgs
+//! ```
 //!
 //! The uri syntax representation is parsed by this library:
 //! ## Example: Parsing from `github:nixos/nixpkgs`:
