@@ -441,7 +441,7 @@ impl FlakeRefType {
                     // TODO: check if path is an absolute path, if not error
                     let path = Path::new(input);
                     // TODO: make this check configurable for cli useage
-                    if path.is_absolute() {
+                    if !path.is_absolute() || input.contains(']') || input.contains('[') {
                         return Err(NixUriError::NotAbsolute(input.into()));
                     }
                     let flake_ref_type = FlakeRefType::Path { path: input.into() };
@@ -476,13 +476,30 @@ impl FlakeRefType {
             // Implicit types can be paths, indirect flake_refs, or uri's.
             if input.starts_with('/') || input == "." {
                 let flake_ref_type = FlakeRefType::Path { path: input.into() };
+                let path = Path::new(input);
+                // TODO: make this check configurable for cli useage
+                if !path.is_absolute()
+                    || input.contains(']')
+                    || input.contains('[')
+                    || !input.chars().all(|c| c.is_ascii())
+                {
+                    return Err(NixUriError::NotAbsolute(input.into()));
+                }
                 return Ok(flake_ref_type);
             }
             //TODO: parse uri
             let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
             if !owner_and_repo_or_ref.is_empty() {
+                let id = if let Some(id) = owner_and_repo_or_ref.first() {
+                    id
+                } else {
+                    input
+                };
+                if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
+                    return Err(NixUriError::InvalidUrl(input.into()));
+                }
                 let flake_ref_type = FlakeRefType::Indirect {
-                    id: owner_and_repo_or_ref[0].into(),
+                    id: id.to_string(),
                     ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
                 };
                 Ok(flake_ref_type)
@@ -968,28 +985,30 @@ mod tests {
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
     }
-    #[test]
-    fn parse_simple_path_uri_indirect() {
-        let uri = "path:../.";
-        let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Path {
-                path: "../.".to_owned(),
-            })
-            .clone();
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-    #[test]
-    fn parse_simple_path_uri_indirect_local() {
-        let uri = "path:.";
-        let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Path {
-                path: ".".to_owned(),
-            })
-            .clone();
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
+    // TODO: allow them with an optional cli parser
+    // #[test]
+    // fn parse_simple_path_uri_indirect() {
+    //     let uri = "path:../.";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Path {
+    //             path: "../.".to_owned(),
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
+    // }
+    // TODO: allow them with an optional cli parser
+    // #[test]
+    // fn parse_simple_path_uri_indirect_local() {
+    //     let uri = "path:.";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Path {
+    //             path: ".".to_owned(),
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
+    // }
     #[test]
     fn parse_simple_uri_sourcehut() {
         let uri = "sourcehut:~misterio/nix-colors";
@@ -1117,17 +1136,18 @@ mod tests {
         assert_eq!(expected, parsed);
     }
 
-    #[test]
-    fn parse_simple_path_uri_indirect_local_without_prefix() {
-        let uri = ".";
-        let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Path {
-                path: ".".to_owned(),
-            })
-            .clone();
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
+    // TODO: allow them with an optional cli parser
+    // #[test]
+    // fn parse_simple_path_uri_indirect_local_without_prefix() {
+    //     let uri = ".";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Path {
+    //             path: ".".to_owned(),
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
+    // }
 
     #[test]
     fn parse_wrong_git_uri_extension_type() {

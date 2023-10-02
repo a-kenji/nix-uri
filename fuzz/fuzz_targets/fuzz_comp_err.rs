@@ -17,7 +17,7 @@ fuzz_target!(|data: String| {
                 panic!();
             }
         }
-        Ok(_) => {
+        Ok(parsed) => {
             if let Err(err) = nix_cmd {
                 // Discard registry and file errors
                 if (err.contains("error: cannot find flake")
@@ -30,6 +30,7 @@ fuzz_target!(|data: String| {
                 } else {
                     println!("Input: {data}");
                     println!("Nix Cmd Err: {err}");
+                    println!("Parsed Nix Uri: {parsed:#?}");
                     panic!();
                 }
             }
