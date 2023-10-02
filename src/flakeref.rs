@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, path::Path};
 
 use nom::{
     bytes::complete::{tag, take_until},
@@ -214,6 +214,7 @@ impl std::str::FromStr for FlakeRefParam {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FlakeRefType {
     // In URL form, the schema must be file+http://, file+https:// or file+file://. If the extension doesn’t correspond to a known archive format (as defined by the tarball fetcher), then the file+ prefix can be dropped.
     File {
@@ -438,6 +439,10 @@ impl FlakeRefType {
                 }
                 "path" => {
                     // TODO: check if path is an absolute path, if not error
+                    let path = Path::new(input);
+                    if path.is_absolute() {
+                        return Err(NixUriError::NotAbsolute(input.into()));
+                    }
                     let flake_ref_type = FlakeRefType::Path { path: input.into() };
                     Ok(flake_ref_type)
                 }
@@ -482,7 +487,7 @@ impl FlakeRefType {
                 Ok(flake_ref_type)
             } else {
                 let (_input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let id = if let Some(id) = owner_and_repo_or_ref.get(0) {
+                let id = if let Some(id) = owner_and_repo_or_ref.first() {
                     id
                 } else {
                     input
@@ -495,8 +500,6 @@ impl FlakeRefType {
                     ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
                 })
             }
-
-            // todo!("Implicit Type not yet implemented.");
         }
     }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {

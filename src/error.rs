@@ -12,8 +12,8 @@ pub enum NixUriError {
     #[error("Not a valid Url: {0}")]
     InvalidUrl(String),
     /// The path to directories must be absolute
-    #[error("The path is not absolute.")]
-    NotAbsolute,
+    #[error("The path is not absolute: {0}")]
+    NotAbsolute(String),
     /// The type doesn't have the required default parameter set
     /// Example: Github needs to have an owner and a repo
     // TODO collect multiple potentially missing parameters
@@ -41,6 +41,8 @@ pub enum NixUriError {
     NomParseError(#[from] nom::Err<nom::error::Error<String>>),
     #[error(transparent)]
     Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
+    #[error("Fluent Uri Parsing Error: {0}")]
+    FluentUri(#[from] fluent_uri::ParseError),
 }
 
 impl From<nom::Err<nom::error::Error<&str>>> for NixUriError {
