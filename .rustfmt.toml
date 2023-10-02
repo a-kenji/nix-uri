@@ -3,4 +3,4 @@ newline_style = "Unix"
 group_imports = "StdExternalCrate"
 imports_granularity = "Crate"
 wrap_comments = true
-comment_width = 100
+comment_width = 89

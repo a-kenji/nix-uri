@@ -110,8 +110,44 @@ pub(crate) fn parse_from_url_type(input: &str) -> IResult<&str, &str> {
     Ok((rest, input))
 }
 
+pub(crate) fn is_tarball(input: &str) -> bool {
+    let valid_extensions = &[
+        ".tar", ".gz", ".bz2", ".xz", ".zip", ".tar.bz2", ".tar.zst", ".tgz", ".tar.gz", ".tar.xz",
+    ];
+    valid_extensions.iter().any(|&ext| input.ends_with(ext))
+}
+
+pub(crate) fn is_file(input: &str) -> bool {
+    !is_tarball(input)
+}
+
 // Parse the url type itself
 pub(crate) fn parse_url_type(input: &str) -> Result<UrlType, NixUriError> {
     let (_, input) = parse_from_url_type(input)?;
     TryInto::<UrlType>::try_into(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn check_tarball() {
+        let filename = "example.tar.gz";
+        assert!(is_tarball(filename));
+    }
+    #[test]
+    fn check_tarball_uri() {
+        let filename = "https://github.com/NixOS/patchelf/archive/master.tar.gz";
+        assert!(is_tarball(filename));
+    }
+    #[test]
+    fn check_file_uri() {
+        let filename = "https://github.com/NixOS/patchelf/";
+        assert!(is_file(filename));
+    }
+    #[test]
+    fn check_file() {
+        let filename = "example";
+        assert!(is_file(filename));
+    }
 }

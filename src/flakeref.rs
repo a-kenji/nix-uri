@@ -220,9 +220,10 @@ pub enum FlakeRefType {
     File {
         url: String,
     },
-    /// Git repositories. The location of the repository is specified by the attribute `url`.
-    /// The `ref` arrribute defaults to resolving the `HEAD` reference.
-    /// The `rev` attribute must exist in the branch or tag specified by `ref`, defaults to `ref`.
+    /// Git repositories. The location of the repository is specified by the attribute
+    /// `url`. The `ref` arrribute defaults to resolving the `HEAD` reference.
+    /// The `rev` attribute must exist in the branch or tag specified by `ref`, defaults
+    /// to `ref`.
     Git {
         url: String,
         r#type: UrlType,

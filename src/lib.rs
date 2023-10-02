@@ -5,7 +5,8 @@
 //! the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
 //! into a [`FlakeRef`](flakeref::FlakeRef) struct.
 //!
-//! Also allows for building a `nix-uri` through the [`FlakeRef`](flakeref::FlakeRef) struct.
+//! Also allows for building a `nix-uri` through the [`FlakeRef`](flakeref::FlakeRef)
+//! struct.
 //!
 //! Convenience functionality for working with nix `flake.nix` references (flakerefs).
 //! Provides types for the generic attribute set representation, but does not parse it:
@@ -79,6 +80,8 @@ mod error;
 #[allow(unused)]
 mod flakeref;
 mod parser;
+#[allow(unused)]
+pub mod urls;
 
 pub use error::*;
 pub use flakeref::*;
