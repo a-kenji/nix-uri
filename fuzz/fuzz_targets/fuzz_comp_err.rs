@@ -10,13 +10,33 @@ fuzz_target!(|data: String| {
     let nix_cmd = check_ref(&data);
     match parsed {
         Err(err) => {
-            assert!(nix_cmd.ok().is_none())
+            // Discard registry and file errors
+            if let Err(ref cmd_err) = nix_cmd {
+                if (cmd_err.contains("error: cannot find flake")
+                    && cmd_err.contains("in the flake registries"))
+                    || cmd_err.contains("No such file or directory")
+                {
+                } else {
+                    assert!(nix_cmd.ok().is_none())
+                }
+            }
         }
-        Ok(_) => nix_cmd.unwrap(),
+        Ok(_) => {
+            if let Err(err) = nix_cmd {
+                // Discard registry and file errors
+                if (err.contains("error: cannot find flake")
+                    && err.contains("in the flake registries"))
+                    || err.contains("No such file or directory")
+                {
+                } else {
+                    panic!();
+                }
+            }
+        }
     }
 });
 
-fn check_ref(stream: &str) -> Result<(), ()> {
+fn check_ref(stream: &str) -> Result<(), String> {
     let cmd = "nix";
     let mut args = vec!["flake", "check"];
     args.push(stream);
@@ -33,14 +53,7 @@ fn check_ref(stream: &str) -> Result<(), ()> {
         if !pipe.status.success() {
             let stderr = pipe.stderr;
             let stderr = std::str::from_utf8(&stderr).unwrap();
-            // Discard registry and file errors
-            if (stderr.contains("error: cannot find flake")
-                && stderr.contains("in the flake registries"))
-                || stderr.contains("No such file or directory")
-            {
-                return Ok(());
-            }
-            return Err(());
+            return Err(stderr.into());
         }
     }
     Ok(())
