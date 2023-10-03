@@ -445,6 +445,9 @@ impl FlakeRefType {
                     if !path.is_absolute() || input.contains(']') || input.contains('[') {
                         return Err(NixUriError::NotAbsolute(input.into()));
                     }
+                    if input.contains('#') || input.contains('?') {
+                        return Err(NixUriError::PathCharacter(input.into()));
+                    }
                     let flake_ref_type = FlakeRefType::Path { path: input.into() };
                     Ok(flake_ref_type)
                 }
@@ -486,6 +489,9 @@ impl FlakeRefType {
                 {
                     return Err(NixUriError::NotAbsolute(input.into()));
                 }
+                if input.contains('#') || input.contains('?') {
+                    return Err(NixUriError::PathCharacter(input.into()));
+                }
                 return Ok(flake_ref_type);
             }
             //TODO: parse uri
@@ -496,7 +502,11 @@ impl FlakeRefType {
                 } else {
                     input
                 };
-                if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
+                if !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphabetic() || c.is_control())
+                    || id.is_empty()
+                {
                     return Err(NixUriError::InvalidUrl(input.into()));
                 }
                 let flake_ref_type = FlakeRefType::Indirect {

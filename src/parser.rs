@@ -86,6 +86,8 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         || (input.trim() == ":")
         || (input.trim() == "?")
         || (!input.chars().all(|c| c.is_ascii()))
+        || (!input.chars().all(|c| !c.is_control()))
+        || (!input.chars().all(|c| !c.is_ascii_control()))
         || (input.ends_with(char::is_whitespace))
         || (input.starts_with(char::is_whitespace))
     {

@@ -286,13 +286,7 @@
             };
           testScript = ''
             start_all()
-            # (status, stdout) = machine.execute("cp -r ${self} .")
-            # (status, stdout) = machine.execute("ls *source")
-            # print(stdout)
-            # print(status)
-            # # (status, stdout) = machine.execute("cd *source && nix develop --extra-experimental-features 'nix-command flakes' ${self}#fuzzShell --command cargo fuzz run fuzz_comp_err --release", timeout=None)
             with subtest("fuzzing"):
-                # stdout = machine.succeed("cd *source && fuzz_comp_err", timeout=None)
                 stdout = machine.succeed("fuzz_comp_err", timeout=None)
                 print(stdout)
             machine.shutdown()

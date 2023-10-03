@@ -1,7 +1,7 @@
 // use url::{ParseError, Url};
 use url::{ParseError, Url};
 
-use crate::{FlakeRef, FlakeRefType, NixUriResult};
+use crate::{parser::is_tarball, FlakeRef, FlakeRefType, NixUriResult};
 
 pub struct UrlWrapper {
     url: Url,
@@ -33,6 +33,10 @@ impl UrlWrapper {
         // If default parsing fails, it might still be a `nix-uri`.
         let url = Self::from(input).ok();
 
+        if is_tarball(input) {
+            return input.parse();
+        }
+
         if let Some(url) = url {
             match url.url.host() {
                 Some(host) => {
@@ -55,10 +59,16 @@ impl UrlWrapper {
                     .path_segments()
                     .map(|c| c.collect::<Vec<_>>())
                     .unwrap();
+                let ref_or_rev = if segments.len() > 2 {
+                    Some(segments[2..].join("/"))
+                } else {
+                    None
+                };
+
                 Ok(FlakeRefType::GitHub {
                     owner: segments[0].to_string(),
                     repo: segments[1].to_string(),
-                    ref_or_rev: None,
+                    ref_or_rev,
                 })
             }
             _ => Ok(FlakeRefType::None),
@@ -81,6 +91,11 @@ mod tests {
             .clone();
         assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
     }
+    // #[test]
+    // fn check_tarball_uri_conversion() {
+    //     let filename = "https://github.com/NixOS/patchelf/archive/master.tar.gz";
+    //     assert!(is_tarball(filename));
+    // }
     // let uri = "github:nixos/nixpkgs";
     // let expected = FlakeRef::default()
     //     .r#type(FlakeRefType::GitHub {
