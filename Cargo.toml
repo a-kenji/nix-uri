@@ -22,9 +22,7 @@ keywords = ["nix", "flakes", "uri", "url", "flakeref"]
 
 [workspace]
 resolver = "2"
-members = [
-    "fuzz"
-]
+members = ["fuzz"]
 
 [dependencies]
 fluent-uri = "0.1.4"

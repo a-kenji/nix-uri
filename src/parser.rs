@@ -119,6 +119,7 @@ pub(crate) fn is_tarball(input: &str) -> bool {
     valid_extensions.iter().any(|&ext| input.ends_with(ext))
 }
 
+#[allow(unused)]
 pub(crate) fn is_file(input: &str) -> bool {
     !is_tarball(input)
 }
