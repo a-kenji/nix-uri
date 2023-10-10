@@ -37,3 +37,15 @@ name = "fuzz_comp_err"
 path = "fuzz_targets/fuzz_comp_err.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_display"
+path = "fuzz_targets/fuzz_display.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_display_parsing"
+path = "fuzz_targets/fuzz_display_parsing.rs"
+test = false
+doc = false
