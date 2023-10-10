@@ -47,8 +47,6 @@ pub enum NixUriError {
     NomParseError(#[from] nom::Err<nom::error::Error<String>>),
     #[error(transparent)]
     Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
-    #[error("Fluent Uri Parsing Error: {0}")]
-    FluentUri(#[from] fluent_uri::ParseError),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
