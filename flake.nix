@@ -278,6 +278,15 @@
                   pname = "fuzz_comp_err";
                   nativeBuildInputs = fuzzInputs;
                 };
+            inherit
+              cargoArtifacts
+              cargoClippy
+              cargoDoc
+              cargoNextest
+              cargoDeny
+              cargoTarpaulin
+              cargoLlvmCov
+            ;
           }
           // pkgs.lib.genAttrs [ "cli" ] (
             example: mkExample { inherit example cargoArtifacts craneLib; }
@@ -294,7 +303,6 @@
             cargoClippy
             cargoDoc
             cargoNextest
-            cargoTarpaulin
             cargoDeny
           ;
         };
