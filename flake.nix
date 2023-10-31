@@ -12,48 +12,48 @@
     crane = {
       url = "github:ipetkov/crane";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.rust-overlay.follows = "rust-overlay";
-      inputs.flake-utils.follows = "flake-utils";
     };
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-    rust-overlay,
-    crane,
-  }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+      crane,
+    }:
     flake-utils.lib.eachDefaultSystem (
-      system: let
+      system:
+      let
         pkgs = nixpkgs.legacyPackages.${system};
         stdenv =
-          if pkgs.stdenv.isLinux
-          then pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
-          else pkgs.stdenv;
-        overlays = [(import rust-overlay)];
-        rustPkgs = import nixpkgs {inherit system overlays;};
+          if pkgs.stdenv.isLinux then
+            pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
+          else
+            pkgs.stdenv;
+        overlays = [ (import rust-overlay) ];
+        rustPkgs = import nixpkgs { inherit system overlays; };
         src = self;
         RUST_TOOLCHAIN = src + "/rust-toolchain.toml";
         RUSTFMT_TOOLCHAIN = src + "/.rustfmt-toolchain.toml";
         cargoTOML = builtins.fromTOML (builtins.readFile (src + "/Cargo.toml"));
         inherit (cargoTOML.package) version name;
-        # rustToolchainTOML = rustPkgs.rust-bin.fromRustupToolchainFile RUST_TOOLCHAIN;
-        rustToolchainTOML = rustPkgs.rust-bin.stable.latest.minimal;
+        rustToolchainTOML = rustPkgs.rust-bin.fromRustupToolchainFile RUST_TOOLCHAIN;
         rustFmtToolchainTOML =
           rustPkgs.rust-bin.fromRustupToolchainFile
-          RUSTFMT_TOOLCHAIN;
+            RUSTFMT_TOOLCHAIN;
         rustToolchainDevTOML = rustToolchainTOML.override {
           extensions = [
             "clippy"
             "rust-analysis"
             "rust-docs"
           ];
-          targets = [];
+          targets = [ ];
         };
         gitDate = "${builtins.substring 0 4 self.lastModifiedDate}-${
-          builtins.substring 4 2 self.lastModifiedDate
-        }-${builtins.substring 6 2 self.lastModifiedDate}";
+            builtins.substring 4 2 self.lastModifiedDate
+          }-${builtins.substring 6 2 self.lastModifiedDate}";
         gitRev = self.shortRev or "Not committed yet.";
         cargoLock = {
           lockFile = builtins.path {
@@ -65,8 +65,8 @@
         rustc = rustToolchainTOML;
         cargo = rustToolchainTOML;
 
-        buildInputs = [];
-        nativeBuildInputs = [];
+        buildInputs = [ ];
+        nativeBuildInputs = [ ];
         devInputs = [
           rustToolchainDevTOML
           rustFmtToolchainTOML
@@ -96,30 +96,30 @@
 
           (pkgs.symlinkJoin {
             name = "cargo-udeps-wrapped";
-            paths = [pkgs.cargo-udeps];
-            nativeBuildInputs = [pkgs.makeWrapper];
+            paths = [ pkgs.cargo-udeps ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/cargo-udeps \
                 --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  (rustPkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
-                ]
-              }
+                  pkgs.lib.makeBinPath [
+                    (rustPkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
+                  ]
+                }
             '';
           })
           (pkgs.symlinkJoin {
             name = "cargo-careful-wrapped";
-            paths = [pkgs.cargo-careful];
-            nativeBuildInputs = [pkgs.makeWrapper];
+            paths = [ pkgs.cargo-careful ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/cargo-careful \
                 --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  (rustPkgs.rust-bin.selectLatestNightlyWith (
-                    toolchain: toolchain.default.override {extensions = ["rust-src"];}
-                  ))
-                ]
-              }
+                  pkgs.lib.makeBinPath [
+                    (rustPkgs.rust-bin.selectLatestNightlyWith (
+                      toolchain: toolchain.default.override { extensions = [ "rust-src" ]; }
+                    ))
+                  ]
+                }
             '';
           })
           pkgs.cargo-rdme
@@ -143,11 +143,11 @@
           pkgs.taplo
           pkgs.typos
         ];
-        editorConfigInputs = [pkgs.editorconfig-checker];
-        actionlintInputs = [pkgs.actionlint];
+        editorConfigInputs = [ pkgs.editorconfig-checker ];
+        actionlintInputs = [ pkgs.actionlint ];
         targetDir = "target/${
-          pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform
-        }/release";
+            pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform
+          }/release";
         # Common arguments for the crane build
         commonArgs = {
           inherit
@@ -157,11 +157,12 @@
             stdenv
             version
             name
-            ;
+          ;
           pname = name;
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchainTOML;
-        mkExample = {example, ...}:
+        mkExample =
+          { example, ... }:
           craneLib.buildPackage (
             commonArgs
             // {
@@ -176,9 +177,29 @@
         # Build *just* the cargo dependencies, so we can reuse
         # all of that work (e.g. via cachix) when running in CI
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-      in rec {
+        cargoDoc = craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
+        cargoClippy = craneLib.cargoClippy (
+          commonArgs
+          // {
+            inherit cargoArtifacts;
+            nativeBuildInputs = [ rustToolchainDevTOML ];
+          }
+        );
+        cargoTarpaulin = craneLib.cargoTarpaulin (
+          commonArgs // { inherit cargoArtifacts; }
+        );
+        cargoLlvmCov = craneLib.cargoLlvmCov (
+          commonArgs // { inherit cargoArtifacts; }
+        );
+        cargoNextest = craneLib.cargoNextest (
+          commonArgs // { inherit cargoArtifacts; }
+        );
+        cargoAudit = craneLib.cargoAudit (commonArgs // { inherit cargoArtifacts; });
+        cargoDeny = craneLib.cargoDeny (commonArgs // { inherit cargoArtifacts; });
+      in
+      rec {
         devShells = {
-          default = (pkgs.mkShell.override {inherit stdenv;}) {
+          default = (pkgs.mkShell.override { inherit stdenv; }) {
             buildInputs =
               shellInputs ++ fmtInputs ++ devInputs ++ buildInputs ++ nativeBuildInputs;
             inherit name;
@@ -186,15 +207,15 @@
             RUST_BACKTRACE = true;
             RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold";
           };
-          editorConfigShell = pkgs.mkShell {buildInputs = editorConfigInputs;};
-          actionlintShell = pkgs.mkShell {buildInputs = actionlintInputs;};
-          fmtShell = pkgs.mkShell {buildInputs = fmtInputs;};
-          fuzzShell = pkgs.mkShell {buildInputs = fuzzInputs;};
+          editorConfigShell = pkgs.mkShell { buildInputs = editorConfigInputs; };
+          actionlintShell = pkgs.mkShell { buildInputs = actionlintInputs; };
+          fmtShell = pkgs.mkShell { buildInputs = fmtInputs; };
+          fuzzShell = pkgs.mkShell { buildInputs = fuzzInputs; };
         };
         packages =
           {
             default = packages.crane;
-            upstream = (pkgs.makeRustPlatform {inherit cargo rustc;}).buildRustPackage {
+            upstream = (pkgs.makeRustPlatform { inherit cargo rustc; }).buildRustPackage {
               cargoDepsName = name;
               GIT_DATE = gitDate;
               GIT_REV = gitRev;
@@ -208,7 +229,7 @@
                 nativeBuildInputs
                 buildInputs
                 cargoLock
-                ;
+              ;
             };
             crane = craneLib.buildPackage (
               commonArgs
@@ -225,59 +246,72 @@
             );
             fuzz =
               ((crane.mkLib pkgs).overrideToolchain rustFmtToolchainTOML).buildPackage
-              rec {
-                src = ./.;
-                cargoArtifacts =
-                  ((crane.mkLib pkgs).overrideToolchain rustFmtToolchainTOML).buildDepsOnly
-                  {src = ./.;};
-                __flags = [
-                  "--cfg fuzzing"
-                  "--cfg fuzzing_repro"
-                  "-Cpasses=sancov-module"
-                  "-C opt-level=3"
-                  "-Cllvm-args=-sanitizer-coverage-level=4"
-                  "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters"
-                  "-Cllvm-args=-sanitizer-coverage-pc-table"
-                  "-Cllvm-args=-sanitizer-coverage-trace-compares"
-                  "-Z sanitizer=address"
-                  "-Zsanitizer=memory" # memory 1
-                  "-Zsanitizer-memory-track-origins" # memory 2
-                  "-Cllvm-args=-sanitizer-coverage-stack-depth" # only linux
-                  "-Cdebug-assertions"
-                ];
-                buildFlags = __flags;
-                cargoBuildCommand = "cargo b --package=nix-uri-fuzz --bin fuzz_comp_err";
-                # cargoBuildCommand = "cargo fuzz build fuzz_comp_err";
-                # buildPhaseCargoCommand = "cargo fuzz build fuzz_comp_err";
-                CARGO_PROFILE = "fuzz";
-                GIT_DATE = gitDate;
-                GIT_REV = gitRev;
-                doCheck = false;
-                version = "unstable-" + gitDate;
-                pname = "fuzz_comp_err";
-                nativeBuildInputs = fuzzInputs;
-              };
+                rec {
+                  src = ./.;
+                  cargoArtifacts =
+                    ((crane.mkLib pkgs).overrideToolchain rustFmtToolchainTOML).buildDepsOnly
+                      { src = ./.; };
+                  __flags = [
+                    "--cfg fuzzing"
+                    "--cfg fuzzing_repro"
+                    "-Cpasses=sancov-module"
+                    "-C opt-level=3"
+                    "-Cllvm-args=-sanitizer-coverage-level=4"
+                    "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters"
+                    "-Cllvm-args=-sanitizer-coverage-pc-table"
+                    "-Cllvm-args=-sanitizer-coverage-trace-compares"
+                    "-Z sanitizer=address"
+                    "-Zsanitizer=memory" # memory 1
+                    "-Zsanitizer-memory-track-origins" # memory 2
+                    "-Cllvm-args=-sanitizer-coverage-stack-depth" # only linux
+                    "-Cdebug-assertions"
+                  ];
+                  buildFlags = __flags;
+                  cargoBuildCommand = "cargo b --package=nix-uri-fuzz --bin fuzz_comp_err";
+                  # cargoBuildCommand = "cargo fuzz build fuzz_comp_err";
+                  # buildPhaseCargoCommand = "cargo fuzz build fuzz_comp_err";
+                  CARGO_PROFILE = "fuzz";
+                  GIT_DATE = gitDate;
+                  GIT_REV = gitRev;
+                  doCheck = false;
+                  version = "unstable-" + gitDate;
+                  pname = "fuzz_comp_err";
+                  nativeBuildInputs = fuzzInputs;
+                };
           }
-          // pkgs.lib.genAttrs ["cli"] (
-            example: mkExample {inherit example cargoArtifacts craneLib;}
+          // pkgs.lib.genAttrs [ "cli" ] (
+            example: mkExample { inherit example cargoArtifacts craneLib; }
           );
 
         apps.default = {
           type = "app";
           program = "${packages.default}/bin/${name}";
         };
+
+        checks = {
+          inherit
+            cargoArtifacts
+            cargoClippy
+            cargoDoc
+            cargoNextest
+            cargoTarpaulin
+            cargoDeny
+          ;
+        };
         formatter = pkgs.alejandra;
         nixosModules.fuzz-cli = pkgs.nixosTest {
           name = "fuzz-cli";
-          nodes.machine = {...}: {
-            imports = [
-              {
-                environment.systemPackages = [self.outputs.packages.x86_64-linux.fuzz];
-                virtualisation.graphics = false;
-                documentation.enable = false;
-              }
-            ];
-          };
+          nodes.machine =
+            { ... }:
+            {
+              imports = [
+                {
+                  environment.systemPackages = [ self.outputs.packages.x86_64-linux.fuzz ];
+                  virtualisation.graphics = false;
+                  documentation.enable = false;
+                }
+              ];
+            };
           testScript = ''
             start_all()
             with subtest("fuzzing"):
