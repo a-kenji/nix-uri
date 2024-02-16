@@ -89,7 +89,7 @@
           pkgs.cargo-dist
           pkgs.cargo-tarpaulin
           pkgs.cargo-public-api
-          pkgs.cargo-unused-features
+          # pkgs.cargo-unused-features
 
           # snapshot testing
           pkgs.cargo-insta
