@@ -182,6 +182,12 @@ impl FlakeRefParameters {
     pub fn add_arbitrary(&mut self, arbitrary: (String, String)) {
         self.arbitrary.push(arbitrary);
     }
+    pub fn get_rev(&self) -> Option<&String> {
+        self.rev.as_ref()
+    }
+    pub fn get_ref(&self) -> Option<&String> {
+        self.r#ref.as_ref()
+    }
 }
 
 pub enum FlakeRefParam {
