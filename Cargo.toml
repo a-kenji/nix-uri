@@ -1,6 +1,6 @@
 [package]
 name = "nix-uri"
-version = "0.0.0"
+version = "0.1.6"
 edition = "2021"
 authors = ["Alexander Kenji Berthold"]
 description = "Parse and manipulate the nix-uri scheme to and from flakerefs."
