@@ -573,6 +573,36 @@ impl FlakeRefType {
             FlakeRefType::None => None,
         }
     }
+    pub fn get_repo(&self) -> Option<String> {
+        match self {
+            FlakeRefType::GitHub { repo, .. }
+            | FlakeRefType::GitLab { repo, .. }
+            | FlakeRefType::Sourcehut { repo, .. } => Some(repo.into()),
+            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            FlakeRefType::Mercurial { .. }
+            | FlakeRefType::Path { .. }
+            | FlakeRefType::Indirect { .. }
+            | FlakeRefType::Tarball { .. }
+            | FlakeRefType::File { .. }
+            | FlakeRefType::Git { .. }
+            | FlakeRefType::None => None,
+        }
+    }
+    pub fn get_owner(&self) -> Option<String> {
+        match self {
+            FlakeRefType::GitHub { owner, .. }
+            | FlakeRefType::GitLab { owner, .. }
+            | FlakeRefType::Sourcehut { owner, .. } => Some(owner.into()),
+            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            FlakeRefType::Mercurial { .. }
+            | FlakeRefType::Path { .. }
+            | FlakeRefType::Indirect { .. }
+            | FlakeRefType::Tarball { .. }
+            | FlakeRefType::File { .. }
+            | FlakeRefType::Git { .. }
+            | FlakeRefType::None => None,
+        }
+    }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
         match self {
             FlakeRefType::GitHub { ref_or_rev, .. }
