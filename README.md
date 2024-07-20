@@ -28,7 +28,7 @@ To use `nix-uri`, add it as a dependency in your `Cargo.toml` file:
 
 ```rust
 [dependencies]
-nix-uri = "0.1.6"
+nix-uri = "0.1.7"
 ```
 
 or use `cargo add`:
