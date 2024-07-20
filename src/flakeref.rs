@@ -273,7 +273,13 @@ impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlakeRefType::File { url } => write!(f, "file:{url}"),
-            FlakeRefType::Git { url, r#type } => todo!(),
+            FlakeRefType::Git { url, r#type } => {
+                if let UrlType::None = r#type {
+                    return write!(f, "git:{url}");
+                }
+                let uri = format!("git+{}:{url}", r#type);
+                write!(f, "{uri}")
+            }
             FlakeRefType::GitHub {
                 owner,
                 repo,
@@ -353,9 +359,9 @@ impl Display for UrlType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UrlType::None => write!(f, "No Url Type Specified"),
-            UrlType::Https => write!(f, ""),
-            UrlType::Ssh => write!(f, ""),
-            UrlType::File => write!(f, ""),
+            UrlType::Https => write!(f, "https"),
+            UrlType::Ssh => write!(f, "ssh"),
+            UrlType::File => write!(f, "file"),
         }
     }
 }
