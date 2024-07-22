@@ -116,6 +116,13 @@ impl Display for FlakeRefParameters {
             res.push_str("ref=");
             res.push_str(r#ref);
         }
+        if let Some(rev) = &self.rev {
+            if !res.is_empty() {
+                res.push('?');
+            }
+            res.push_str("rev=");
+            res.push_str(rev);
+        }
         write!(f, "{res}")
     }
 }
@@ -702,7 +709,38 @@ mod tests {
         let parsed = parse_params(uri).unwrap();
         assert_eq!(("github:zellij-org/zellij", Some(flake_attrs)), parsed);
     }
-
+    #[test]
+    fn parse_simple_uri_ref() {
+        let uri = "github:zellij-org/zellij?ref=main";
+        let mut flake_attrs = FlakeRefParameters::default();
+        flake_attrs.r#ref(Some("main".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::GitHub {
+                owner: "zellij-org".into(),
+                repo: "zellij".into(),
+                ref_or_rev: None,
+            })
+            .params(flake_attrs)
+            .clone();
+        let parsed = parse_nix_uri(uri).unwrap();
+        assert_eq!(flake_ref, parsed);
+    }
+    #[test]
+    fn parse_simple_uri_rev() {
+        let uri = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
+        let mut flake_attrs = FlakeRefParameters::default();
+        flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::GitHub {
+                owner: "zellij-org".into(),
+                repo: "zellij".into(),
+                ref_or_rev: None,
+            })
+            .params(flake_attrs)
+            .clone();
+        let parsed = parse_nix_uri(uri).unwrap();
+        assert_eq!(flake_ref, parsed);
+    }
     #[test]
     fn parse_simple_uri_ref_or_rev_nom() {
         let uri = "github:zellij-org/zellij/main";
@@ -1192,7 +1230,36 @@ mod tests {
             .to_string();
         assert_eq!(expected, flake_ref);
     }
-
+    #[test]
+    fn display_simple_github_uri_ref() {
+        let expected = "github:zellij-org/zellij?ref=main";
+        let mut flake_attrs = FlakeRefParameters::default();
+        flake_attrs.r#ref(Some("main".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::GitHub {
+                owner: "zellij-org".into(),
+                repo: "zellij".into(),
+                ref_or_rev: None,
+            })
+            .params(flake_attrs)
+            .to_string();
+        assert_eq!(flake_ref, expected);
+    }
+    #[test]
+    fn display_simple_github_uri_rev() {
+        let expected = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
+        let mut flake_attrs = FlakeRefParameters::default();
+        flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::GitHub {
+                owner: "zellij-org".into(),
+                repo: "zellij".into(),
+                ref_or_rev: None,
+            })
+            .params(flake_attrs)
+            .to_string();
+        assert_eq!(flake_ref, expected);
+    }
     #[test]
     fn parse_simple_path_uri_indirect_absolute_without_prefix() {
         let uri = "/home/kenji/git";
