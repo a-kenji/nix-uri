@@ -25,7 +25,7 @@
 //!
 //! ```markdown
 //! [dependencies]
-//! nix-uri = "0.1.8"
+//! nix-uri = "0.1.9"
 //! ```
 //!
 //! or use `cargo add`:
