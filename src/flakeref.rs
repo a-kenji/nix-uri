@@ -65,10 +65,18 @@ impl Display for FlakeRef {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub struct FlakeRefParameters {
+    /// The subdirectory of the flake in which flake.nix is located. This parameter
+    /// enables having multiple flakes in a repository or tarball. The default is the
+    /// root directory of the flake.
     dir: Option<String>,
+    /// The hash of the NAR serialisation (in SRI format) of the contents of the flake.
+    /// This is useful for flake types such as tarballs that lack a unique content
+    /// identifier such as a Git commit hash.
     #[serde(rename = "narHash")]
     nar_hash: Option<String>,
+    /// A Git or Mercurial commit hash.
     rev: Option<String>,
+    ///  A Git or Mercurial branch or tag name.
     r#ref: Option<String>,
     branch: Option<String>,
     submodules: Option<String>,
