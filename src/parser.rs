@@ -9,12 +9,12 @@ use nom::{
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    flakeref::{FlakeRef, FlakeRefParam, FlakeRefParameters, FlakeRefType, UrlType},
+    flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
 };
 
 /// Parses content of the form `/owner/repo/ref_or_rev`
-/// into a `vec![owner, repo, ref_or_rev]`.
-pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, Vec<&str>> {
+/// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
+pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {
     use nom::sequence::separated_pair;
     let (input, owner_or_ref) = many_m_n(
         0,
@@ -26,12 +26,11 @@ pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, Vec<&str>> {
         ),
     )(input)?;
 
-    let owner_and_rev_or_ref: Vec<&str> = owner_or_ref
+    let owner_and_rev_or_ref = owner_or_ref
         .clone()
         .into_iter()
         .flat_map(|(x, y)| vec![x, y])
-        .filter(|s| !s.is_empty())
-        .collect();
+        .filter(|s| !s.is_empty());
     Ok((input, owner_and_rev_or_ref))
 }
 
@@ -60,15 +59,17 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
             // TODO: allow check of the parameters
             if let Ok(param) = param.parse() {
                 match param {
-                    FlakeRefParam::Dir => params.set_dir(Some(value.into())),
-                    FlakeRefParam::NarHash => params.set_nar_hash(Some(value.into())),
-                    FlakeRefParam::Host => params.set_host(Some(value.into())),
-                    FlakeRefParam::Ref => params.set_ref(Some(value.into())),
-                    FlakeRefParam::Rev => params.set_rev(Some(value.into())),
-                    FlakeRefParam::Branch => params.set_branch(Some(value.into())),
-                    FlakeRefParam::Submodules => params.set_submodules(Some(value.into())),
-                    FlakeRefParam::Shallow => params.set_shallow(Some(value.into())),
-                    FlakeRefParam::Arbitrary(param) => params.add_arbitrary((param, value.into())),
+                    FlakeRefParamKeys::Dir => params.set_dir(Some(value.into())),
+                    FlakeRefParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
+                    FlakeRefParamKeys::Host => params.set_host(Some(value.into())),
+                    FlakeRefParamKeys::Ref => params.set_ref(Some(value.into())),
+                    FlakeRefParamKeys::Rev => params.set_rev(Some(value.into())),
+                    FlakeRefParamKeys::Branch => params.set_branch(Some(value.into())),
+                    FlakeRefParamKeys::Submodules => params.set_submodules(Some(value.into())),
+                    FlakeRefParamKeys::Shallow => params.set_shallow(Some(value.into())),
+                    FlakeRefParamKeys::Arbitrary(param) => {
+                        params.add_arbitrary((param, value.into()))
+                    }
                 }
             }
         }
