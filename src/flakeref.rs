@@ -7,6 +7,8 @@ use nom::{
 };
 use serde::{Deserialize, Serialize};
 
+mod attr_path;
+
 use crate::{
     error::{NixUriError, NixUriResult},
     parser::{parse_owner_repo_ref, parse_url_type},
@@ -19,6 +21,7 @@ pub struct FlakeRef {
     pub r#type: FlakeRefType,
     flake: Option<bool>,
     pub params: FlakeRefParameters,
+    pub attributes: Option<attr_path::AttrPath>,
 }
 
 impl FlakeRef {
@@ -54,11 +57,14 @@ impl Display for FlakeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // TODO: convert into Option
         let params = self.params.to_string();
-        if params.is_empty() {
-            write!(f, "{}", self.r#type)
-        } else {
-            write!(f, "{}?{params}", self.r#type)
+        write!(f, "{}", self.r#type)?;
+        if !params.is_empty() {
+            write!(f, "?{params}")?;
         }
+        if let Some(attrs) = &self.attributes {
+            write!(f, "#{}", attrs)?;
+        }
+        Ok(())
     }
 }
 
@@ -617,6 +623,19 @@ mod tests {
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
     }
+    // #[test]
+    // fn parse_simple_uri_attr() {
+    //     let uri = "github:nixos/nixpkgs#foo";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::GitHub {
+    //             owner: "nixos".into(),
+    //             repo: "nixpkgs".into(),
+    //             ref_or_rev: None,
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
+    // }
 
     #[test]
     fn parse_simple_uri_parsed() {
