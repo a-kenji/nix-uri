@@ -475,7 +475,7 @@ impl FlakeRefType {
                 if !path.is_absolute()
                     || input.contains(']')
                     || input.contains('[')
-                    || !input.chars().all(|c| c.is_ascii())
+                    || !input.is_ascii()
                 {
                     return Err(NixUriError::NotAbsolute(input.into()));
                 }
