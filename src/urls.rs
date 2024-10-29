@@ -8,6 +8,14 @@ pub struct UrlWrapper {
     infer_type: bool,
     explicit_type: FlakeRefType,
 }
+impl TryFrom<&str> for UrlWrapper {
+    type Error = NixUriError;
+
+    fn try_from(input: &str) -> Result<Self, Self::Error> {
+        let url = Url::parse(input)?;
+        Ok(Self::new(url))
+    }
+}
 
 impl UrlWrapper {
     pub(crate) fn new(url: Url) -> Self {
@@ -16,10 +24,6 @@ impl UrlWrapper {
             infer_type: true,
             explicit_type: FlakeRefType::None,
         }
-    }
-    pub(crate) fn from(input: &str) -> NixUriResult<Self> {
-        let url = Url::parse(input)?;
-        Ok(Self::new(url))
     }
     pub fn infer_type(&mut self, infer_type: bool) -> &mut Self {
         self.infer_type = infer_type;
@@ -31,7 +35,7 @@ impl UrlWrapper {
     }
     pub fn convert_or_parse(input: &str) -> NixUriResult<FlakeRef> {
         // If default parsing fails, it might still be a `nix-uri`.
-        let url = Self::from(input).ok();
+        let url = Self::try_from(input).ok();
 
         if is_tarball(input) {
             return input.parse();

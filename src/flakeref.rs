@@ -65,10 +65,18 @@ impl Display for FlakeRef {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub struct FlakeRefParameters {
+    /// The subdirectory of the flake in which flake.nix is located. This parameter
+    /// enables having multiple flakes in a repository or tarball. The default is the
+    /// root directory of the flake.
     dir: Option<String>,
+    /// The hash of the NAR serialisation (in SRI format) of the contents of the flake.
+    /// This is useful for flake types such as tarballs that lack a unique content
+    /// identifier such as a Git commit hash.
     #[serde(rename = "narHash")]
     nar_hash: Option<String>,
+    /// A Git or Mercurial commit hash.
     rev: Option<String>,
+    ///  A Git or Mercurial branch or tag name.
     r#ref: Option<String>,
     branch: Option<String>,
     submodules: Option<String>,
@@ -197,7 +205,7 @@ impl FlakeRefParameters {
     }
 }
 
-pub enum FlakeRefParam {
+pub enum FlakeRefParamKeys {
     Dir,
     NarHash,
     Host,
@@ -209,11 +217,11 @@ pub enum FlakeRefParam {
     Arbitrary(String),
 }
 
-impl std::str::FromStr for FlakeRefParam {
+impl std::str::FromStr for FlakeRefParamKeys {
     type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use FlakeRefParam::*;
+        use FlakeRefParamKeys::*;
         match s {
             "dir" | "&dir" => Ok(Dir),
             "nar_hash" | "&nar_hash" => Ok(NarHash),
@@ -389,74 +397,34 @@ impl FlakeRefType {
             tag(":"),
             rest,
         ))(input)?;
-        if let Some((flake_ref_type, input)) = maybe_explicit_type {
-            match flake_ref_type {
-                "github" => {
+        if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
+            match flake_ref_type_str {
+                "github" | "gitlab" | "sourcehut" => {
                     let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                    let owner =
-                        owner_and_repo_or_ref
-                            .first()
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "owner".into(),
-                            ))?;
-                    let repo =
-                        owner_and_repo_or_ref
-                            .get(1)
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "repo".into(),
-                            ))?;
-                    let flake_ref_type = FlakeRefType::GitHub {
-                        owner: owner.to_string(),
-                        repo: repo.to_string(),
-                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
+                    let mut parsed_iter = owner_and_repo_or_ref.map(|s| s.to_string());
+                    let er_fn = |st: &str| {
+                        NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
                     };
-                    Ok(flake_ref_type)
-                }
-                "gitlab" => {
-                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                    let owner =
-                        owner_and_repo_or_ref
-                            .first()
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "owner".into(),
-                            ))?;
-                    let repo =
-                        owner_and_repo_or_ref
-                            .get(1)
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "repo".into(),
-                            ))?;
-                    let flake_ref_type = FlakeRefType::GitLab {
-                        owner: owner.to_string(),
-                        repo: repo.to_string(),
-                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
-                    };
-                    Ok(flake_ref_type)
-                }
-                "sourcehut" => {
-                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                    let owner =
-                        owner_and_repo_or_ref
-                            .first()
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "owner".into(),
-                            ))?;
-                    let repo =
-                        owner_and_repo_or_ref
-                            .get(1)
-                            .ok_or(NixUriError::MissingTypeParameter(
-                                flake_ref_type.into(),
-                                "repo".into(),
-                            ))?;
-                    let flake_ref_type = FlakeRefType::Sourcehut {
-                        owner: owner.to_string(),
-                        repo: repo.to_string(),
-                        ref_or_rev: owner_and_repo_or_ref.get(2).map(|s| s.to_string()),
+                    let owner = parsed_iter.next().ok_or(er_fn("owner"))?;
+                    let repo = parsed_iter.next().ok_or(er_fn("repo"))?;
+                    let ref_or_rev = parsed_iter.next();
+                    let flake_ref_type = match flake_ref_type_str {
+                        "github" => FlakeRefType::GitHub {
+                            owner,
+                            repo,
+                            ref_or_rev,
+                        },
+                        "gitlab" => FlakeRefType::GitLab {
+                            owner,
+                            repo,
+                            ref_or_rev,
+                        },
+                        "sourcehut" => FlakeRefType::Sourcehut {
+                            owner,
+                            repo,
+                            ref_or_rev,
+                        },
+                        _ => unreachable!(),
                     };
                     Ok(flake_ref_type)
                 }
@@ -475,8 +443,8 @@ impl FlakeRefType {
                 }
 
                 _ => {
-                    if flake_ref_type.starts_with("git+") {
-                        let url_type = parse_url_type(flake_ref_type)?;
+                    if flake_ref_type_str.starts_with("git+") {
+                        let url_type = parse_url_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
                         let flake_ref_type = FlakeRefType::Git {
@@ -484,8 +452,8 @@ impl FlakeRefType {
                             r#type: url_type,
                         };
                         Ok(flake_ref_type)
-                    } else if flake_ref_type.starts_with("hg+") {
-                        let url_type = parse_url_type(flake_ref_type)?;
+                    } else if flake_ref_type_str.starts_with("hg+") {
+                        let url_type = parse_url_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
                         let flake_ref_type = FlakeRefType::Mercurial {
@@ -494,7 +462,7 @@ impl FlakeRefType {
                         };
                         Ok(flake_ref_type)
                     } else {
-                        Err(NixUriError::UnknownUriType(flake_ref_type.into()))
+                        Err(NixUriError::UnknownUriType(flake_ref_type_str.into()))
                     }
                 }
             }
@@ -517,13 +485,8 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
             //TODO: parse uri
-            let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-            if !owner_and_repo_or_ref.is_empty() {
-                let id = if let Some(id) = owner_and_repo_or_ref.first() {
-                    id
-                } else {
-                    input
-                };
+            let (input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+            if let Some(id) = owner_and_repo_or_ref.next() {
                 if !id
                     .chars()
                     .all(|c| c.is_ascii_alphabetic() || c.is_control())
@@ -533,12 +496,12 @@ impl FlakeRefType {
                 }
                 let flake_ref_type = FlakeRefType::Indirect {
                     id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
+                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
                 };
                 Ok(flake_ref_type)
             } else {
-                let (_input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let id = if let Some(id) = owner_and_repo_or_ref.first() {
+                let (_input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                let id = if let Some(id) = owner_and_repo_or_ref.next() {
                     id
                 } else {
                     input
@@ -548,7 +511,7 @@ impl FlakeRefType {
                 }
                 Ok(FlakeRefType::Indirect {
                     id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.get(1).map(|s| s.to_string()),
+                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
                 })
             }
         }
@@ -556,28 +519,16 @@ impl FlakeRefType {
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {
-            FlakeRefType::File { url } => None,
-            FlakeRefType::Git { url, r#type } => None,
-            FlakeRefType::GitHub {
-                owner,
-                repo,
-                ref_or_rev,
-            } => Some(repo.to_string()),
-            FlakeRefType::GitLab {
-                owner,
-                repo,
-                ref_or_rev,
-            } => Some(repo.to_string()),
-            FlakeRefType::Indirect { id, ref_or_rev } => None,
-            FlakeRefType::Mercurial { url, r#type } => None,
-            FlakeRefType::Path { path } => None,
-            FlakeRefType::Sourcehut {
-                owner,
-                repo,
-                ref_or_rev,
-            } => Some(repo.to_string()),
-            FlakeRefType::Tarball { url, r#type } => None,
-            FlakeRefType::None => None,
+            FlakeRefType::GitHub { repo, .. } => Some(repo.to_string()),
+            FlakeRefType::GitLab { repo, .. } => Some(repo.to_string()),
+            FlakeRefType::Sourcehut { repo, .. } => Some(repo.to_string()),
+            FlakeRefType::File { .. }
+            | FlakeRefType::Git { .. }
+            | FlakeRefType::Tarball { .. }
+            | FlakeRefType::None
+            | FlakeRefType::Indirect { .. }
+            | FlakeRefType::Mercurial { .. }
+            | FlakeRefType::Path { .. } => None,
         }
     }
     pub fn get_repo(&self) -> Option<String> {
