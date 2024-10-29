@@ -5,14 +5,14 @@ name: nix-develop
 on:
   push:
     branches:
-      - master
+      - main
     paths:
       - '**.nix'
       - 'flake.lock'
       - 'rust-toolchain.toml'
   pull_request:
     branches:
-      - master
+      - main
     paths:
       - '**.nix'
       - 'flake.lock'
