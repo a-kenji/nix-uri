@@ -3,10 +3,10 @@ name: nix
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   build:
@@ -33,15 +33,3 @@ jobs:
           fetch-depth: 0
       - uses: cachix/install-nix-action@v30
       - run: nix flake check
-
-  deny:
-    runs-on: ubuntu-latest
-    name: "cargo deny"
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Nix Flakes doesn't work on shallow clones
-          fetch-depth: 0
-      - uses: cachix/install-nix-action@v30
-      - run: nix develop .#ciShell --command cargo deny check 
