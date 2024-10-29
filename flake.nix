@@ -193,8 +193,6 @@
         cargoNextest = craneLib.cargoNextest (
           commonArgs // { inherit cargoArtifacts; }
         );
-        cargoAudit = craneLib.cargoAudit (commonArgs // { inherit cargoArtifacts; });
-        cargoDeny = craneLib.cargoDeny (commonArgs // { inherit cargoArtifacts; });
       in
       rec {
         devShells = {
@@ -282,7 +280,6 @@
               cargoClippy
               cargoDoc
               cargoNextest
-              cargoDeny
               cargoTarpaulin
               cargoLlvmCov
             ;
@@ -302,7 +299,6 @@
             cargoClippy
             cargoDoc
             cargoNextest
-            cargoDeny
           ;
         };
         formatter = pkgs.alejandra;
