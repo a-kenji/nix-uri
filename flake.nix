@@ -64,27 +64,12 @@
           rustToolchainDevTOML
           rustFmtToolchainTOML
           pkgs.just
-          pkgs.lychee
-          pkgs.taplo
 
-          pkgs.cargo-deny
-          pkgs.cargo-bloat
           pkgs.cargo-fuzz
-          pkgs.cargo-machete
-          pkgs.cargo-outdated
-          pkgs.cargo-watch
           pkgs.cargo-flamegraph
           pkgs.cargo-diet
-          pkgs.cargo-modules
-          pkgs.cargo-nextest
-          pkgs.cargo-dist
           pkgs.cargo-tarpaulin
           pkgs.cargo-public-api
-
-          # snapshot testing
-          pkgs.cargo-insta
-
-          pkgs.reuse
 
           (pkgs.symlinkJoin {
             name = "cargo-udeps-wrapped";
