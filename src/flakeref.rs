@@ -237,6 +237,25 @@ impl std::str::FromStr for FlakeRefParamKeys {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GitForge {
+    GitHub,
+    GitLab,
+    SourceHut,
+}
+impl Display for GitForge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                GitForge::GitHub => "github",
+                GitForge::GitLab => "gitlab",
+                GitForge::SourceHut => "sourcehut",
+            }
+        )
+    }
+}
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlakeRefType {
@@ -252,12 +271,9 @@ pub enum FlakeRefType {
         url: String,
         r#type: UrlType,
     },
-    GitHub {
-        owner: String,
-        repo: String,
-        ref_or_rev: Option<String>,
-    },
-    GitLab {
+
+    GitForge {
+        platform: GitForge,
         owner: String,
         repo: String,
         ref_or_rev: Option<String>,
@@ -276,11 +292,6 @@ pub enum FlakeRefType {
     /// Path must be an absolute path.
     Path {
         path: String,
-    },
-    Sourcehut {
-        owner: String,
-        repo: String,
-        ref_or_rev: Option<String>,
     },
     Tarball {
         url: String,
@@ -301,27 +312,17 @@ impl Display for FlakeRefType {
                 let uri = format!("git+{}:{url}", r#type);
                 write!(f, "{uri}")
             }
-            FlakeRefType::GitHub {
+            FlakeRefType::GitForge {
+                platform,
                 owner,
                 repo,
                 ref_or_rev,
             } => {
+                write!(f, "{platform}:{owner}/{repo}");
                 if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "github:{owner}/{repo}/{ref_or_rev}")
-                } else {
-                    write!(f, "github:{owner}/{repo}")
+                    write!(f, "/{ref_or_rev}");
                 }
-            }
-            FlakeRefType::GitLab {
-                owner,
-                repo,
-                ref_or_rev,
-            } => {
-                if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "gitlab:{owner}/{repo}/{ref_or_rev}")
-                } else {
-                    write!(f, "gitlab:{owner}/{repo}")
-                }
+                Ok(())
             }
             FlakeRefType::Indirect { id, ref_or_rev } => {
                 if let Some(ref_or_rev) = ref_or_rev {
@@ -332,17 +333,6 @@ impl Display for FlakeRefType {
             }
             FlakeRefType::Mercurial { url, r#type } => todo!(),
             FlakeRefType::Path { path } => todo!(),
-            FlakeRefType::Sourcehut {
-                owner,
-                repo,
-                ref_or_rev,
-            } => {
-                if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "sourcehut:{owner}/{repo}/{ref_or_rev}")
-                } else {
-                    write!(f, "sourcehut:{owner}/{repo}")
-                }
-            }
             // TODO: alternate tarball representation
             FlakeRefType::Tarball { url, r#type } => {
                 write!(f, "file:{url}")
@@ -408,25 +398,19 @@ impl FlakeRefType {
                     let owner = parsed_iter.next().ok_or(er_fn("owner"))?;
                     let repo = parsed_iter.next().ok_or(er_fn("repo"))?;
                     let ref_or_rev = parsed_iter.next();
-                    let flake_ref_type = match flake_ref_type_str {
-                        "github" => FlakeRefType::GitHub {
-                            owner,
-                            repo,
-                            ref_or_rev,
-                        },
-                        "gitlab" => FlakeRefType::GitLab {
-                            owner,
-                            repo,
-                            ref_or_rev,
-                        },
-                        "sourcehut" => FlakeRefType::Sourcehut {
-                            owner,
-                            repo,
-                            ref_or_rev,
-                        },
+                    let platform = match flake_ref_type_str {
+                        "github" => GitForge::GitHub,
+                        "gitlab" => GitForge::GitLab,
+                        "sourcehut" => GitForge::SourceHut,
                         _ => unreachable!(),
                     };
-                    Ok(flake_ref_type)
+                    let res = FlakeRefType::GitForge {
+                        platform,
+                        owner,
+                        repo,
+                        ref_or_rev,
+                    };
+                    Ok(res)
                 }
                 "path" => {
                     // TODO: check if path is an absolute path, if not error
@@ -519,9 +503,7 @@ impl FlakeRefType {
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitHub { repo, .. } => Some(repo.to_string()),
-            FlakeRefType::GitLab { repo, .. } => Some(repo.to_string()),
-            FlakeRefType::Sourcehut { repo, .. } => Some(repo.to_string()),
+            FlakeRefType::GitForge { repo, .. } => Some(repo.to_string()),
             FlakeRefType::File { .. }
             | FlakeRefType::Git { .. }
             | FlakeRefType::Tarball { .. }
@@ -533,9 +515,7 @@ impl FlakeRefType {
     }
     pub fn get_repo(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitHub { repo, .. }
-            | FlakeRefType::GitLab { repo, .. }
-            | FlakeRefType::Sourcehut { repo, .. } => Some(repo.into()),
+            FlakeRefType::GitForge { repo, .. } => Some(repo.into()),
             // TODO: return a proper error, if ref_or_rev is tried to be specified
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
@@ -548,9 +528,7 @@ impl FlakeRefType {
     }
     pub fn get_owner(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitHub { owner, .. }
-            | FlakeRefType::GitLab { owner, .. }
-            | FlakeRefType::Sourcehut { owner, .. } => Some(owner.into()),
+            FlakeRefType::GitForge { owner, .. } => Some(owner.into()),
             // TODO: return a proper error, if ref_or_rev is tried to be specified
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
@@ -563,10 +541,8 @@ impl FlakeRefType {
     }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
         match self {
-            FlakeRefType::GitHub { ref_or_rev, .. }
-            | FlakeRefType::GitLab { ref_or_rev, .. }
-            | FlakeRefType::Indirect { ref_or_rev, .. }
-            | FlakeRefType::Sourcehut { ref_or_rev, .. } => {
+            FlakeRefType::GitForge { ref_or_rev, .. }
+            | FlakeRefType::Indirect { ref_or_rev, .. } => {
                 *ref_or_rev = ref_or_rev_alt;
             }
             // TODO: return a proper error, if ref_or_rev is tried to be specified
@@ -608,7 +584,8 @@ mod tests {
     fn parse_simple_uri() {
         let uri = "github:nixos/nixpkgs";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "nixos".into(),
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,
@@ -622,7 +599,8 @@ mod tests {
     fn parse_simple_uri_parsed() {
         let uri = "github:zellij-org/zellij";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -636,7 +614,8 @@ mod tests {
     fn parse_simple_uri_nom() {
         let uri = "github:zellij-org/zellij";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -666,7 +645,8 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -682,7 +662,8 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -696,7 +677,8 @@ mod tests {
     fn parse_simple_uri_ref_or_rev_nom() {
         let uri = "github:zellij-org/zellij/main";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: Some("main".into()),
@@ -711,7 +693,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: Some("main".into()),
@@ -728,7 +711,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -744,7 +728,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -761,7 +746,8 @@ mod tests {
         params.dir(Some("assets".into()));
         params.nar_hash(Some("fakeHash256".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -800,7 +786,8 @@ mod tests {
     fn parse_gitlab_simple() {
         let uri = "gitlab:veloren/veloren";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitLab {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: None,
@@ -814,7 +801,8 @@ mod tests {
         let uri = "gitlab:veloren/veloren/master";
         let parsed = parse_nix_uri(uri).unwrap();
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitLab {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: Some("master".into()),
@@ -827,7 +815,8 @@ mod tests {
         let uri = "gitlab:veloren/veloren/19742bb9300fb0be9fdc92f30766c95230a8a371";
         let parsed = crate::parser::parse_nix_uri(uri).unwrap();
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitLab {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: Some("19742bb9300fb0be9fdc92f30766c95230a8a371".into()),
@@ -856,7 +845,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.host(Some("git.openldap.org".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitLab {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitLab,
                 owner: "openldap".into(),
                 repo: "openldap".into(),
                 ref_or_rev: None,
@@ -943,7 +933,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_ref(Some("fix.hls-docutils".to_owned()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "smunix".into(),
                 repo: "MyST-Parser".into(),
                 ref_or_rev: None,
@@ -958,7 +949,8 @@ mod tests {
         let uri = "github:cachix/devenv/v0.5";
         let mut params = FlakeRefParameters::default();
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "cachix".into(),
                 repo: "devenv".into(),
                 ref_or_rev: Some("v0.5".into()),
@@ -988,7 +980,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("gitlab.inria.fr".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitLab {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitLab,
                 owner: "fpottier".to_owned(),
                 repo: "menhir".to_owned(),
                 ref_or_rev: Some("20201216".to_owned()),
@@ -1085,7 +1078,8 @@ mod tests {
     fn parse_simple_uri_sourcehut() {
         let uri = "sourcehut:~misterio/nix-colors";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: None,
@@ -1098,7 +1092,8 @@ mod tests {
     fn parse_simple_uri_sourcehut_rev() {
         let uri = "sourcehut:~misterio/nix-colors/main";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("main".to_owned()),
@@ -1113,7 +1108,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("git.example.org".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: None,
@@ -1127,7 +1123,8 @@ mod tests {
     fn parse_simple_uri_sourcehut_ref() {
         let uri = "sourcehut:~misterio/nix-colors/182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c".to_owned()),
@@ -1143,7 +1140,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
@@ -1157,7 +1155,8 @@ mod tests {
     fn display_simple_sourcehut_uri_ref_or_rev() {
         let expected = "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
@@ -1172,7 +1171,8 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::Sourcehut {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
@@ -1187,7 +1187,8 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
@@ -1202,7 +1203,8 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: GitForge::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,

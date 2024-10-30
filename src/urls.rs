@@ -79,7 +79,8 @@ impl UrlWrapper {
                     )));
                 }
 
-                Ok(FlakeRefType::GitHub {
+                Ok(FlakeRefType::GitForge {
+                    platform: crate::GitForge::GitHub,
                     owner: segments[0].to_string(),
                     repo: segments[1].to_string(),
                     ref_or_rev,
@@ -97,7 +98,8 @@ mod tests {
     fn simple_url_conversion() {
         let url = "https://github.com/nixos/nixpkgs";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitHub {
+            .r#type(FlakeRefType::GitForge {
+                platform: crate::GitForge::GitHub,
                 owner: "nixos".into(),
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,
