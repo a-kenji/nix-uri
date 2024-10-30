@@ -46,10 +46,6 @@
             "rust-docs"
           ];
         };
-        gitDate = "${builtins.substring 0 4 self.lastModifiedDate}-${
-          builtins.substring 4 2 self.lastModifiedDate
-        }-${builtins.substring 6 2 self.lastModifiedDate}";
-        gitRev = self.shortRev or "Not committed yet.";
         cargoLock = {
           lockFile = builtins.path {
             path = self + "/Cargo.lock";
@@ -184,11 +180,8 @@
             default = packages.crane;
             upstream = (pkgs.makeRustPlatform {inherit cargo rustc;}).buildRustPackage {
               cargoDepsName = name;
-              GIT_DATE = gitDate;
-              GIT_REV = gitRev;
               doCheck = false;
               ASSET_DIR = "${targetDir}/assets/";
-              version = "unstable" + gitDate;
               inherit
                 name
                 src
@@ -200,11 +193,7 @@
               commonArgs
               // {
                 cargoExtraArgs = "-p ${name}";
-                GIT_DATE = gitDate;
-                GIT_REV = gitRev;
                 doCheck = false;
-                ASSET_DIR = "${targetDir}/assets/";
-                version = "unstable-" + gitDate;
                 pname = name;
                 inherit name cargoArtifacts stdenv;
               }
@@ -234,10 +223,7 @@
                 buildFlags = __flags;
                 cargoBuildCommand = "cargo b --package=nix-uri-fuzz --bin fuzz_comp_err";
                 CARGO_PROFILE = "fuzz";
-                GIT_DATE = gitDate;
-                GIT_REV = gitRev;
                 doCheck = false;
-                version = "unstable-" + gitDate;
                 pname = "fuzz_comp_err";
                 nativeBuildInputs = fuzzInputs;
               };
