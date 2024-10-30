@@ -24,10 +24,6 @@
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
-        stdenv =
-          if pkgs.stdenv.isLinux
-          then pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
-          else pkgs.stdenv;
         overlays = [(import rust-overlay)];
         rustPkgs = import nixpkgs {inherit system overlays;};
         src = self;
@@ -124,7 +120,6 @@
         commonArgs = {
           inherit
             src
-            stdenv
             version
             name
             ;
@@ -135,7 +130,7 @@
           craneLib.buildPackage (
             commonArgs
             // {
-              inherit cargoArtifacts stdenv;
+              inherit cargoArtifacts;
               pname = example;
               cargoExtraArgs = "--example ${example}";
               doCheck = false;
@@ -162,13 +157,12 @@
         );
       in rec {
         devShells = {
-          default = (pkgs.mkShell.override {inherit stdenv;}) {
+          default = pkgs.mkShell {
             buildInputs =
               shellInputs ++ fmtInputs ++ devInputs;
             inherit name;
             FLK_LOG = "debug";
             RUST_BACKTRACE = true;
-            RUSTFLAGS = "-C linker=clang -C link-arg=-fuse-ld=${pkgs.mold}/bin/mold";
           };
           editorConfigShell = pkgs.mkShell {buildInputs = editorConfigInputs;};
           actionlintShell = pkgs.mkShell {buildInputs = actionlintInputs;};
@@ -185,7 +179,6 @@
               inherit
                 name
                 src
-                stdenv
                 cargoLock
                 ;
             };
@@ -195,7 +188,7 @@
                 cargoExtraArgs = "-p ${name}";
                 doCheck = false;
                 pname = name;
-                inherit name cargoArtifacts stdenv;
+                inherit name cargoArtifacts;
               }
             );
             fuzz =
