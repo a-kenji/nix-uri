@@ -7,7 +7,7 @@ use nom::{
 };
 use serde::{Deserialize, Serialize};
 
-mod attr_path;
+pub(crate) mod attr_path;
 
 use crate::{
     error::{NixUriError, NixUriResult},
@@ -600,6 +600,7 @@ impl std::str::FromStr for FlakeRef {
     type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        println!("input: {}", s);
         use crate::parser::parse_nix_uri;
         parse_nix_uri(s)
     }
@@ -623,19 +624,24 @@ mod tests {
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
     }
-    // #[test]
-    // fn parse_simple_uri_attr() {
-    //     let uri = "github:nixos/nixpkgs#foo";
-    //     let expected = FlakeRef::default()
-    //         .r#type(FlakeRefType::GitHub {
-    //             owner: "nixos".into(),
-    //             repo: "nixpkgs".into(),
-    //             ref_or_rev: None,
-    //         })
-    //         .clone();
-    //     let parsed: FlakeRef = uri.try_into().unwrap();
-    //     assert_eq!(expected, parsed);
-    // }
+    #[test]
+    fn parse_simple_uri_attr() {
+        let uri = "github:nixos/nixpkgs#foo";
+        let mut expected = FlakeRef {
+            r#type: FlakeRefType::GitHub {
+                owner: "nixos".into(),
+                repo: "nixpkgs".into(),
+                ref_or_rev: None,
+            },
+            attributes: Some(attr_path::AttrPath {
+                attrs: vec!["foo".to_string()],
+            }),
+            ..Default::default()
+        };
+
+        let parsed: FlakeRef = uri.try_into().unwrap();
+        assert_eq!(expected, parsed);
+    }
 
     #[test]
     fn parse_simple_uri_parsed() {

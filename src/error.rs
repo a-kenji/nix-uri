@@ -11,6 +11,9 @@ pub enum NixUriError {
     /// Generic parsing fail
     #[error("Error parsing: {0}")]
     ParseError(String),
+    /// Invalid Attribute path
+    #[error("Not a valid attribute-path string: {0}")]
+    InvalidAttrPath(String),
     /// Invalid Url
     #[error("Not a valid Url: {0}")]
     InvalidUrl(String),

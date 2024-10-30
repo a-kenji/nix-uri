@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
@@ -8,10 +10,10 @@ use nom::{
 };
 
 use crate::{
+    attr_path::AttrPath,
     error::{NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
 };
-
 /// Parses content of the form `/owner/repo/ref_or_rev`
 /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
 pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {
@@ -95,6 +97,14 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         return Err(NixUriError::InvalidUrl(input.into()));
     }
 
+    let (input, flake) = if let Some(attr_hash_posn) = input.find("#") {
+        let (input, flake) = input.split_at(attr_hash_posn);
+        let flake = &flake[1..];
+        (input, flake)
+    } else {
+        (input, "")
+    };
+
     let (input, params) = parse_params(input)?;
     let mut flake_ref = FlakeRef::default();
     let flake_ref_type = FlakeRefType::parse_type(input)?;
@@ -102,6 +112,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
     if let Some(params) = params {
         flake_ref.params(params);
     }
+    flake_ref.attributes = AttrPath::from_str(flake).ok();
 
     Ok(flake_ref)
 }
