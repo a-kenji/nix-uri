@@ -240,11 +240,6 @@
             example: mkExample {inherit example cargoArtifacts craneLib;}
           );
 
-        apps.default = {
-          type = "app";
-          program = "${packages.default}/bin/${name}";
-        };
-
         checks = {
           inherit
             cargoArtifacts
