@@ -134,6 +134,7 @@
           rustFmtToolchainTOML
         ];
         fmtInputs = [
+          rustFmtToolchainTOML
           pkgs.alejandra
           pkgs.treefmt
           pkgs.taplo
@@ -186,7 +187,7 @@
         cargoLlvmCov = craneLib.cargoLlvmCov (
           commonArgs // {inherit cargoArtifacts;}
         );
-        cargoNextest = craneLib.cargoNextest (
+        cargoTest = craneLib.cargoTest (
           commonArgs // {inherit cargoArtifacts;}
         );
       in rec {
@@ -274,9 +275,9 @@
               cargoArtifacts
               cargoClippy
               cargoDoc
-              cargoNextest
               cargoTarpaulin
               cargoLlvmCov
+              cargoTest
               ;
           }
           // pkgs.lib.genAttrs ["cli"] (
@@ -293,7 +294,7 @@
             cargoArtifacts
             cargoClippy
             cargoDoc
-            cargoNextest
+            cargoTest
             ;
         };
         formatter = pkgs.alejandra;
