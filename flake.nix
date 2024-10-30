@@ -45,7 +45,6 @@
             "rust-analysis"
             "rust-docs"
           ];
-          targets = [];
         };
         gitDate = "${builtins.substring 0 4 self.lastModifiedDate}-${
           builtins.substring 4 2 self.lastModifiedDate
@@ -61,8 +60,6 @@
         rustc = rustToolchainTOML;
         cargo = rustToolchainTOML;
 
-        buildInputs = [];
-        nativeBuildInputs = [];
         devInputs = [
           rustToolchainDevTOML
           rustFmtToolchainTOML
@@ -83,7 +80,6 @@
           pkgs.cargo-dist
           pkgs.cargo-tarpaulin
           pkgs.cargo-public-api
-          # pkgs.cargo-unused-features
 
           # snapshot testing
           pkgs.cargo-insta
@@ -120,7 +116,6 @@
           })
           pkgs.cargo-rdme
 
-          #alternative linker
           pkgs.llvmPackages.bintools
           pkgs.mold
           pkgs.clang
@@ -145,12 +140,9 @@
         targetDir = "target/${
           pkgs.rust.toRustTarget pkgs.stdenv.targetPlatform
         }/release";
-        # Common arguments for the crane build
         commonArgs = {
           inherit
             src
-            buildInputs
-            nativeBuildInputs
             stdenv
             version
             name
@@ -165,13 +157,10 @@
               inherit cargoArtifacts stdenv;
               pname = example;
               cargoExtraArgs = "--example ${example}";
-              # Prevent cargo test and nextest from duplicating tests
               doCheck = false;
             }
           );
 
-        # Build *just* the cargo dependencies, so we can reuse
-        # all of that work (e.g. via cachix) when running in CI
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         cargoDoc = craneLib.cargoDoc (commonArgs // {inherit cargoArtifacts;});
         cargoClippy = craneLib.cargoClippy (
@@ -194,7 +183,7 @@
         devShells = {
           default = (pkgs.mkShell.override {inherit stdenv;}) {
             buildInputs =
-              shellInputs ++ fmtInputs ++ devInputs ++ buildInputs ++ nativeBuildInputs;
+              shellInputs ++ fmtInputs ++ devInputs;
             inherit name;
             FLK_LOG = "debug";
             RUST_BACKTRACE = true;
@@ -219,8 +208,6 @@
                 name
                 src
                 stdenv
-                nativeBuildInputs
-                buildInputs
                 cargoLock
                 ;
             };
@@ -261,8 +248,6 @@
                 ];
                 buildFlags = __flags;
                 cargoBuildCommand = "cargo b --package=nix-uri-fuzz --bin fuzz_comp_err";
-                # cargoBuildCommand = "cargo fuzz build fuzz_comp_err";
-                # buildPhaseCargoCommand = "cargo fuzz build fuzz_comp_err";
                 CARGO_PROFILE = "fuzz";
                 GIT_DATE = gitDate;
                 GIT_REV = gitRev;
