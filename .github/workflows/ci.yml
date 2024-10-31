@@ -1,0 +1,160 @@
+name: "ci"
+on:
+  workflow_dispatch: # allows manual triggering
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  merge_group:
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    environment: cachix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "build dependencies"
+        run: nix build .#checks.x86_64-linux.cargoArtifacts -Lvv --no-update-lock-file
+  formatting:
+    runs-on: ubuntu-latest
+    environment: cachix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "check formatting"
+        run: nix build .#checks.x86_64-linux.treefmt -Lvv --no-update-lock-file
+  tests:
+    runs-on: ubuntu-latest
+    environment: cachix
+    needs: ['formatting', 'dependencies']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "run tests"
+        run: nix build .#checks.x86_64-linux.cargoTest -Lvv --no-update-lock-file
+  docs:
+    runs-on: ubuntu-latest
+    environment: cachix
+    needs: ['formatting', 'dependencies']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "build cargo documentation"
+        run: nix build .#checks.x86_64-linux.cargoDoc -Lvv --no-update-lock-file
+  clippy:
+    runs-on: ubuntu-latest
+    environment: cachix
+    needs: ['formatting', 'dependencies']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "run cargo clippy"
+        run: nix build .#checks.x86_64-linux.cargoClippy -Lvv --no-update-lock-file
+  devshells:
+    runs-on: ubuntu-latest
+    environment: cachix
+    needs: ['formatting']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "build devshells"
+        run: nix develop .#full -Lvv --no-update-lock-file
+      - name: "build fuzzing devshell"
+        run: nix develop .#fuzz -Lvv --no-update-lock-file
+  example:
+    runs-on: ubuntu-latest
+    environment: cachix
+    needs: ['formatting', 'dependencies']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: cachix/cachix-action@v15
+        with:
+          name: kenji
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+        with:
+          diagnostic-endpoint: ""
+      - name: "build example cli"
+        run: nix build .#cli -Lvv --no-update-lock-file
