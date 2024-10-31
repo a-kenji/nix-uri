@@ -48,9 +48,11 @@
 //!  ```
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
+//!   # use nix_uri::GitForge;
 //!   let uri = "github:nixos/nixpkgs";
 //!   let expected = FlakeRef::new(
-//!                 FlakeRefType::GitHub {
+//!                 FlakeRefType::GitForge {
+//!                 platform: GitForge::GitHub,
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
@@ -64,9 +66,11 @@
 //!   ```
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
+//!   # use nix_uri::GitForge;
 //!   let expected = "github:nixos/nixpkgs";
 //!   let uri = FlakeRef::new(
-//!                 FlakeRefType::GitHub {
+//!                 FlakeRefType::GitForge {
+//!                 platform: GitForge::GitHub,
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
