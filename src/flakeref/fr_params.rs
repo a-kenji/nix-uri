@@ -227,7 +227,7 @@ impl std::str::FromStr for FlakeRefParamKeys {
 }
 
 #[cfg(test)]
-mod incremental_parse_tests {
+mod test_incremental_parse {
     use super::*;
     #[test]
     fn empty() {

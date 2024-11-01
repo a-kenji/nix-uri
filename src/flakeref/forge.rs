@@ -48,6 +48,8 @@ impl GitForgePlatform {
 }
 
 impl GitForge {
+    // TODO?: Parse this incrementally. First get owner/repo, get Option</ref-rev>
+    // TODO?: Apply gitlab/hub/sourcehut rule-checks
     /// Parses content of the form `/owner/repo/ref_or_rev`
     /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {
@@ -58,6 +60,7 @@ impl GitForge {
             separated_pair(
                 take_until("/"),
                 tag("/"),
+                // BUG: "owner/repo#?... parses out to ["owner", "repo#"]
                 alt((take_until("/"), take_until("?"), take_until("#"), rest)),
             ),
         )(input)?;
@@ -69,17 +72,6 @@ impl GitForge {
             .filter(|s| !s.is_empty());
         Ok((input, owner_and_rev_or_ref))
     }
-
-    // pub fn parse(input: &str) -> IResult<&str, Self> {
-    //     // <platform>:... -> ...
-    //     let (rest, platform) = GitForgePlatform::parse(input)?;
-    //     // <owner>/<repo>... -> <repo>...
-    //     let (rest, owner) = take_until(tag("/"))(rest)?;
-    //     let (rest, _) = tag("/")(rest)?;
-    //
-    //     // <repo>[/rev-refg | ?opts | #attrs] -> [/rev-refg | ?opts | #attrs]
-    //     let (rest, repo) = take_until(alt((tag("/"), tag("?"), tag("#"))))(rest)?;
-    // }
 }
 
 impl Display for GitForgePlatform {
@@ -97,7 +89,7 @@ impl Display for GitForgePlatform {
 }
 
 #[cfg(test)]
-mod incremental_parsing_tests {
+mod test_incremental_parse {
     use super::*;
     use crate::parser::{parse_nix_uri, parse_params};
 
@@ -131,41 +123,67 @@ mod incremental_parsing_tests {
         assert_eq!(None, iter.next());
     }
     #[test]
+    fn parse_owner_repo_terminated() {
+        let input = "owner/repo?🤡";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let parsed_out: Vec<_> = iter.collect();
+        let expect_out = vec!["owner", "repo"];
+        assert_eq!(parsed_out, expect_out);
+        assert_eq!(rest, "?🤡");
+
+        let input = "owner/repo#🤡";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let parsed_out: Vec<_> = iter.collect();
+        assert_eq!(parsed_out, expect_out);
+        assert_eq!(rest, "#🤡");
+
+        let input = "owner/repo?#🤡";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let parsed_out: Vec<_> = iter.collect();
+        assert_eq!(parsed_out, expect_out);
+        assert_eq!(rest, "?#🤡");
+
+        // TODO: fix this bug
+        // let input = "owner/repo#?🤡";
+        // let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        // let parsed_out: Vec<_>  = iter.collect();
+        // assert_eq!(parsed_out, expect_out);
+        // assert_eq!(rest, "#?🤡");
+    }
+    #[test]
     fn parse_owner_repo_param_terminated() {
         let input = "owner/repo?foo=bar";
         let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
         assert_eq!(rest, "?foo=bar");
-        assert_eq!(Some("owner"), iter.next());
-        assert_eq!(Some("repo"), iter.next());
-        assert_eq!(None, iter.next());
+        let parsed_out: Vec<_> = iter.collect();
+        let expect_out = vec!["owner", "repo"];
+        assert_eq!(parsed_out, expect_out);
     }
     #[test]
     fn parse_owner_repo_attr_terminated() {
         let input = "owner/repo#fizz.bar";
         let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
         assert_eq!(rest, "#fizz.bar");
-        assert_eq!(Some("owner"), iter.next());
-        assert_eq!(Some("repo"), iter.next());
-        assert_eq!(None, iter.next());
+        let parsed_out: Vec<_> = iter.collect();
+        let expect_out = vec!["owner", "repo"];
+        assert_eq!(parsed_out, expect_out);
     }
     #[test]
     fn parse_owner_repo_rev_param_terminated() {
         let input = "owner/repo/rev?foo=bar";
         let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
         assert_eq!(rest, "?foo=bar");
-        assert_eq!(Some("owner"), iter.next());
-        assert_eq!(Some("repo"), iter.next());
-        assert_eq!(Some("rev"), iter.next());
-        assert_eq!(None, iter.next());
+        let parsed_out: Vec<_> = iter.collect();
+        let expect_out = vec!["owner", "repo", "rev"];
+        assert_eq!(parsed_out, expect_out);
     }
     #[test]
     fn parse_owner_repo_rev_attr_terminated() {
         let input = "owner/repo/rev#fizz.bar";
         let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
         assert_eq!(rest, "#fizz.bar");
-        assert_eq!(Some("owner"), iter.next());
-        assert_eq!(Some("repo"), iter.next());
-        assert_eq!(Some("rev"), iter.next());
-        assert_eq!(None, iter.next());
+        let parsed_out: Vec<_> = iter.collect();
+        let expect_out = vec!["owner", "repo", "rev"];
+        assert_eq!(parsed_out, expect_out);
     }
 }
