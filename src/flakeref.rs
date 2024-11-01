@@ -107,9 +107,23 @@ impl std::str::FromStr for FlakeRef {
 mod tests_parsers {
     use super::*;
     #[test]
-    fn full_platform() {
+    #[ignore = "not fully implemented"]
+    fn full_ref() {
         let uri = "github:owner/repo/rev?dir=foo#fizz.buzz";
-        FlakeRef::parse(uri);
+        let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
+        let mut expected = FlakeRef::default();
+        expected.r#type(FlakeRefType::GitForge(GitForge {
+            platform: GitForgePlatform::GitHub,
+            owner: "owner".into(),
+            repo: "repo".into(),
+            ref_or_rev: Some("rev".to_string()),
+        }));
+        let mut exp_params = FlakeRefParameters::default();
+        exp_params.dir(Some("foo".to_string()));
+        expected.params = exp_params;
+        // TODO: when attrs are implemented, this should assert `""`
+        assert_eq!("#fizz.buzz", rest);
+        assert_eq!(expected, parse_out);
     }
 }
 
