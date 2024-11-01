@@ -30,7 +30,7 @@ pub enum FlakeRefType {
         r#type: UrlType,
     },
 
-    GitForge (GitForge),
+    GitForge(GitForge),
     Indirect {
         id: String,
         ref_or_rev: Option<String>,
@@ -179,7 +179,7 @@ impl FlakeRefType {
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge (GitForge{repo, ..}) => Some(repo.to_string()),
+            FlakeRefType::GitForge(GitForge { repo, .. }) => Some(repo.to_string()),
             FlakeRefType::File { .. }
             | FlakeRefType::Git { .. }
             | FlakeRefType::Tarball { .. }
@@ -191,7 +191,7 @@ impl FlakeRefType {
     }
     pub fn get_repo(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge (GitForge{ repo, .. }) => Some(repo.into()),
+            FlakeRefType::GitForge(GitForge { repo, .. }) => Some(repo.into()),
             // TODO: return a proper error, if ref_or_rev is tried to be specified
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
@@ -204,7 +204,7 @@ impl FlakeRefType {
     }
     pub fn get_owner(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge (GitForge{ owner, .. }) => Some(owner.into()),
+            FlakeRefType::GitForge(GitForge { owner, .. }) => Some(owner.into()),
             // TODO: return a proper error, if ref_or_rev is tried to be specified
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
@@ -217,7 +217,7 @@ impl FlakeRefType {
     }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
         match self {
-            FlakeRefType::GitForge (GitForge{ ref_or_rev, .. })
+            FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
             | FlakeRefType::Indirect { ref_or_rev, .. } => {
                 *ref_or_rev = ref_or_rev_alt;
             }
@@ -244,7 +244,7 @@ impl Display for FlakeRefType {
                 let uri = format!("git+{}:{url}", r#type);
                 write!(f, "{uri}")
             }
-            FlakeRefType::GitForge (GitForge{
+            FlakeRefType::GitForge(GitForge {
                 platform,
                 owner,
                 repo,
