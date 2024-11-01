@@ -318,7 +318,7 @@ mod test_incremental_parse {
     #[test]
     fn full_file() {
         let path_uri = "path:/wheres/wally?foo=bar#fizz";
-        let path_uri2 = "path:/wheres/wally/";
+        let path_uri2 = "path:/wheres/wally/?foo=bar#fizz";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "?foo=bar#fizz");
@@ -344,7 +344,7 @@ mod test_incremental_parse {
         assert_eq!(expected_file, parsed_file2);
 
         let path_uri = "path:/wheres/wally#?";
-        let path_uri2 = "path:/wheres/wally/";
+        let path_uri2 = "path:/wheres/wally/#?";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "#?");
@@ -358,7 +358,7 @@ mod test_incremental_parse {
     #[test]
     fn full_file_empty_attr() {
         let path_uri = "path:/wheres/wally#";
-        let path_uri2 = "path:/wheres/wally/";
+        let path_uri2 = "path:/wheres/wally/#";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "#");
@@ -373,7 +373,7 @@ mod test_incremental_parse {
     #[test]
     fn full_file_empty_param() {
         let path_uri = "path:/wheres/wally?";
-        let path_uri2 = "path:/wheres/wally/";
+        let path_uri2 = "path:/wheres/wally/?";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "?");
