@@ -30,12 +30,7 @@ pub enum FlakeRefType {
         r#type: UrlType,
     },
 
-    GitForge {
-        platform: GitForgePlatform,
-        owner: String,
-        repo: String,
-        ref_or_rev: Option<String>,
-    },
+    GitForge (GitForge),
     Indirect {
         id: String,
         ref_or_rev: Option<String>,
