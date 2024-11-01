@@ -80,7 +80,7 @@ impl UrlWrapper {
                 }
 
                 Ok(FlakeRefType::GitForge {
-                    platform: crate::GitForge::GitHub,
+                    platform: crate::GitForgePlatform::GitHub,
                     owner: segments[0].to_string(),
                     repo: segments[1].to_string(),
                     ref_or_rev,
@@ -99,7 +99,7 @@ mod tests {
         let url = "https://github.com/nixos/nixpkgs";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge {
-                platform: crate::GitForge::GitHub,
+                platform: crate::GitForgePlatform::GitHub,
                 owner: "nixos".into(),
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,

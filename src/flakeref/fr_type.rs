@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type,
+    parser::parse_url_type, GitForge,
 };
 
-use super::{GitForge, UrlType};
+use super::{GitForgePlatform, UrlType};
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlakeRefType {
@@ -32,7 +32,7 @@ pub enum FlakeRefType {
     },
 
     GitForge {
-        platform: GitForge,
+        platform: GitForgePlatform,
         owner: String,
         repo: String,
         ref_or_rev: Option<String>,
@@ -81,9 +81,9 @@ impl FlakeRefType {
                     let repo = parsed_iter.next().ok_or(er_fn("repo"))?;
                     let ref_or_rev = parsed_iter.next();
                     let platform = match flake_ref_type_str {
-                        "github" => GitForge::GitHub,
-                        "gitlab" => GitForge::GitLab,
-                        "sourcehut" => GitForge::SourceHut,
+                        "github" => GitForgePlatform::GitHub,
+                        "gitlab" => GitForgePlatform::GitLab,
+                        "sourcehut" => GitForgePlatform::SourceHut,
                         _ => unreachable!(),
                     };
                     let res = FlakeRefType::GitForge {
