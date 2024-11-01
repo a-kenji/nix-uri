@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::{parse_owner_repo_ref, parse_url_type},
+    parser::parse_url_type,
 };
 
 use super::{GitForge, UrlType};
@@ -72,7 +72,7 @@ impl FlakeRefType {
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                    let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
                     let mut parsed_iter = owner_and_repo_or_ref.map(|s| s.to_string());
                     let er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
@@ -151,7 +151,7 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
             //TODO: parse uri
-            let (input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+            let (input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
             if let Some(id) = owner_and_repo_or_ref.next() {
                 if !id
                     .chars()
@@ -166,7 +166,7 @@ impl FlakeRefType {
                 };
                 Ok(flake_ref_type)
             } else {
-                let (_input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
+                let (_input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
                 let id = if let Some(id) = owner_and_repo_or_ref.next() {
                     id
                 } else {

@@ -12,27 +12,6 @@ use crate::{
     flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
 };
 
-/// Parses content of the form `/owner/repo/ref_or_rev`
-/// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
-pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {
-    use nom::sequence::separated_pair;
-    let (input, owner_or_ref) = many_m_n(
-        0,
-        3,
-        separated_pair(
-            take_until("/"),
-            tag("/"),
-            alt((take_until("/"), take_until("?"), rest)),
-        ),
-    )(input)?;
-
-    let owner_and_rev_or_ref = owner_or_ref
-        .clone()
-        .into_iter()
-        .flat_map(|(x, y)| vec![x, y])
-        .filter(|s| !s.is_empty());
-    Ok((input, owner_and_rev_or_ref))
-}
 
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed

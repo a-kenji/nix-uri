@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::{parse_owner_repo_ref, parse_url_type},
+    parser::parse_url_type,
 };
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum UrlType {
