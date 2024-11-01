@@ -92,7 +92,7 @@ impl FlakeRefParameters {
         let (rest, param_values) = many_m_n(
             0,
             11,
-            separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
+            separated_pair(take_until("="), tag("="), alt((take_until("&"), take_until("#"), rest))),
         )(input)?;
 
         let mut params = FlakeRefParameters::default();
@@ -263,6 +263,31 @@ mod incremental_parse_tests {
         let in_str = "?dir=";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
+        assert_eq!(output, expected);
+    }
+    #[test]
+    fn dir_hash_term() {
+        let mut expected = FlakeRefParameters::default();
+        expected.dir(Some("foo".to_string()));
+
+        let in_str = "?dir=foo#fizz";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("#fizz", rest);
+        assert_eq!(output, expected);
+
+        let in_str = "?&dir=foo#fizz";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("#fizz", rest);
+        assert_eq!(output, expected);
+        let in_str = "?dir=&dir=foo#fizz";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("#fizz", rest);
+        assert_eq!(output, expected);
+
+        expected.dir(Some("".to_string()));
+        let in_str = "?dir=#fizz";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
     }
 }
