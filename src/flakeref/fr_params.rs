@@ -2,9 +2,7 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
-    IResult,
+    branch::alt, bytes::complete::{tag, take_until}, combinator::{opt, rest}, multi::many_m_n, sequence::separated_pair, IResult
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +86,38 @@ impl Display for FlakeRefParameters {
 }
 
 impl FlakeRefParameters {
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let (input, _) = tag("?")(input)?;
+
+        let (rest, param_values) = many_m_n(
+            0,
+            11,
+            separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
+        )(input)?;
+
+        let mut params = FlakeRefParameters::default();
+        for (param, value) in param_values {
+            // param can start with "&"
+            // TODO: actual error handling instead of unwrapping
+            // TODO: allow check of the parameters
+            if let Ok(param) = param.parse() {
+                match param {
+                    FlakeRefParamKeys::Dir => params.set_dir(Some(value.into())),
+                    FlakeRefParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
+                    FlakeRefParamKeys::Host => params.set_host(Some(value.into())),
+                    FlakeRefParamKeys::Ref => params.set_ref(Some(value.into())),
+                    FlakeRefParamKeys::Rev => params.set_rev(Some(value.into())),
+                    FlakeRefParamKeys::Branch => params.set_branch(Some(value.into())),
+                    FlakeRefParamKeys::Submodules => params.set_submodules(Some(value.into())),
+                    FlakeRefParamKeys::Shallow => params.set_shallow(Some(value.into())),
+                    FlakeRefParamKeys::Arbitrary(param) => {
+                        params.add_arbitrary((param, value.into()))
+                    }
+                }
+            }
+        }
+        Ok((rest, params))
+    }
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
         self.dir = dir;
         self
@@ -186,5 +216,53 @@ impl std::str::FromStr for FlakeRefParamKeys {
             arbitrary => Ok(Arbitrary(arbitrary.into())),
             // unknown => Err(NixUriError::UnknownUriParameter(unknown.into())),
         }
+    }
+}
+
+#[cfg(test)]
+mod incremental_parse_tests {
+    use super::*;
+    #[test]
+    fn empty() {
+        let expected = FlakeRefParameters::default();
+        let in_str = "?";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(output, expected);
+
+    }
+    #[test]
+    fn empty_hash_terminated() {
+        let expected = FlakeRefParameters::default();
+        let in_str = "?#";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("#", rest);
+        assert_eq!(output, expected);
+
+    }
+    #[test]
+    fn dir() {
+        let mut expected = FlakeRefParameters::default();
+        expected.dir(Some("foo".to_string()));
+
+        let in_str = "?dir=foo";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(output, expected);
+
+        let in_str = "?&dir=foo";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(output, expected);
+        let in_str = "?dir=&dir=foo";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(output, expected);
+
+        expected.dir(Some("".to_string()));
+        let in_str = "?dir=";
+        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(output, expected);
     }
 }
