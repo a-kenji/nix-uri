@@ -1,9 +1,7 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
-    IResult,
+    branch::alt, bytes::complete::{tag, take_until}, combinator::{map, opt, rest}, IResult
 };
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +74,23 @@ pub enum GitForge {
     GitLab,
     SourceHut,
 }
+
+impl GitForge {
+    fn parse_hub(input: &str) -> IResult<&str, Self> {
+        map(tag("github"),  |_| Self::GitHub)(input)
+    }
+    fn parse_lab(input: &str) -> IResult<&str, Self> {
+        map(tag("gitlab"),  |_| Self::GitLab)(input)
+    }
+    fn parse_sourcehut(input: &str) -> IResult<&str, Self> {
+        map(tag("sourcehut"),  |_| Self::SourceHut)(input)
+    }
+    pub fn parse(input: &str) -> IResult<&str, Self> {
+        let (rest, res) = alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut))(input)?;
+        let (_, rest) = tag(":")(rest)?;
+        Ok((rest, res))
+    }
+}
 impl Display for GitForge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -115,10 +130,24 @@ mod tests {
     use crate::parser::{parse_nix_uri, parse_params};
 
     #[test]
-    #[ignore]
-    fn parse_type() {
+    fn parse_srcforged() {
+        let stripped = "nixos/nixpkgs";
+
         let uri = "github:nixos/nixpkgs";
-        assert_eq!(uri, "nixos/nixpkgs");
+        let (rest, platform) = GitForge::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForge::GitHub);
+
+        let uri = "gitlab:nixos/nixpkgs";
+        let (rest, platform) = GitForge::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForge::GitLab);
+
+        let uri = "sourcehut:nixos/nixpkgs";
+        let (rest, platform) = GitForge::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForge::SourceHut);
+        // TODO?: fuzz test where `:` is preceeded by bad string
     }
 
     #[test]
