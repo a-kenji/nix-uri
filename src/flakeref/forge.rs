@@ -57,7 +57,7 @@ impl GitForge {
             separated_pair(
                 take_until("/"),
                 tag("/"),
-                alt((take_until("/"), take_until("?"), rest)),
+                alt((take_until("/"), take_until("?"), take_until("#"), rest)),
             ),
         )(input)?;
 
@@ -92,5 +92,79 @@ impl Display for GitForgePlatform {
                 GitForgePlatform::SourceHut => "sourcehut",
             }
         )
+    }
+}
+
+#[cfg(test)]
+mod incremental_parsing_tests {
+    use super::*;
+    use crate::parser::{parse_nix_uri, parse_params};
+
+    #[test]
+    fn parse_platform() {
+        let stripped = "nixos/nixpkgs";
+
+        let uri = "github:nixos/nixpkgs";
+        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForgePlatform::GitHub);
+
+        let uri = "gitlab:nixos/nixpkgs";
+        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForgePlatform::GitLab);
+
+        let uri = "sourcehut:nixos/nixpkgs";
+        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
+        assert_eq!(rest, stripped);
+        assert_eq!(platform, GitForgePlatform::SourceHut);
+        // TODO?: fuzz test where `:` is preceeded by bad string
+    }
+    #[test]
+    fn parse_basic_owner_rep() {
+        let input = "owner/repo";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(Some("owner"), iter.next());
+        assert_eq!(Some("repo"), iter.next());
+        assert_eq!(None, iter.next());
+    }
+    #[test]
+    fn parse_owner_repo_param_terminated() {
+        let input = "owner/repo?foo=bar";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        assert_eq!(rest, "?foo=bar");
+        assert_eq!(Some("owner"), iter.next());
+        assert_eq!(Some("repo"), iter.next());
+        assert_eq!(None, iter.next());
+    }
+    #[test]
+    fn parse_owner_repo_attr_terminated() {
+        let input = "owner/repo#fizz.bar";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        assert_eq!(rest, "#fizz.bar");
+        assert_eq!(Some("owner"), iter.next());
+        assert_eq!(Some("repo"), iter.next());
+        assert_eq!(None, iter.next());
+    }
+    #[test]
+    fn parse_owner_repo_rev_param_terminated() {
+        let input = "owner/repo/rev?foo=bar";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        assert_eq!(rest, "?foo=bar");
+        assert_eq!(Some("owner"), iter.next());
+        assert_eq!(Some("repo"), iter.next());
+        assert_eq!(Some("rev"), iter.next());
+        assert_eq!(None, iter.next());
+    }
+    #[test]
+    fn parse_owner_repo_rev_attr_terminated() {
+        let input = "owner/repo/rev#fizz.bar";
+        let (rest, mut iter) = GitForge::parse_owner_repo_ref(input).unwrap();
+        assert_eq!(rest, "#fizz.bar");
+        assert_eq!(Some("owner"), iter.next());
+        assert_eq!(Some("repo"), iter.next());
+        assert_eq!(Some("rev"), iter.next());
+        assert_eq!(None, iter.next());
     }
 }

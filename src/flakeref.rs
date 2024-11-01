@@ -96,27 +96,6 @@ mod tests {
     use crate::parser::{parse_nix_uri, parse_params};
 
     #[test]
-    fn parse_srcforged() {
-        let stripped = "nixos/nixpkgs";
-
-        let uri = "github:nixos/nixpkgs";
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
-        assert_eq!(platform, GitForgePlatform::GitHub);
-
-        let uri = "gitlab:nixos/nixpkgs";
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
-        assert_eq!(platform, GitForgePlatform::GitLab);
-
-        let uri = "sourcehut:nixos/nixpkgs";
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
-        assert_eq!(platform, GitForgePlatform::SourceHut);
-        // TODO?: fuzz test where `:` is preceeded by bad string
-    }
-
-    #[test]
     fn parse_simple_uri() {
         let uri = "github:nixos/nixpkgs";
         let expected = FlakeRef::default()
