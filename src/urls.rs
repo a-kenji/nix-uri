@@ -1,7 +1,7 @@
 // use url::{ParseError, Url};
 use url::{ParseError, Url};
 
-use crate::{parser::is_tarball, FlakeRef, FlakeRefType, NixUriError, NixUriResult};
+use crate::{parser::is_tarball, FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult};
 
 pub struct UrlWrapper {
     url: Url,
@@ -79,12 +79,12 @@ impl UrlWrapper {
                     )));
                 }
 
-                Ok(FlakeRefType::GitForge {
+                Ok(FlakeRefType::GitForge (GitForge{
                     platform: crate::flakeref::GitForgePlatform::GitHub,
                     owner: segments[0].to_string(),
                     repo: segments[1].to_string(),
                     ref_or_rev,
-                })
+                }))
             }
             _ => Ok(FlakeRefType::None),
         }
@@ -98,12 +98,12 @@ mod tests {
     fn simple_url_conversion() {
         let url = "https://github.com/nixos/nixpkgs";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
+            .r#type(FlakeRefType::GitForge (GitForge{
                 platform: crate::flakeref::GitForgePlatform::GitHub,
                 owner: "nixos".into(),
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
     }

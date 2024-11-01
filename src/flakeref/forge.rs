@@ -22,10 +22,10 @@ pub enum GitForgePlatform {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GitForge {
-    platform: GitForgePlatform,
-    owner: String,
-    repo: String,
-    ref_or_rev: Option<String>,
+    pub platform: GitForgePlatform,
+    pub owner: String,
+    pub repo: String,
+    pub ref_or_rev: Option<String>,
 }
 
 impl GitForgePlatform {
