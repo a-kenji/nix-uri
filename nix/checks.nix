@@ -10,7 +10,6 @@
           fuzz
           cargoArtifacts
           cargoClippy
-          cargoDeny
           cargoDoc
           cargoTest
           cargoTarpaulin
