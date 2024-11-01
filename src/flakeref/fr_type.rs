@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type, GitForge,
+    parser::parse_url_type, flakeref::forge::GitForge,
 };
 
 use super::{GitForgePlatform, UrlType};
