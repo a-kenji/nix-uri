@@ -299,7 +299,7 @@ impl Display for FlakeRefType {
 }
 
 #[cfg(test)]
-mod test_incremental_parse {
+mod test_incremental_filepath_parse {
     use super::*;
     #[test]
     fn just_file() {

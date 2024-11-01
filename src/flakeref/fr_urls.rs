@@ -1,8 +1,9 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
+    branch::alt,
     bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
+    combinator::{map, opt, rest},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,18 @@ pub enum UrlType {
     Https,
     Ssh,
     File,
+}
+
+impl UrlType {
+    /// TODO: refactor so None is not in UrlType. Use Option to encapsulate this
+    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+        alt((
+            map(tag(""), |_| UrlType::None),
+            map(tag("https"), |_| UrlType::Https),
+            map(tag("ssh"), |_| UrlType::Ssh),
+            map(tag("file"), |_| UrlType::File),
+        ))(input)
+    }
 }
 
 impl TryFrom<&str> for UrlType {
