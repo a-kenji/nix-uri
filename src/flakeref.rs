@@ -105,6 +105,8 @@ impl std::str::FromStr for FlakeRef {
 
 #[cfg(test)]
 mod tests_parsers {
+    use std::path::PathBuf;
+
     use super::*;
     #[test]
     fn full_ref_github() {
@@ -130,7 +132,7 @@ mod tests_parsers {
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
         expected.r#type(FlakeRefType::File {
-            url: "/phantom/root/path".to_string(),
+            url: PathBuf::from("/phantom/root/path"),
         });
         let mut exp_params = FlakeRefParameters::default();
         exp_params.dir(Some("foo".to_string()));

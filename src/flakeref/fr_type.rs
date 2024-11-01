@@ -1,4 +1,7 @@
-use std::{fmt::Display, path::Path};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 use nom::{
     branch::alt,
@@ -20,7 +23,7 @@ use super::{GitForgePlatform, UrlType};
 pub enum FlakeRefType {
     // In URL form, the schema must be file+http://, file+https:// or file+file://. If the extension doesn’t correspond to a known archive format (as defined by the tarball fetcher), then the file+ prefix can be dropped.
     File {
-        url: String,
+        url: PathBuf,
     },
     /// Git repositories. The location of the repository is specified by the attribute
     /// `url`. The `ref` arrribute defaults to resolving the `HEAD` reference.
@@ -66,7 +69,7 @@ impl FlakeRefType {
             return Ok((rest, res));
         } else if let Ok((rest, res)) = Self::parse_file(input) {
             let res = Self::File {
-                url: res.to_str().unwrap().to_string(),
+                url: res.to_path_buf(),
             };
             return Ok((rest, res));
         }
@@ -255,7 +258,7 @@ impl FlakeRefType {
 impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FlakeRefType::File { url } => write!(f, "file:{url}"),
+            FlakeRefType::File { url } => write!(f, "file:{}", url.display()),
             FlakeRefType::Git { url, r#type } => {
                 if let UrlType::None = r#type {
                     return write!(f, "git:{url}");
