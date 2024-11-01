@@ -59,6 +59,11 @@ impl FlakeRef {
         self.params = params;
         self
     }
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let (rest, platform) = GitForge::parse(input)?;
+        let (rest, params) = FlakeRefParameters::parse(rest)?;
+        Ok((rest, Self{ r#type: FlakeRefType::GitForge{}, flake: todo!(), params }))
+    }
 }
 
 impl Display for FlakeRef {
@@ -88,6 +93,16 @@ impl std::str::FromStr for FlakeRef {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use crate::parser::parse_nix_uri;
         parse_nix_uri(s)
+    }
+}
+
+#[cfg(test)]
+mod tests_parsers {
+    use super::*;
+    #[test]
+    fn full_platform() {
+        let uri = "github:owner/repo/rev?dir=foo#fizz.buzz";
+        FlakeRef::parse(uri);
     }
 }
 

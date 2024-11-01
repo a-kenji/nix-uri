@@ -72,6 +72,18 @@ impl GitForge {
             .filter(|s| !s.is_empty());
         Ok((input, owner_and_rev_or_ref))
     }
+    pub fn parse(input: &str) -> IResult<&str, Self> {
+        let (rest, platform) = GitForgePlatform::parse(input)?;
+        let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
+        let mut forge_path = forge_path.map(String::from);
+        let res = Self {
+            platform,
+            owner: forge_path.next().unwrap(),
+            repo: forge_path.next().unwrap(),
+            ref_or_rev: forge_path.next(),
+        };
+        Ok((rest, res))
+    }
 }
 
 impl Display for GitForgePlatform {

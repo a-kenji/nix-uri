@@ -89,7 +89,7 @@ impl Display for FlakeRefParameters {
 }
 
 impl FlakeRefParameters {
-    fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self> {
         let (input, _) = tag("?")(input)?;
 
         let (rest, param_values) = many_m_n(
