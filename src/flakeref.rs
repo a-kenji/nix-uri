@@ -60,12 +60,12 @@ impl FlakeRef {
         self
     }
     fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, platform) = GitForge::parse(input)?;
+        let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = FlakeRefParameters::parse(rest)?;
         Ok((
             rest,
             Self {
-                r#type: FlakeRefType::GitForge(platform),
+                r#type,
                 flake: None,
                 params,
             },
@@ -107,8 +107,7 @@ impl std::str::FromStr for FlakeRef {
 mod tests_parsers {
     use super::*;
     #[test]
-    #[ignore = "not fully implemented"]
-    fn full_ref() {
+    fn full_ref_github() {
         let uri = "github:owner/repo/rev?dir=foo#fizz.buzz";
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
@@ -118,6 +117,21 @@ mod tests_parsers {
             repo: "repo".into(),
             ref_or_rev: Some("rev".to_string()),
         }));
+        let mut exp_params = FlakeRefParameters::default();
+        exp_params.dir(Some("foo".to_string()));
+        expected.params = exp_params;
+        // TODO: when attrs are implemented, this should assert `""`
+        assert_eq!("#fizz.buzz", rest);
+        assert_eq!(expected, parse_out);
+    }
+    #[test]
+    fn full_ref_path() {
+        let uri = "path:/phantom/root/path?dir=foo#fizz.buzz";
+        let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
+        let mut expected = FlakeRef::default();
+        expected.r#type(FlakeRefType::File {
+            url: "/phantom/root/path".to_string(),
+        });
         let mut exp_params = FlakeRefParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;

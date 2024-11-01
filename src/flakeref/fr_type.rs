@@ -1,8 +1,9 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
+    branch::alt,
+    bytes::complete::{tag, take_till, take_until},
+    combinator::{opt, rest, verify},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,24 @@ pub enum FlakeRefType {
     None,
 }
 impl FlakeRefType {
+    pub fn parse_file(input: &str) -> IResult<&str, &Path> {
+        let (rest, _) = tag("path:")(input)?;
+        let (rest, path_str) = take_till(|c| c == '#' || c == '?')(rest)?;
+        Ok((rest, Path::new(path_str)))
+    }
+    pub fn parse(input: &str) -> IResult<&str, Self> {
+        if let Ok((rest, res)) = GitForge::parse(input) {
+            let res = Self::GitForge(res);
+            return Ok((rest, res));
+        } else if let Ok((rest, res)) = Self::parse_file(input) {
+            let res = Self::File {
+                url: res.to_str().unwrap().to_string(),
+            };
+            return Ok((rest, res));
+        }
+
+        todo!();
+    }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
     pub fn parse_type(input: &str) -> NixUriResult<FlakeRefType> {
