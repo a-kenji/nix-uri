@@ -1,11 +1,13 @@
-
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_until}, combinator::{map, opt, rest}, multi::many_m_n, IResult
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    combinator::{map, opt, rest},
+    multi::many_m_n,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
-
 
 use crate::{
     error::{NixUriError, NixUriResult},
@@ -28,13 +30,13 @@ pub struct GitForge {
 
 impl GitForgePlatform {
     fn parse_hub(input: &str) -> IResult<&str, Self> {
-        map(tag("github"),  |_| Self::GitHub)(input)
+        map(tag("github"), |_| Self::GitHub)(input)
     }
     fn parse_lab(input: &str) -> IResult<&str, Self> {
-        map(tag("gitlab"),  |_| Self::GitLab)(input)
+        map(tag("gitlab"), |_| Self::GitLab)(input)
     }
     fn parse_sourcehut(input: &str) -> IResult<&str, Self> {
-        map(tag("sourcehut"),  |_| Self::SourceHut)(input)
+        map(tag("sourcehut"), |_| Self::SourceHut)(input)
     }
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
@@ -46,7 +48,6 @@ impl GitForgePlatform {
 }
 
 impl GitForge {
-
     /// Parses content of the form `/owner/repo/ref_or_rev`
     /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {

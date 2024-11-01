@@ -1,4 +1,3 @@
-
 use std::{fmt::Display, path::Path};
 
 use nom::{
@@ -7,7 +6,6 @@ use nom::{
     IResult,
 };
 use serde::{Deserialize, Serialize};
-
 
 use crate::{
     error::{NixUriError, NixUriResult},

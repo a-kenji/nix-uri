@@ -1,10 +1,13 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_until}, combinator::{map, opt, rest}, multi::many_m_n, IResult
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    combinator::{map, opt, rest},
+    multi::many_m_n,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
-
 
 use crate::{
     error::{NixUriError, NixUriResult},
@@ -14,11 +17,11 @@ use crate::{
 mod fr_type;
 pub use fr_type::FlakeRefType;
 mod fr_params;
-pub use fr_params::{FlakeRefParameters, FlakeRefParamKeys};
+pub use fr_params::{FlakeRefParamKeys, FlakeRefParameters};
 mod fr_urls;
 pub use fr_urls::UrlType;
 mod forge;
-pub use forge::{GitForgePlatform, GitForge};
+pub use forge::{GitForge, GitForgePlatform};
 
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,8 +72,6 @@ impl Display for FlakeRef {
         }
     }
 }
-
-
 
 impl TryFrom<&str> for FlakeRef {
     type Error = NixUriError;

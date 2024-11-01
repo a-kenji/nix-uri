@@ -1,11 +1,14 @@
-
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_until}, combinator::{opt, rest}, multi::many_m_n, sequence::separated_pair, IResult
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    combinator::{opt, rest},
+    multi::many_m_n,
+    sequence::separated_pair,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
-
 
 use crate::{
     error::{NixUriError, NixUriResult},
@@ -92,7 +95,11 @@ impl FlakeRefParameters {
         let (rest, param_values) = many_m_n(
             0,
             11,
-            separated_pair(take_until("="), tag("="), alt((take_until("&"), take_until("#"), rest))),
+            separated_pair(
+                take_until("="),
+                tag("="),
+                alt((take_until("&"), take_until("#"), rest)),
+            ),
         )(input)?;
 
         let mut params = FlakeRefParameters::default();
@@ -229,7 +236,6 @@ mod incremental_parse_tests {
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
-
     }
     #[test]
     fn empty_hash_terminated() {
@@ -238,7 +244,6 @@ mod incremental_parse_tests {
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#", rest);
         assert_eq!(output, expected);
-
     }
     #[test]
     fn dir() {

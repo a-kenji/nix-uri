@@ -1,4 +1,3 @@
-
 use std::{fmt::Display, path::Path};
 
 use nom::{
@@ -8,10 +7,10 @@ use nom::{
 };
 use serde::{Deserialize, Serialize};
 
-
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type, flakeref::forge::GitForge,
+    flakeref::forge::GitForge,
+    parser::parse_url_type,
 };
 
 use super::{GitForgePlatform, UrlType};

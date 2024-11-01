@@ -12,7 +12,6 @@ use crate::{
     flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
 };
 
-
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParameters>> {
