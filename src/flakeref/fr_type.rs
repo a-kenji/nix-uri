@@ -119,8 +119,14 @@ impl FlakeRefType {
         let tag = tag.trim_start_matches("git");
         let tag = tag.trim_start_matches("+");
 
-        let tp = UrlType::try_from(tag).unwrap();
+        let tp = if tag.is_empty() {
+            UrlType::File
+        } else {
+            UrlType::try_from(tag).unwrap()
+        };
+
         let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
+
         Ok((
             rest,
             Self::Git {
@@ -130,12 +136,23 @@ impl FlakeRefType {
         ))
     }
     pub fn parse_hg_vc(input: &str) -> IResult<&str, Self> {
-        let (path, tag) = alt((tag("hg+https://"), tag("hg+ssh://"), tag("hg+file://")))(input)?;
+        let (path, tag) = alt((
+            tag("hg://"),
+            tag("hg+http://"),
+            tag("hg+https://"),
+            tag("hg+ssh://"),
+            tag("hg+file://"),
+        ))(input)?;
         // TODO: un-yuck this trim-abomination
         let tag = tag.trim_end_matches("://");
-        let tag = tag.trim_start_matches("hg+");
+        let tag = tag.trim_start_matches("hg");
+        let tag = tag.trim_start_matches("+");
 
-        let tp = UrlType::try_from(tag).unwrap();
+        let tp = if tag.is_empty() {
+            UrlType::File
+        } else {
+            UrlType::try_from(tag).unwrap()
+        };
         let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
         Ok((
             rest,
@@ -374,10 +391,13 @@ mod inc_parse_vc {
     #[test]
     fn git_file() {
         let uri = "git:///foo/bar";
+        let file_uri = "git+file:///foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let (rest, file_parsed_refpath) = FlakeRefType::parse(file_uri).unwrap();
+        assert_eq!(parsed_refpath, file_parsed_refpath);
         let expected_refpath = FlakeRefType::Git {
             url: "/foo/bar".to_string(),
-            r#type: UrlType::None,
+            r#type: UrlType::File,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -398,6 +418,42 @@ mod inc_parse_vc {
         let uri = "git+https:///foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
         let expected_refpath = FlakeRefType::Git {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::Https,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn hg_file() {
+        let uri = "hg:///foo/bar";
+        let file_uri = "hg+file:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let (rest, file_parsed_refpath) = FlakeRefType::parse(file_uri).unwrap();
+        assert_eq!(file_parsed_refpath, parsed_refpath);
+        let expected_refpath = FlakeRefType::Mercurial {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::File,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn hg_http() {
+        let uri = "hg+http:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Mercurial {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::Http,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn hg_https() {
+        let uri = "hg+https:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Mercurial {
             url: "/foo/bar".to_string(),
             r#type: UrlType::Https,
         };
