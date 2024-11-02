@@ -6,7 +6,7 @@ use std::{
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
-    combinator::{map, opt, rest, verify},
+    combinator::{cond, map, opt, peek, rest, verify},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -58,13 +58,38 @@ pub enum FlakeRefType {
     None,
 }
 impl FlakeRefType {
-    // TODO: parse string that leads with a file
+    // TODO: error message saying "expected path but found `[]`"
     pub fn parse_file(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = tag("file://")(input)?;
-        let (rest, path_str) = verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
-            Path::new(c).is_absolute() && !c.contains("[") && !c.contains("]")
-        })(rest)?;
+        alt((
+            Self::parse_explicit_file_scheme,
+            Self::parse_http_file_scheme,
+            Self::parse_naked,
+        ))(input)
+    }
+    pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
+        // Check if input starts with `.` or `/`
+        let (is_path, _) = peek(alt((tag("."), tag("/"))))(input)?;
+        dbg!(is_path);
+        let (rest, path_str) = dbg!(Self::path_parser(is_path))?;
         Ok((rest, Path::new(path_str)))
+    }
+    pub fn path_parser(input: &str) -> IResult<&str, &str> {
+        verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
+            !c.contains("[") && !c.contains("]")
+        })(input)
+    }
+    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
+        let (rest, _) = alt((tag("file://"), tag("file+file://")))(input)?;
+        let (rest, path_str) = Self::path_parser(rest)?;
+        Ok((rest, Path::new(path_str)))
+    }
+    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
+        let (rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
+        eprintln!("`file+http[s]://` not pet implemented");
+        Err(nom::Err::Failure(nom::error::Error {
+            input,
+            code: nom::error::ErrorKind::Fail,
+        }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
@@ -309,10 +334,10 @@ impl Display for FlakeRefType {
 }
 
 #[cfg(test)]
-mod inc_parse_path {
+mod inc_parse_file {
     use super::*;
     #[test]
-    fn naked() {
+    fn naked_abs() {
         let uri = "/foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
         let expected_refpath = PathBuf::from("/foo/bar");
@@ -320,7 +345,41 @@ mod inc_parse_path {
         assert_eq!(expected_refpath, parsed_refpath);
     }
     #[test]
-    fn plain() {
+    fn naked_cwd() {
+        let uri = "./foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = PathBuf::from("./foo/bar");
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    #[ignore]
+    fn http_layer() {
+        let uri = "file+http://???";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = PathBuf::from("/foo/bar");
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    #[ignore]
+    fn https_layer() {
+        let uri = "file+https://???";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = PathBuf::from("/foo/bar");
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn file_layer() {
+        let uri = "file+file:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = PathBuf::from("/foo/bar");
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn file_then_path() {
         let path_uri = "file:///wheres/wally";
         let path_uri2 = "file:///wheres/wally/";
 
@@ -334,7 +393,21 @@ mod inc_parse_path {
         assert_eq!(expected_file, parsed_file2);
     }
     #[test]
-    fn with_param() {
+    fn empty_param_term() {
+        let path_uri = "file:///wheres/wally?";
+        let path_uri2 = "file:///wheres/wally/?";
+
+        let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
+        assert_eq!(rest, "?");
+        let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
+        assert_eq!(rest, "?");
+
+        let expected_file = PathBuf::from("/wheres/wally");
+        assert_eq!(expected_file, parsed_file);
+        assert_eq!(expected_file, parsed_file2);
+    }
+    #[test]
+    fn param_term() {
         let path_uri = "file:///wheres/wally?foo=bar#fizz";
         let path_uri2 = "file:///wheres/wally/?foo=bar#fizz";
 
@@ -348,7 +421,7 @@ mod inc_parse_path {
         assert_eq!(expected_file, parsed_file2);
     }
     #[test]
-    fn empty_param_attr() {
+    fn empty_param_attr_term() {
         let path_uri = "file:///wheres/wally?#";
         let path_uri2 = "file:///wheres/wally/?#";
 
@@ -374,7 +447,7 @@ mod inc_parse_path {
         assert_eq!(expected_file, parsed_file2);
     }
     #[test]
-    fn full_file_empty_attr() {
+    fn attr_term() {
         let path_uri = "file:///wheres/wally#";
         let path_uri2 = "file:///wheres/wally/#";
 
@@ -385,20 +458,6 @@ mod inc_parse_path {
 
         let expected_file = PathBuf::from("/wheres/wally");
         assert_eq!(rest, "#");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
-    }
-    #[test]
-    fn full_file_empty_param() {
-        let path_uri = "file:///wheres/wally?";
-        let path_uri2 = "file:///wheres/wally/?";
-
-        let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
-        assert_eq!(rest, "?");
-        let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
-        assert_eq!(rest, "?");
-
-        let expected_file = PathBuf::from("/wheres/wally");
         assert_eq!(expected_file, parsed_file);
         assert_eq!(expected_file, parsed_file2);
     }
