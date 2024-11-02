@@ -162,6 +162,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     #[test]
@@ -177,6 +180,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.parse().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     #[test]
@@ -224,6 +230,9 @@ mod tests {
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_simple_uri_rev() {
@@ -241,6 +250,9 @@ mod tests {
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_simple_uri_ref_or_rev_nom() {
@@ -364,6 +376,9 @@ mod tests {
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev() {
@@ -378,6 +393,9 @@ mod tests {
             }))
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev_alt() {
@@ -392,6 +410,9 @@ mod tests {
             }))
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     // TODO: replace / with %2F
     // #[test]
@@ -423,6 +444,9 @@ mod tests {
             .params(params)
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_git_and_https_simple() {
@@ -435,6 +459,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_https_params() {
@@ -451,6 +478,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_params() {
@@ -466,6 +496,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_simple() {
@@ -478,6 +511,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     // TODO: is this correct?
@@ -495,6 +531,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_simple_tag_non_alphabetic_params() {
@@ -512,6 +551,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_simple_tag() {
@@ -527,6 +569,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_params_alt_branch() {
@@ -542,6 +587,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_gitlab_with_host_params_alt() {
@@ -559,6 +607,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_https_params_submodules() {
@@ -574,6 +625,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_marcurial_and_https_simpe_uri() {
@@ -587,6 +641,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     #[should_panic]
@@ -603,7 +660,11 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
+    // TODO: https://github.com/a-kenji/nix-uri/issues/157
     #[test]
     fn parse_git_and_file_shallow() {
         let uri = "git+file:/path/to/repo?shallow=1";
@@ -618,6 +679,10 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        //
+        // let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        // assert_eq!("", rest);
+        // assert_eq!(expected, nommed);
     }
     // TODO: allow them with an optional cli parser
     // #[test]
@@ -656,6 +721,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_rev() {
@@ -670,6 +738,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_host_param() {
@@ -687,6 +758,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_ref() {
@@ -701,6 +775,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_ref_params() {
@@ -719,6 +796,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn display_simple_sourcehut_uri_ref_or_rev() {
@@ -792,6 +872,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_path_uri_indirect_absolute_without_prefix_with_params() {
@@ -806,6 +889,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     // TODO: allow them with an optional cli parser
@@ -827,6 +913,9 @@ mod tests {
         let expected = NixUriError::UnknownUrlType("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
+        let e = FlakeRef::parse(uri).unwrap_err();
+        // todo: map to good error
+        // assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_missing_parameter() {
@@ -834,6 +923,9 @@ mod tests {
         let expected = NixUriError::MissingTypeParameter("github".into(), ("owner".into()));
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
+        let e = FlakeRef::parse(uri).unwrap_err();
+        // todo: map to good error
+        // assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_missing_parameter_repo() {
