@@ -59,12 +59,17 @@ pub enum FlakeRefType {
 }
 impl FlakeRefType {
     // TODO: error message saying "expected path but found `[]`"
-    pub fn parse_file(input: &str) -> IResult<&str, &Path> {
-        alt((
-            Self::parse_explicit_file_scheme,
-            Self::parse_http_file_scheme,
-            Self::parse_naked,
-        ))(input)
+    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+        map(
+            alt((
+                Self::parse_explicit_file_scheme,
+                Self::parse_http_file_scheme,
+                Self::parse_naked,
+            )),
+            |path| Self::File {
+                url: PathBuf::from(path),
+            },
+        )(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
@@ -136,16 +141,7 @@ impl FlakeRefType {
         ))
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        if let Ok((rest, res)) = Self::parse_git_forge(input) {
-            return Ok((rest, res));
-        } else if let Ok((rest, res)) = Self::parse_file(input) {
-            let res = Self::File {
-                url: res.to_path_buf(),
-            };
-            return Ok((rest, res));
-        }
-
-        todo!();
+        alt((Self::parse_git_forge, Self::parse_file, Self::parse_vc))(input)
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
@@ -368,13 +364,30 @@ impl Display for FlakeRefType {
 }
 
 #[cfg(test)]
+mod inc_parse_vc {
+    use super::*;
+    #[test]
+    fn git_file() {
+        let uri = "git:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Git {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::None,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+}
+#[cfg(test)]
 mod inc_parse_file {
     use super::*;
     #[test]
     fn naked_abs() {
         let uri = "/foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = PathBuf::from("/foo/bar");
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("/foo/bar"),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -382,7 +395,9 @@ mod inc_parse_file {
     fn naked_cwd() {
         let uri = "./foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = PathBuf::from("./foo/bar");
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("./foo/bar"),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -391,7 +406,9 @@ mod inc_parse_file {
     fn http_layer() {
         let uri = "file+http://???";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = PathBuf::from("/foo/bar");
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("/foo/bar"),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -400,7 +417,9 @@ mod inc_parse_file {
     fn https_layer() {
         let uri = "file+https://???";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = PathBuf::from("/foo/bar");
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("/foo/bar"),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -408,7 +427,9 @@ mod inc_parse_file {
     fn file_layer() {
         let uri = "file+file:///foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = PathBuf::from("/foo/bar");
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("/foo/bar"),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -417,14 +438,16 @@ mod inc_parse_file {
         let path_uri = "file:///wheres/wally";
         let path_uri2 = "file:///wheres/wally/";
 
-        let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
+        let (rest, parsed_ref) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "");
-        let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
+        let (rest, parsed_ref2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "");
 
-        let expected_file = PathBuf::from("/wheres/wally");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_ref);
+        assert_eq!(expected_ref, parsed_ref2);
     }
     #[test]
     fn empty_param_term() {
@@ -436,9 +459,11 @@ mod inc_parse_file {
         let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "?");
 
-        let expected_file = PathBuf::from("/wheres/wally");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_file);
+        assert_eq!(expected_ref, parsed_file2);
     }
     #[test]
     fn param_term() {
@@ -450,9 +475,11 @@ mod inc_parse_file {
         let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "?foo=bar#fizz");
 
-        let expected_file = PathBuf::from("/wheres/wally");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_file);
+        assert_eq!(expected_ref, parsed_file2);
     }
     #[test]
     fn empty_param_attr_term() {
@@ -464,9 +491,11 @@ mod inc_parse_file {
         let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "?#");
 
-        let expected_file = PathBuf::from("/wheres/wally");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_file);
+        assert_eq!(expected_ref, parsed_file2);
 
         let path_uri = "file:///wheres/wally#?";
         let path_uri2 = "file:///wheres/wally/#?";
@@ -476,9 +505,11 @@ mod inc_parse_file {
         let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "#?");
 
-        let expected_file = PathBuf::from("/wheres/wally");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_file);
+        assert_eq!(expected_ref, parsed_file2);
     }
     #[test]
     fn attr_term() {
@@ -490,9 +521,11 @@ mod inc_parse_file {
         let (rest, parsed_file2) = FlakeRefType::parse_file(path_uri2).unwrap();
         assert_eq!(rest, "#");
 
-        let expected_file = PathBuf::from("/wheres/wally");
+        let expected_ref = FlakeRefType::File {
+            url: PathBuf::from("/wheres/wally"),
+        };
+        assert_eq!(expected_ref, parsed_file);
+        assert_eq!(expected_ref, parsed_file2);
         assert_eq!(rest, "#");
-        assert_eq!(expected_file, parsed_file);
-        assert_eq!(expected_file, parsed_file2);
     }
 }
