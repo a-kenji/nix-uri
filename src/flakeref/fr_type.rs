@@ -70,7 +70,9 @@ impl FlakeRefType {
                     url: PathBuf::from(path),
                 },
             ),
-            map(Self::parse_naked, |path| Self::Path{path: format!("{}", path.display())})
+            map(Self::parse_naked, |path| Self::Path {
+                path: format!("{}", path.display()),
+            }),
         ))(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
@@ -504,7 +506,7 @@ mod inc_parse_file {
         assert_eq!(expected_refpath, parsed_refpath);
     }
     #[test]
-    #[ignore]
+    #[ignore = "need to implement http location parsing"]
     fn http_layer() {
         let uri = "file+http://???";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
@@ -515,7 +517,7 @@ mod inc_parse_file {
         assert_eq!(expected_refpath, parsed_refpath);
     }
     #[test]
-    #[ignore]
+    #[ignore = "need to implement https location parsing"]
     fn https_layer() {
         let uri = "file+https://???";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();

@@ -1,7 +1,12 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_till, take_till1, take_until, take_while1}, combinator::{map, opt, rest, verify}, multi::many_m_n, sequence::tuple, IResult
+    branch::alt,
+    bytes::complete::{tag, take_till, take_till1, take_until, take_while1},
+    combinator::{map, opt, rest, verify},
+    multi::many_m_n,
+    sequence::tuple,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
 
