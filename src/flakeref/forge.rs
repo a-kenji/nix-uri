@@ -70,7 +70,6 @@ impl GitForge {
             res.push(maybe_refrev);
         }
 
-        // TODO: return (&str, &str, Option<&str>) instead of an iterator
         Ok((tail, res.into_iter()))
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
