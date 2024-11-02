@@ -60,16 +60,18 @@ pub enum FlakeRefType {
 impl FlakeRefType {
     // TODO: error message saying "expected path but found `[]`"
     pub fn parse_file(input: &str) -> IResult<&str, Self> {
-        map(
-            alt((
-                Self::parse_explicit_file_scheme,
-                Self::parse_http_file_scheme,
-                Self::parse_naked,
-            )),
-            |path| Self::File {
-                url: PathBuf::from(path),
-            },
-        )(input)
+        alt((
+            map(
+                alt((
+                    Self::parse_explicit_file_scheme,
+                    Self::parse_http_file_scheme,
+                )),
+                |path| Self::File {
+                    url: PathBuf::from(path),
+                },
+            ),
+            map(Self::parse_naked, |path| Self::Path{path: format!("{}", path.display())})
+        ))(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
@@ -484,8 +486,8 @@ mod inc_parse_file {
     fn naked_abs() {
         let uri = "/foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = FlakeRefType::File {
-            url: PathBuf::from("/foo/bar"),
+        let expected_refpath = FlakeRefType::Path {
+            path: "/foo/bar".to_string(),
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -495,8 +497,8 @@ mod inc_parse_file {
     fn naked_cwd() {
         let uri = "./foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = FlakeRefType::File {
-            url: PathBuf::from("./foo/bar"),
+        let expected_refpath = FlakeRefType::Path {
+            path: "./foo/bar".to_string(),
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
