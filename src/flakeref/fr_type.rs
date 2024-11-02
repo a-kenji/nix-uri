@@ -25,6 +25,7 @@ pub enum FlakeRefType {
     File {
         url: PathBuf,
     },
+    //TODO: #155
     /// Git repositories. The location of the repository is specified by the attribute
     /// `url`. The `ref` arrribute defaults to resolving the `HEAD` reference.
     /// The `rev` attribute must exist in the branch or tag specified by `ref`, defaults
@@ -205,7 +206,7 @@ impl FlakeRefType {
                     Ok(res)
                 }
                 "path" => {
-                    // TODO: check if path is an absolute path, if not error
+                    // TODO: #162
                     let path = Path::new(input);
                     // TODO: make this check configurable for cli usage
                     if !path.is_absolute() || input.contains(']') || input.contains('[') {
