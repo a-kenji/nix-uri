@@ -49,7 +49,6 @@ impl GitForgePlatform {
 }
 
 impl GitForge {
-    // TODO?: Parse this incrementally. First get owner/repo, get Option</ref-rev>
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     /// Parses content of the form `/owner/repo/ref_or_rev`
     /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
