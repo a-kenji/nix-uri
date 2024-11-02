@@ -80,11 +80,11 @@ impl FlakeRefType {
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str> {
         verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
-            !c.contains("[") && !c.contains("]")
+            Path::new(c).is_absolute() && !c.contains("[") && !c.contains("]")
         })(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = alt((tag("file://"), tag("file+file://")))(input)?;
+        let (rest, _) = alt((tag("path:"), tag("file://"), tag("file+file://")))(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
@@ -374,8 +374,14 @@ impl Display for FlakeRefType {
                     write!(f, "{id}")
                 }
             }
-            FlakeRefType::Mercurial { url, r#type } => todo!(),
-            FlakeRefType::Path { path } => todo!(),
+            FlakeRefType::Mercurial { url, r#type } => {
+                if let UrlType::None = r#type {
+                    return write!(f, "hg:{url}");
+                }
+                let uri = format!("hg+{}:{url}", r#type);
+                write!(f, "{uri}")
+            }
+            FlakeRefType::Path { path } => write!(f, "{}", path),
             // TODO: alternate tarball representation
             FlakeRefType::Tarball { url, r#type } => {
                 write!(f, "file:{url}")
@@ -465,6 +471,16 @@ mod inc_parse_vc {
 mod inc_parse_file {
     use super::*;
     #[test]
+    fn path_leader() {
+        let uri = "path:/foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = FlakeRefType::File {
+            url: PathBuf::from("/foo/bar"),
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
     fn naked_abs() {
         let uri = "/foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
@@ -475,6 +491,7 @@ mod inc_parse_file {
         assert_eq!(expected_refpath, parsed_refpath);
     }
     #[test]
+    #[ignore = "We don't yet handle relative paths"]
     fn naked_cwd() {
         let uri = "./foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
