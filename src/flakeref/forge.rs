@@ -1,11 +1,7 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_until},
-    combinator::{map, opt, rest},
-    multi::many_m_n,
-    IResult,
+    branch::alt, bytes::complete::{tag, take_till, take_till1, take_until, take_while1}, combinator::{map, opt, rest, verify}, multi::many_m_n, sequence::tuple, IResult
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,24 +49,25 @@ impl GitForge {
     /// Parses content of the form `/owner/repo/ref_or_rev`
     /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {
-        use nom::sequence::separated_pair;
-        let (input, owner_or_ref) = many_m_n(
-            0,
-            3,
-            separated_pair(
-                take_until("/"),
-                tag("/"),
-                // BUG: "owner/repo#?... parses out to ["owner", "repo#"]
-                alt((take_until("/"), take_until("?"), take_until("#"), rest)),
-            ),
-        )(input)?;
+        dbg!(input);
+        // pull out the component we are parsing
+        let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
+        // pull out the owner
+        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
+        // ...and discard the `/` separator
+        let (path1, _) = tag("/")(path1)?;
+        // get the rest, halting at the optional `/`
+        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
+        // drop the `/` if it exists
+        let (maybe_refrev, _) = opt(tag("/"))(path2)?;
+        let mut res = vec![owner, repo];
+        // if the remaining is empty, that's the ref/rev
+        if !maybe_refrev.is_empty() {
+            res.push(maybe_refrev);
+        }
 
-        let owner_and_rev_or_ref = owner_or_ref
-            .clone()
-            .into_iter()
-            .flat_map(|(x, y)| vec![x, y])
-            .filter(|s| !s.is_empty());
-        Ok((input, owner_and_rev_or_ref))
+        // TODO: return (&str, &str, Option<&str>) instead of an iterator
+        Ok((tail, res.into_iter()))
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, platform) = GitForgePlatform::parse(input)?;
