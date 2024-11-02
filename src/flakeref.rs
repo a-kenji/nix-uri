@@ -104,7 +104,7 @@ impl std::str::FromStr for FlakeRef {
 }
 
 #[cfg(test)]
-mod tests_parsers {
+mod test_parsers {
     use std::path::PathBuf;
 
     use super::*;

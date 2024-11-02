@@ -23,12 +23,11 @@ pub enum UrlType {
 
 impl UrlType {
     /// TODO: refactor so None is not in UrlType. Use Option to encapsulate this
-    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag(""), |_| UrlType::None),
-            map(tag("https"), |_| UrlType::Https),
-            map(tag("ssh"), |_| UrlType::Ssh),
-            map(tag("file"), |_| UrlType::File),
+            map(tag("+https"), |_| UrlType::Https),
+            map(tag("+ssh"), |_| UrlType::Ssh),
+            map(tag("+file"), |_| UrlType::File),
         ))(input)
     }
 }
@@ -56,5 +55,34 @@ impl Display for UrlType {
             UrlType::Ssh => write!(f, "ssh"),
             UrlType::File => write!(f, "file"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test_parse_url_type {
+    use super::*;
+    #[test]
+    fn basic() {
+        let uri = "+https://";
+        let (rest, tp) = UrlType::parse(uri).unwrap();
+        assert_eq!(tp, UrlType::Https);
+        assert_eq!(rest, "://");
+
+        let uri = "+ssh://";
+        let (rest, tp) = UrlType::parse(uri).unwrap();
+        assert_eq!(tp, UrlType::Ssh);
+        assert_eq!(rest, "://");
+
+        let uri = "+file://";
+        let (rest, tp) = UrlType::parse(uri).unwrap();
+        assert_eq!(tp, UrlType::File);
+        assert_eq!(rest, "://");
+
+        // todo: "expected [+<file | ssh | https]://, got `...`
+        let uri = "://";
+        let nom::Err::Error(e) = dbg!(UrlType::parse(uri).unwrap_err()) else {
+            panic!();
+        };
+        assert_eq!(e.input, "://");
     }
 }
