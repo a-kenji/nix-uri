@@ -50,6 +50,7 @@ impl GitForgePlatform {
 
 impl GitForge {
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
+    // TODO: #158
     /// Parses content of the form `/owner/repo/ref_or_rev`
     /// into an iterator akin to `vec![owner, repo, ref_or_rev].into_iter()`.
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, impl Iterator<Item = &str>> {

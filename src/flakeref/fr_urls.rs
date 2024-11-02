@@ -81,7 +81,7 @@ mod inc_parse {
         assert_eq!(tp, UrlType::File);
         assert_eq!(rest, "://");
 
-        // todo: "expected [+<file | ssh | https]://, got `...`
+        // TODO: #158
         let uri = "://";
         let nom::Err::Error(e) = dbg!(UrlType::parse(uri).unwrap_err()) else {
             panic!();

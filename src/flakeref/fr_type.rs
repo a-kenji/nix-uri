@@ -58,7 +58,7 @@ pub enum FlakeRefType {
     None,
 }
 impl FlakeRefType {
-    // TODO: error message saying "expected path but found `[]`"
+    // TODO: #158
     pub fn parse_file(input: &str) -> IResult<&str, Self> {
         alt((
             map(
@@ -183,6 +183,7 @@ impl FlakeRefType {
                 "github" | "gitlab" | "sourcehut" => {
                     let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
                     let mut parsed_iter = owner_and_repo_or_ref.map(|s| s.to_string());
+                    // TODO: #158
                     let er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
                     };
@@ -307,7 +308,7 @@ impl FlakeRefType {
     pub fn get_repo(&self) -> Option<String> {
         match self {
             FlakeRefType::GitForge(GitForge { repo, .. }) => Some(repo.into()),
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            // TODO: #158
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
             | FlakeRefType::Indirect { .. }
@@ -320,7 +321,7 @@ impl FlakeRefType {
     pub fn get_owner(&self) -> Option<String> {
         match self {
             FlakeRefType::GitForge(GitForge { owner, .. }) => Some(owner.into()),
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            // TODO: #158
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
             | FlakeRefType::Indirect { .. }
@@ -336,7 +337,7 @@ impl FlakeRefType {
             | FlakeRefType::Indirect { ref_or_rev, .. } => {
                 *ref_or_rev = ref_or_rev_alt;
             }
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
+            // TODO: #158
             FlakeRefType::Mercurial { .. }
             | FlakeRefType::Path { .. }
             | FlakeRefType::Tarball { .. }
