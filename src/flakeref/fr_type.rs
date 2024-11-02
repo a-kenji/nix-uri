@@ -58,10 +58,9 @@ pub enum FlakeRefType {
     None,
 }
 impl FlakeRefType {
-
     // TODO: parse string that leads with a file
     pub fn parse_file(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = tag("path:")(input)?;
+        let (rest, _) = tag("file://")(input)?;
         let (rest, path_str) = verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
             Path::new(c).is_absolute() && !c.contains("[") && !c.contains("]")
         })(rest)?;
@@ -313,9 +312,17 @@ impl Display for FlakeRefType {
 mod inc_parse_path {
     use super::*;
     #[test]
+    fn naked() {
+        let uri = "/foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
+        let expected_refpath = PathBuf::from("/foo/bar");
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
     fn plain() {
-        let path_uri = "path:/wheres/wally";
-        let path_uri2 = "path:/wheres/wally/";
+        let path_uri = "file:///wheres/wally";
+        let path_uri2 = "file:///wheres/wally/";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "");
@@ -328,8 +335,8 @@ mod inc_parse_path {
     }
     #[test]
     fn with_param() {
-        let path_uri = "path:/wheres/wally?foo=bar#fizz";
-        let path_uri2 = "path:/wheres/wally/?foo=bar#fizz";
+        let path_uri = "file:///wheres/wally?foo=bar#fizz";
+        let path_uri2 = "file:///wheres/wally/?foo=bar#fizz";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "?foo=bar#fizz");
@@ -342,8 +349,8 @@ mod inc_parse_path {
     }
     #[test]
     fn empty_param_attr() {
-        let path_uri = "path:/wheres/wally?#";
-        let path_uri2 = "path:/wheres/wally/?#";
+        let path_uri = "file:///wheres/wally?#";
+        let path_uri2 = "file:///wheres/wally/?#";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "?#");
@@ -354,8 +361,8 @@ mod inc_parse_path {
         assert_eq!(expected_file, parsed_file);
         assert_eq!(expected_file, parsed_file2);
 
-        let path_uri = "path:/wheres/wally#?";
-        let path_uri2 = "path:/wheres/wally/#?";
+        let path_uri = "file:///wheres/wally#?";
+        let path_uri2 = "file:///wheres/wally/#?";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "#?");
@@ -368,8 +375,8 @@ mod inc_parse_path {
     }
     #[test]
     fn full_file_empty_attr() {
-        let path_uri = "path:/wheres/wally#";
-        let path_uri2 = "path:/wheres/wally/#";
+        let path_uri = "file:///wheres/wally#";
+        let path_uri2 = "file:///wheres/wally/#";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "#");
@@ -383,8 +390,8 @@ mod inc_parse_path {
     }
     #[test]
     fn full_file_empty_param() {
-        let path_uri = "path:/wheres/wally?";
-        let path_uri2 = "path:/wheres/wally/?";
+        let path_uri = "file:///wheres/wally?";
+        let path_uri2 = "file:///wheres/wally/?";
 
         let (rest, parsed_file) = FlakeRefType::parse_file(path_uri).unwrap();
         assert_eq!(rest, "?");

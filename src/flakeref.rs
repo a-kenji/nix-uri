@@ -128,7 +128,7 @@ mod inc_parse {
     }
     #[test]
     fn full_path() {
-        let uri = "path:/phantom/root/path?dir=foo#fizz.buzz";
+        let uri = "file:///phantom/root/path?dir=foo#fizz.buzz";
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
         expected.r#type(FlakeRefType::File {
