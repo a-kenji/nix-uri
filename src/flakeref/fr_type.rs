@@ -109,13 +109,16 @@ impl FlakeRefType {
     pub fn parse_git_vc(input: &str) -> IResult<&str, Self> {
         let (path, tag) = alt((
             tag("git://"),
+            tag("git+http://"),
             tag("git+https://"),
             tag("git+ssh://"),
             tag("git+file://"),
         ))(input)?;
+        // TODO: un-yuck this trim-abomination
         let tag = tag.trim_end_matches("://");
         let tag = tag.trim_start_matches("git");
         let tag = tag.trim_start_matches("+");
+
         let tp = UrlType::try_from(tag).unwrap();
         let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
         Ok((
@@ -128,8 +131,10 @@ impl FlakeRefType {
     }
     pub fn parse_hg_vc(input: &str) -> IResult<&str, Self> {
         let (path, tag) = alt((tag("hg+https://"), tag("hg+ssh://"), tag("hg+file://")))(input)?;
+        // TODO: un-yuck this trim-abomination
         let tag = tag.trim_end_matches("://");
         let tag = tag.trim_start_matches("hg+");
+
         let tp = UrlType::try_from(tag).unwrap();
         let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
         Ok((
@@ -373,6 +378,28 @@ mod inc_parse_vc {
         let expected_refpath = FlakeRefType::Git {
             url: "/foo/bar".to_string(),
             r#type: UrlType::None,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn git_http() {
+        let uri = "git+http:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Git {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::Http,
+        };
+        assert!(rest.is_empty());
+        assert_eq!(expected_refpath, parsed_refpath);
+    }
+    #[test]
+    fn git_https() {
+        let uri = "git+https:///foo/bar";
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Git {
+            url: "/foo/bar".to_string(),
+            r#type: UrlType::Https,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);

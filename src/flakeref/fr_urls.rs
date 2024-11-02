@@ -16,6 +16,7 @@ use crate::{
 pub enum UrlType {
     #[default]
     None,
+    Http,
     Https,
     Ssh,
     File,
@@ -39,6 +40,7 @@ impl TryFrom<&str> for UrlType {
         use UrlType::*;
         match value {
             "" => Ok(None),
+            "http" => Ok(Http),
             "https" => Ok(Https),
             "ssh" => Ok(Ssh),
             "file" => Ok(File),
@@ -51,6 +53,7 @@ impl Display for UrlType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UrlType::None => write!(f, "No Url Type Specified"),
+            UrlType::Http => write!(f, "http"),
             UrlType::Https => write!(f, "https"),
             UrlType::Ssh => write!(f, "ssh"),
             UrlType::File => write!(f, "file"),
