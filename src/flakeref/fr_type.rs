@@ -6,7 +6,7 @@ use std::{
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
-    combinator::{opt, rest, verify},
+    combinator::{map, opt, rest, verify},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,8 @@ pub enum FlakeRefType {
     None,
 }
 impl FlakeRefType {
+
+    // TODO: parse string that leads with a file
     pub fn parse_file(input: &str) -> IResult<&str, &Path> {
         let (rest, _) = tag("path:")(input)?;
         let (rest, path_str) = verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
@@ -65,9 +67,18 @@ impl FlakeRefType {
         })(rest)?;
         Ok((rest, Path::new(path_str)))
     }
+    /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
+    /// rules are not checked for in the current form of the parser
+    /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
+    pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
+        map(GitForge::parse, Self::GitForge)(input)
+    }
+    /// <git | hg>[+<url-type]
+    pub fn parse_vc(input: &str) -> IResult<&str, Self> {
+        todo!("caution: `^git` is good for both `github:...` and `git[+...]://`");
+    }
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        if let Ok((rest, res)) = GitForge::parse(input) {
-            let res = Self::GitForge(res);
+        if let Ok((rest, res)) = Self::parse_git_forge(input) {
             return Ok((rest, res));
         } else if let Ok((rest, res)) = Self::parse_file(input) {
             let res = Self::File {
