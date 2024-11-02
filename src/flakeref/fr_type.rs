@@ -97,9 +97,43 @@ impl FlakeRefType {
     pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
         map(GitForge::parse, Self::GitForge)(input)
     }
-    /// <git | hg>[+<url-type]
+    /// <git | hg>[+<url-type]://
     pub fn parse_vc(input: &str) -> IResult<&str, Self> {
-        todo!("caution: `^git` is good for both `github:...` and `git[+...]://`");
+        alt((Self::parse_git_vc, Self::parse_hg_vc))(input)
+    }
+    pub fn parse_git_vc(input: &str) -> IResult<&str, Self> {
+        let (path, tag) = alt((
+            tag("git://"),
+            tag("git+https://"),
+            tag("git+ssh://"),
+            tag("git+file://"),
+        ))(input)?;
+        let tag = tag.trim_end_matches("://");
+        let tag = tag.trim_start_matches("git");
+        let tag = tag.trim_start_matches("+");
+        let tp = UrlType::try_from(tag).unwrap();
+        let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
+        Ok((
+            rest,
+            Self::Git {
+                r#type: tp,
+                url: url.to_string(),
+            },
+        ))
+    }
+    pub fn parse_hg_vc(input: &str) -> IResult<&str, Self> {
+        let (path, tag) = alt((tag("hg+https://"), tag("hg+ssh://"), tag("hg+file://")))(input)?;
+        let tag = tag.trim_end_matches("://");
+        let tag = tag.trim_start_matches("hg+");
+        let tp = UrlType::try_from(tag).unwrap();
+        let (rest, url) = take_till(|c| c == '#' || c == '?')(path)?;
+        Ok((
+            rest,
+            Self::Mercurial {
+                r#type: tp,
+                url: url.to_string(),
+            },
+        ))
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         if let Ok((rest, res)) = Self::parse_git_forge(input) {
