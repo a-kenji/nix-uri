@@ -90,8 +90,6 @@ impl Display for FlakeRefParameters {
 
 impl FlakeRefParameters {
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (input, _) = tag("?")(input)?;
-
         let (rest, param_values) = many_m_n(
             0,
             11,
@@ -230,9 +228,17 @@ impl std::str::FromStr for FlakeRefParamKeys {
 mod inc_parse {
     use super::*;
     #[test]
+    fn no_str() {
+        let expected = FlakeRefParameters::default();
+        let in_str = "";
+        let (outstr, parsed_param) = FlakeRefParameters::parse(in_str).unwrap();
+        assert_eq!("", outstr);
+        assert_eq!(expected, parsed_param);
+    }
+    #[test]
     fn empty() {
         let expected = FlakeRefParameters::default();
-        let in_str = "?";
+        let in_str = "";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
@@ -240,7 +246,7 @@ mod inc_parse {
     #[test]
     fn empty_hash_terminated() {
         let expected = FlakeRefParameters::default();
-        let in_str = "?#";
+        let in_str = "#";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#", rest);
         assert_eq!(output, expected);
@@ -250,22 +256,22 @@ mod inc_parse {
         let mut expected = FlakeRefParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "?dir=foo";
+        let in_str = "dir=foo";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
 
-        let in_str = "?&dir=foo";
+        let in_str = "&dir=foo";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
-        let in_str = "?dir=&dir=foo";
+        let in_str = "dir=&dir=foo";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
 
         expected.dir(Some("".to_string()));
-        let in_str = "?dir=";
+        let in_str = "dir=";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
@@ -275,22 +281,22 @@ mod inc_parse {
         let mut expected = FlakeRefParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "?dir=foo#fizz";
+        let in_str = "dir=foo#fizz";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
 
-        let in_str = "?&dir=foo#fizz";
+        let in_str = "&dir=foo#fizz";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
-        let in_str = "?dir=&dir=foo#fizz";
+        let in_str = "dir=&dir=foo#fizz";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
 
         expected.dir(Some("".to_string()));
-        let in_str = "?dir=#fizz";
+        let in_str = "dir=#fizz";
         let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);

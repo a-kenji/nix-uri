@@ -5,6 +5,7 @@ use nom::{
     bytes::complete::{tag, take_until},
     combinator::{map, opt, rest},
     multi::many_m_n,
+    sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -61,13 +62,13 @@ impl FlakeRef {
     }
     fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = FlakeRefParameters::parse(rest)?;
+        let (rest, params) = opt(preceded(tag("?"), FlakeRefParameters::parse))(rest)?;
         Ok((
             rest,
             Self {
                 r#type,
                 flake: None,
-                params,
+                params: params.unwrap_or_default(),
             },
         ))
     }
