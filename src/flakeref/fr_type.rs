@@ -299,10 +299,10 @@ impl Display for FlakeRefType {
 }
 
 #[cfg(test)]
-mod test_incremental_filepath_parse {
+mod inc_parse_path {
     use super::*;
     #[test]
-    fn just_file() {
+    fn plain() {
         let path_uri = "path:/wheres/wally";
         let path_uri2 = "path:/wheres/wally/";
 
@@ -316,7 +316,7 @@ mod test_incremental_filepath_parse {
         assert_eq!(expected_file, parsed_file2);
     }
     #[test]
-    fn full_file() {
+    fn with_param() {
         let path_uri = "path:/wheres/wally?foo=bar#fizz";
         let path_uri2 = "path:/wheres/wally/?foo=bar#fizz";
 
@@ -330,7 +330,7 @@ mod test_incremental_filepath_parse {
         assert_eq!(expected_file, parsed_file2);
     }
     #[test]
-    fn full_file_empty_param_attr() {
+    fn empty_param_attr() {
         let path_uri = "path:/wheres/wally?#";
         let path_uri2 = "path:/wheres/wally/?#";
 

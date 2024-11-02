@@ -59,7 +59,7 @@ impl Display for UrlType {
 }
 
 #[cfg(test)]
-mod test_parse_url_type {
+mod inc_parse {
     use super::*;
     #[test]
     fn basic() {

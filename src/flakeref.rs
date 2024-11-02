@@ -104,12 +104,12 @@ impl std::str::FromStr for FlakeRef {
 }
 
 #[cfg(test)]
-mod test_parsers {
+mod inc_parse {
     use std::path::PathBuf;
 
     use super::*;
     #[test]
-    fn full_ref_github() {
+    fn full_github() {
         let uri = "github:owner/repo/rev?dir=foo#fizz.buzz";
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
@@ -127,7 +127,7 @@ mod test_parsers {
         assert_eq!(expected, parse_out);
     }
     #[test]
-    fn full_ref_path() {
+    fn full_path() {
         let uri = "path:/phantom/root/path?dir=foo#fizz.buzz";
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
