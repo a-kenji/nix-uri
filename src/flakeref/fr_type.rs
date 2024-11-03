@@ -353,7 +353,10 @@ impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlakeRefType::File { location } => write!(f, "file:{}", location.display()),
-            FlakeRefType::Git { location, transport_type } => {
+            FlakeRefType::Git {
+                location,
+                transport_type,
+            } => {
                 if let TransportLayer::None = transport_type {
                     return write!(f, "git:{location}");
                 }
@@ -379,7 +382,10 @@ impl Display for FlakeRefType {
                     write!(f, "{id}")
                 }
             }
-            FlakeRefType::Mercurial { location, transport_type } => {
+            FlakeRefType::Mercurial {
+                location,
+                transport_type,
+            } => {
                 if let TransportLayer::None = transport_type {
                     return write!(f, "hg:{location}");
                 }
@@ -388,7 +394,10 @@ impl Display for FlakeRefType {
             }
             FlakeRefType::Path { path } => write!(f, "{}", path),
             // TODO: alternate tarball representation
-            FlakeRefType::Tarball { location, transport_type } => {
+            FlakeRefType::Tarball {
+                location,
+                transport_type,
+            } => {
                 write!(f, "file:{location}")
             }
             FlakeRefType::None => todo!(),
