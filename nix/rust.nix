@@ -13,9 +13,10 @@ rec {
   rustToolchainDevTOML = rustToolchainTOML.override {
     extensions = [
       "clippy"
-      "rust-src"
       "rust-analysis"
       "rust-docs"
+      "rust-src"
+      "rustfmt"
     ];
   };
 }
