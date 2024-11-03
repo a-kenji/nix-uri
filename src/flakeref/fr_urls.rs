@@ -83,7 +83,7 @@ mod inc_parse {
 
         // TODO: #158
         let uri = "://";
-        let nom::Err::Error(e) = dbg!(UrlType::parse(uri).unwrap_err()) else {
+        let nom::Err::Error(e) = UrlType::parse(uri).unwrap_err() else {
             panic!();
         };
         assert_eq!(e.input, "://");

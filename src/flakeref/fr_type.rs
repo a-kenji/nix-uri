@@ -79,8 +79,7 @@ impl FlakeRefType {
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
         let (is_path, _) = peek(alt((tag("."), tag("/"))))(input)?;
-        dbg!(is_path);
-        let (rest, path_str) = dbg!(Self::path_parser(is_path))?;
+        let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str> {
