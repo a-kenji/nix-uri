@@ -20,6 +20,25 @@ cat .envrc && direnv allow
 If you want to set the environment manually, the rust-toolchain version
 that will be assumed is referenced inside `rust-toolchain.toml`.
 
+
+## Readme
+
+Most of `README.md` is kept in sync through `cargo rdme` from `src/lib.rs`.
+You can check the includes by checking for the following markdown comments:
+- cargo-rdme start
+- cargo-rdme end
+
+To update `README.md`, run:
+```
+cargo rdme
+```
+To check if the readme is up-to-date:
+```
+cargo rdme --check
+```
+
+The `cargo-rdme` program can be found in the `full` devshell.
+
 ## Steps
 There is a lint target in the `justfile`, that can be run with:
 ```
