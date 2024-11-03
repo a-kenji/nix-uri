@@ -6,10 +6,10 @@ on:
     paths-ignore:
       - '**.md'
     types:
-    - opened
-    - reopened
-    - synchronize
-    - ready_for_review
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
   push:
     branches: [main]
     paths-ignore:

@@ -1,34 +1,32 @@
 name: "editor-config"
-
 on:
   workflow_dispatch: # allows manual triggering
   pull_request:
-    branches: [ main ]
+    branches: [main]
     types:
-    - opened
-    - reopened
-    - synchronize
-    - ready_for_review
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
   push:
-    branches: [ main ]
-
+    branches: [main]
 jobs:
   editor-config:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'push' || !github.event.pull_request.draft }}
     environment: cachix
     steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-    - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
-      with:
-        extra_nix_config: |
-          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
-    - name: "install editorconfig-checker"
-      run: nix shell --refresh --inputs-from .# nixpkgs#editorconfig-checker
-    - name: Checking EditorConfig
-      run: |
-        cat "$HOME/changed_files" | xargs -r editorconfig-checker -disable-indent-size
-    - if: ${{ failure() }}
-      run: |
-        printf "::error :: Hey! It looks like your changes don't follow our editorconfig settings.\nRead https://editorconfig.org/#download to configure your editor so you never see this error again."
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      - name: "install editorconfig-checker"
+        run: nix shell --refresh --inputs-from .# nixpkgs#editorconfig-checker
+      - name: Checking EditorConfig
+        run: |
+          cat "$HOME/changed_files" | xargs -r editorconfig-checker -disable-indent-size
+      - if: ${{ failure() }}
+        run: |
+          printf "::error :: Hey! It looks like your changes don't follow our editorconfig settings.\nRead https://editorconfig.org/#download to configure your editor so you never see this error again."
