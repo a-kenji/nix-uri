@@ -6,7 +6,7 @@ We are always happy to receive contributions and attempt to process them in a ti
 ## Issues
 To get an overview of what can be worked on, please take a look at the [issues](https://github.com/a-kenji/nix-uri/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc).
 
-## How to get tools 
+## Development
 For your convenience you only need one tool to contribute to `nix-uri`: `nix`.
 You can drop into a development shell with:
 ```
@@ -20,6 +20,22 @@ cat .envrc && direnv allow
 If you want to set the environment manually, the rust-toolchain version
 that will be assumed is referenced inside `rust-toolchain.toml`.
 
+### Formatting & Linting
+`nix-uri` uses [`treefmt-nix`](https://github.com/numtide/treefmt-nix/) to configure formatters in a unified way.
+
+Formatters can be invoked either through:
+```
+treefmt
+```
+or even outside the development shell through:
+```
+nix fmt
+```
+
+Clippy can be run through:
+```
+cargo clippy
+```
 
 ## Readme
 
