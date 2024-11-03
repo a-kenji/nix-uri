@@ -37,6 +37,8 @@ pub enum NixUriError {
     InvalidType(String),
     #[error("The parameter: {0} is not supported by the flakeref type.")]
     UnsupportedParam(String),
+    #[error("field: `{0}` only supported by: `{1}`.")]
+    UnsupportedByType(String, String),
     #[error("The parameter: {0} invalid.")]
     UnknownUriParameter(String),
     /// Nom Error
