@@ -37,6 +37,21 @@ Clippy can be run through:
 cargo clippy
 ```
 
+## CI
+
+Checks that will be run on CI can be run locally either through:
+
+```
+nix flake check
+```
+or
+```
+nix run nixpkgs#nix-fast-build
+```
+
+It is likely that `nix-fast-build` will be quicker as it can build individual
+checks without needing to evaluate every check output.
+
 ## Readme
 
 Most of `README.md` is kept in sync through `cargo rdme` from `src/lib.rs`.
