@@ -8,6 +8,7 @@
       programs.nixfmt.enable = true;
       programs.rustfmt.enable = true;
       programs.taplo.enable = true;
+      programs.yamlfmt.enable = true;
 
       settings.formatter.rustfmt.options = [
         "--config"
