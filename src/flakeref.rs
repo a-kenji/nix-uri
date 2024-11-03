@@ -1,16 +1,28 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
+    branch::alt,
     bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
+    combinator::{map, opt, rest},
+    multi::many_m_n,
+    sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::{parse_owner_repo_ref, parse_url_type},
+    parser::parse_url_type,
 };
+
+mod fr_type;
+pub use fr_type::FlakeRefType;
+mod fr_params;
+pub use fr_params::{FlakeRefParamKeys, FlakeRefParameters};
+mod fr_urls;
+pub use fr_urls::UrlType;
+mod forge;
+pub use forge::{GitForge, GitForgePlatform};
 
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -48,6 +60,18 @@ impl FlakeRef {
         self.params = params;
         self
     }
+    fn parse(input: &str) -> IResult<&str, Self> {
+        let (rest, r#type) = FlakeRefType::parse(input)?;
+        let (rest, params) = opt(preceded(tag("?"), FlakeRefParameters::parse))(rest)?;
+        Ok((
+            rest,
+            Self {
+                r#type,
+                flake: None,
+                params: params.unwrap_or_default(),
+            },
+        ))
+    }
 }
 
 impl Display for FlakeRef {
@@ -59,501 +83,6 @@ impl Display for FlakeRef {
         } else {
             write!(f, "{}?{params}", self.r#type)
         }
-    }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, serde(deny_unknown_fields))]
-pub struct FlakeRefParameters {
-    /// The subdirectory of the flake in which flake.nix is located. This parameter
-    /// enables having multiple flakes in a repository or tarball. The default is the
-    /// root directory of the flake.
-    dir: Option<String>,
-    /// The hash of the NAR serialisation (in SRI format) of the contents of the flake.
-    /// This is useful for flake types such as tarballs that lack a unique content
-    /// identifier such as a Git commit hash.
-    #[serde(rename = "narHash")]
-    nar_hash: Option<String>,
-    /// A Git or Mercurial commit hash.
-    rev: Option<String>,
-    ///  A Git or Mercurial branch or tag name.
-    r#ref: Option<String>,
-    branch: Option<String>,
-    submodules: Option<String>,
-    shallow: Option<String>,
-    // Only available to certain types
-    host: Option<String>,
-    // Not available to user
-    #[serde(rename = "revCount")]
-    rev_count: Option<String>,
-    // Not available to user
-    #[serde(rename = "lastModified")]
-    last_modified: Option<String>,
-    /// Arbitrary uri parameters will be allowed during initial parsing
-    /// in case they should be checked for known types run `self.check()`
-    arbitrary: Vec<(String, String)>,
-}
-
-// TODO: convert into macro!
-// or have params in a vec of tuples? with param and option<string>
-impl Display for FlakeRefParameters {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut res = String::new();
-        if let Some(dir) = &self.dir {
-            res.push_str("dir=");
-            res.push_str(dir);
-        }
-        if let Some(branch) = &self.branch {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("branch=");
-            res.push_str(branch);
-        }
-        if let Some(host) = &self.host {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("host=");
-            res.push_str(host);
-        }
-        if let Some(r#ref) = &self.r#ref {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("ref=");
-            res.push_str(r#ref);
-        }
-        if let Some(rev) = &self.rev {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("rev=");
-            res.push_str(rev);
-        }
-        write!(f, "{res}")
-    }
-}
-
-impl FlakeRefParameters {
-    pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
-        self.dir = dir;
-        self
-    }
-
-    pub fn nar_hash(&mut self, nar_hash: Option<String>) -> &mut Self {
-        self.nar_hash = nar_hash;
-        self
-    }
-
-    pub fn host(&mut self, host: Option<String>) -> &mut Self {
-        self.host = host;
-        self
-    }
-    pub fn rev(&mut self, rev: Option<String>) -> &mut Self {
-        self.rev = rev;
-        self
-    }
-    pub fn r#ref(&mut self, r#ref: Option<String>) -> &mut Self {
-        self.r#ref = r#ref;
-        self
-    }
-
-    pub fn set_dir(&mut self, dir: Option<String>) {
-        self.dir = dir;
-    }
-
-    pub fn set_nar_hash(&mut self, nar_hash: Option<String>) {
-        self.nar_hash = nar_hash;
-    }
-
-    pub fn set_rev(&mut self, rev: Option<String>) {
-        self.rev = rev;
-    }
-
-    pub fn set_ref(&mut self, r#ref: Option<String>) {
-        self.r#ref = r#ref;
-    }
-
-    pub fn set_host(&mut self, host: Option<String>) {
-        self.host = host;
-    }
-
-    pub fn rev_count_mut(&mut self) -> &mut Option<String> {
-        &mut self.rev_count
-    }
-
-    pub fn set_branch(&mut self, branch: Option<String>) {
-        self.branch = branch;
-    }
-
-    pub fn set_submodules(&mut self, submodules: Option<String>) {
-        self.submodules = submodules;
-    }
-
-    pub fn set_shallow(&mut self, shallow: Option<String>) {
-        self.shallow = shallow;
-    }
-    pub fn add_arbitrary(&mut self, arbitrary: (String, String)) {
-        self.arbitrary.push(arbitrary);
-    }
-    pub fn get_rev(&self) -> Option<&String> {
-        self.rev.as_ref()
-    }
-    pub fn get_ref(&self) -> Option<&String> {
-        self.r#ref.as_ref()
-    }
-}
-
-pub enum FlakeRefParamKeys {
-    Dir,
-    NarHash,
-    Host,
-    Ref,
-    Rev,
-    Branch,
-    Submodules,
-    Shallow,
-    Arbitrary(String),
-}
-
-impl std::str::FromStr for FlakeRefParamKeys {
-    type Err = NixUriError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use FlakeRefParamKeys::*;
-        match s {
-            "dir" | "&dir" => Ok(Dir),
-            "nar_hash" | "&nar_hash" => Ok(NarHash),
-            "host" | "&host" => Ok(Host),
-            "rev" | "&rev" => Ok(Rev),
-            "ref" | "&ref" => Ok(Ref),
-            "branch" | "&branch" => Ok(Branch),
-            "submodules" | "&submodules" => Ok(Submodules),
-            "shallow" | "&shallow" => Ok(Shallow),
-            arbitrary => Ok(Arbitrary(arbitrary.into())),
-            // unknown => Err(NixUriError::UnknownUriParameter(unknown.into())),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GitForge {
-    GitHub,
-    GitLab,
-    SourceHut,
-}
-impl Display for GitForge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                GitForge::GitHub => "github",
-                GitForge::GitLab => "gitlab",
-                GitForge::SourceHut => "sourcehut",
-            }
-        )
-    }
-}
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum FlakeRefType {
-    // In URL form, the schema must be file+http://, file+https:// or file+file://. If the extension doesn’t correspond to a known archive format (as defined by the tarball fetcher), then the file+ prefix can be dropped.
-    File {
-        url: String,
-    },
-    /// Git repositories. The location of the repository is specified by the attribute
-    /// `url`. The `ref` arrribute defaults to resolving the `HEAD` reference.
-    /// The `rev` attribute must exist in the branch or tag specified by `ref`, defaults
-    /// to `ref`.
-    Git {
-        url: String,
-        r#type: UrlType,
-    },
-
-    GitForge {
-        platform: GitForge,
-        owner: String,
-        repo: String,
-        ref_or_rev: Option<String>,
-    },
-    Indirect {
-        id: String,
-        ref_or_rev: Option<String>,
-    },
-    // Matches `git` type, but schema is one of the following:
-    // `hg+http`, `hg+https`, `hg+ssh` or `hg+file`.
-    Mercurial {
-        url: String,
-        r#type: UrlType,
-    },
-    /// Path must be a directory in the filesystem containing a `flake.nix`.
-    /// Path must be an absolute path.
-    Path {
-        path: String,
-    },
-    Tarball {
-        url: String,
-        r#type: UrlType,
-    },
-    #[default]
-    None,
-}
-
-impl Display for FlakeRefType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FlakeRefType::File { url } => write!(f, "file:{url}"),
-            FlakeRefType::Git { url, r#type } => {
-                if let UrlType::None = r#type {
-                    return write!(f, "git:{url}");
-                }
-                let uri = format!("git+{}:{url}", r#type);
-                write!(f, "{uri}")
-            }
-            FlakeRefType::GitForge {
-                platform,
-                owner,
-                repo,
-                ref_or_rev,
-            } => {
-                write!(f, "{platform}:{owner}/{repo}");
-                if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "/{ref_or_rev}");
-                }
-                Ok(())
-            }
-            FlakeRefType::Indirect { id, ref_or_rev } => {
-                if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "{id}/{ref_or_rev}")
-                } else {
-                    write!(f, "{id}")
-                }
-            }
-            FlakeRefType::Mercurial { url, r#type } => todo!(),
-            FlakeRefType::Path { path } => todo!(),
-            // TODO: alternate tarball representation
-            FlakeRefType::Tarball { url, r#type } => {
-                write!(f, "file:{url}")
-            }
-            FlakeRefType::None => todo!(),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum UrlType {
-    #[default]
-    None,
-    Https,
-    Ssh,
-    File,
-}
-
-impl TryFrom<&str> for UrlType {
-    type Error = NixUriError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        use UrlType::*;
-        match value {
-            "" => Ok(None),
-            "https" => Ok(Https),
-            "ssh" => Ok(Ssh),
-            "file" => Ok(File),
-            err => Err(NixUriError::UnknownUrlType(err.into())),
-        }
-    }
-}
-
-impl Display for UrlType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UrlType::None => write!(f, "No Url Type Specified"),
-            UrlType::Https => write!(f, "https"),
-            UrlType::Ssh => write!(f, "ssh"),
-            UrlType::File => write!(f, "file"),
-        }
-    }
-}
-
-impl FlakeRefType {
-    /// Parse type specific information, returns the [`FlakeRefType`]
-    /// and the unparsed input
-    pub fn parse_type(input: &str) -> NixUriResult<FlakeRefType> {
-        use nom::sequence::separated_pair;
-        let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
-            tag(":"),
-            rest,
-        ))(input)?;
-        if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
-            match flake_ref_type_str {
-                "github" | "gitlab" | "sourcehut" => {
-                    let (input, owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                    let mut parsed_iter = owner_and_repo_or_ref.map(|s| s.to_string());
-                    let er_fn = |st: &str| {
-                        NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
-                    };
-                    let owner = parsed_iter.next().ok_or(er_fn("owner"))?;
-                    let repo = parsed_iter.next().ok_or(er_fn("repo"))?;
-                    let ref_or_rev = parsed_iter.next();
-                    let platform = match flake_ref_type_str {
-                        "github" => GitForge::GitHub,
-                        "gitlab" => GitForge::GitLab,
-                        "sourcehut" => GitForge::SourceHut,
-                        _ => unreachable!(),
-                    };
-                    let res = FlakeRefType::GitForge {
-                        platform,
-                        owner,
-                        repo,
-                        ref_or_rev,
-                    };
-                    Ok(res)
-                }
-                "path" => {
-                    // TODO: check if path is an absolute path, if not error
-                    let path = Path::new(input);
-                    // TODO: make this check configurable for cli usage
-                    if !path.is_absolute() || input.contains(']') || input.contains('[') {
-                        return Err(NixUriError::NotAbsolute(input.into()));
-                    }
-                    if input.contains('#') || input.contains('?') {
-                        return Err(NixUriError::PathCharacter(input.into()));
-                    }
-                    let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                    Ok(flake_ref_type)
-                }
-
-                _ => {
-                    if flake_ref_type_str.starts_with("git+") {
-                        let url_type = parse_url_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
-                        let flake_ref_type = FlakeRefType::Git {
-                            url: input.into(),
-                            r#type: url_type,
-                        };
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str.starts_with("hg+") {
-                        let url_type = parse_url_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
-                        let flake_ref_type = FlakeRefType::Mercurial {
-                            url: input.into(),
-                            r#type: url_type,
-                        };
-                        Ok(flake_ref_type)
-                    } else {
-                        Err(NixUriError::UnknownUriType(flake_ref_type_str.into()))
-                    }
-                }
-            }
-        } else {
-            // Implicit types can be paths, indirect flake_refs, or uri's.
-            if input.starts_with('/') || input == "." {
-                let flake_ref_type = FlakeRefType::Path { path: input.into() };
-                let path = Path::new(input);
-                // TODO: make this check configurable for cli usage
-                if !path.is_absolute()
-                    || input.contains(']')
-                    || input.contains('[')
-                    || !input.is_ascii()
-                {
-                    return Err(NixUriError::NotAbsolute(input.into()));
-                }
-                if input.contains('#') || input.contains('?') {
-                    return Err(NixUriError::PathCharacter(input.into()));
-                }
-                return Ok(flake_ref_type);
-            }
-            //TODO: parse uri
-            let (input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-            if let Some(id) = owner_and_repo_or_ref.next() {
-                if !id
-                    .chars()
-                    .all(|c| c.is_ascii_alphabetic() || c.is_control())
-                    || id.is_empty()
-                {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                let flake_ref_type = FlakeRefType::Indirect {
-                    id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
-                };
-                Ok(flake_ref_type)
-            } else {
-                let (_input, mut owner_and_repo_or_ref) = parse_owner_repo_ref(input)?;
-                let id = if let Some(id) = owner_and_repo_or_ref.next() {
-                    id
-                } else {
-                    input
-                };
-                if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                Ok(FlakeRefType::Indirect {
-                    id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
-                })
-            }
-        }
-    }
-    /// Extract a common identifier from it's [`FlakeRefType`] variant.
-    pub(crate) fn get_id(&self) -> Option<String> {
-        match self {
-            FlakeRefType::GitForge { repo, .. } => Some(repo.to_string()),
-            FlakeRefType::File { .. }
-            | FlakeRefType::Git { .. }
-            | FlakeRefType::Tarball { .. }
-            | FlakeRefType::None
-            | FlakeRefType::Indirect { .. }
-            | FlakeRefType::Mercurial { .. }
-            | FlakeRefType::Path { .. } => None,
-        }
-    }
-    pub fn get_repo(&self) -> Option<String> {
-        match self {
-            FlakeRefType::GitForge { repo, .. } => Some(repo.into()),
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
-            FlakeRefType::Mercurial { .. }
-            | FlakeRefType::Path { .. }
-            | FlakeRefType::Indirect { .. }
-            | FlakeRefType::Tarball { .. }
-            | FlakeRefType::File { .. }
-            | FlakeRefType::Git { .. }
-            | FlakeRefType::None => None,
-        }
-    }
-    pub fn get_owner(&self) -> Option<String> {
-        match self {
-            FlakeRefType::GitForge { owner, .. } => Some(owner.into()),
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
-            FlakeRefType::Mercurial { .. }
-            | FlakeRefType::Path { .. }
-            | FlakeRefType::Indirect { .. }
-            | FlakeRefType::Tarball { .. }
-            | FlakeRefType::File { .. }
-            | FlakeRefType::Git { .. }
-            | FlakeRefType::None => None,
-        }
-    }
-    pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
-        match self {
-            FlakeRefType::GitForge { ref_or_rev, .. }
-            | FlakeRefType::Indirect { ref_or_rev, .. } => {
-                *ref_or_rev = ref_or_rev_alt;
-            }
-            // TODO: return a proper error, if ref_or_rev is tried to be specified
-            FlakeRefType::Mercurial { .. }
-            | FlakeRefType::Path { .. }
-            | FlakeRefType::Tarball { .. }
-            | FlakeRefType::File { .. }
-            | FlakeRefType::Git { .. }
-            | FlakeRefType::None => todo!(),
-        }
-        Ok(())
     }
 }
 
@@ -576,6 +105,46 @@ impl std::str::FromStr for FlakeRef {
 }
 
 #[cfg(test)]
+mod inc_parse {
+    use std::path::PathBuf;
+
+    use super::*;
+    #[test]
+    fn full_github() {
+        let uri = "github:owner/repo/rev?dir=foo#fizz.buzz";
+        let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
+        let mut expected = FlakeRef::default();
+        expected.r#type(FlakeRefType::GitForge(GitForge {
+            platform: GitForgePlatform::GitHub,
+            owner: "owner".into(),
+            repo: "repo".into(),
+            ref_or_rev: Some("rev".to_string()),
+        }));
+        let mut exp_params = FlakeRefParameters::default();
+        exp_params.dir(Some("foo".to_string()));
+        expected.params = exp_params;
+        // TODO: when attrs are implemented, this should assert `""`
+        assert_eq!("#fizz.buzz", rest);
+        assert_eq!(expected, parse_out);
+    }
+    #[test]
+    fn full_path() {
+        let uri = "file:///phantom/root/path?dir=foo#fizz.buzz";
+        let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
+        let mut expected = FlakeRef::default();
+        expected.r#type(FlakeRefType::File {
+            url: PathBuf::from("/phantom/root/path"),
+        });
+        let mut exp_params = FlakeRefParameters::default();
+        exp_params.dir(Some("foo".to_string()));
+        expected.params = exp_params;
+        // TODO: when attrs are implemented, this should assert `""`
+        assert_eq!("#fizz.buzz", rest);
+        assert_eq!(expected, parse_out);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::parser::{parse_nix_uri, parse_params};
@@ -584,42 +153,48 @@ mod tests {
     fn parse_simple_uri() {
         let uri = "github:nixos/nixpkgs";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "nixos".into(),
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     #[test]
     fn parse_simple_uri_parsed() {
         let uri = "github:zellij-org/zellij";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.parse().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     #[test]
     fn parse_simple_uri_nom() {
         let uri = "github:zellij-org/zellij";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
@@ -645,16 +220,19 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(flake_attrs)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_simple_uri_rev() {
@@ -662,27 +240,30 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(flake_attrs)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_simple_uri_ref_or_rev_nom() {
         let uri = "github:zellij-org/zellij/main";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: Some("main".into()),
-            })
+            }))
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
@@ -693,12 +274,12 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: Some("main".into()),
-            })
+            }))
             .params(params)
             .clone();
 
@@ -711,12 +292,12 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
@@ -728,12 +309,12 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
@@ -746,12 +327,12 @@ mod tests {
         params.dir(Some("assets".into()));
         params.nar_hash(Some("fakeHash256".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
@@ -786,43 +367,52 @@ mod tests {
     fn parse_gitlab_simple() {
         let uri = "gitlab:veloren/veloren";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitLab,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         let parsed = parse_nix_uri(uri).unwrap();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev() {
         let uri = "gitlab:veloren/veloren/master";
         let parsed = parse_nix_uri(uri).unwrap();
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitLab,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: Some("master".into()),
-            })
+            }))
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_gitlab_simple_ref_or_rev_alt() {
         let uri = "gitlab:veloren/veloren/19742bb9300fb0be9fdc92f30766c95230a8a371";
         let parsed = crate::parser::parse_nix_uri(uri).unwrap();
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitLab,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitLab,
                 owner: "veloren".into(),
                 repo: "veloren".into(),
                 ref_or_rev: Some("19742bb9300fb0be9fdc92f30766c95230a8a371".into()),
-            })
+            }))
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     // TODO: replace / with %2F
     // #[test]
@@ -845,15 +435,18 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.host(Some("git.openldap.org".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitLab,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitLab,
                 owner: "openldap".into(),
                 repo: "openldap".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, nommed);
     }
     #[test]
     fn parse_git_and_https_simple() {
@@ -866,6 +459,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_https_params() {
@@ -882,6 +478,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_params() {
@@ -897,6 +496,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_simple() {
@@ -909,6 +511,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     // TODO: is this correct?
@@ -926,6 +531,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_simple_tag_non_alphabetic_params() {
@@ -933,31 +541,37 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_ref(Some("fix.hls-docutils".to_owned()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "smunix".into(),
                 repo: "MyST-Parser".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_github_simple_tag() {
         let uri = "github:cachix/devenv/v0.5";
         let mut params = FlakeRefParameters::default();
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "cachix".into(),
                 repo: "devenv".into(),
                 ref_or_rev: Some("v0.5".into()),
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_params_alt_branch() {
@@ -973,6 +587,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_gitlab_with_host_params_alt() {
@@ -980,16 +597,19 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("gitlab.inria.fr".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitLab,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitLab,
                 owner: "fpottier".to_owned(),
                 repo: "menhir".to_owned(),
                 ref_or_rev: Some("20201216".to_owned()),
-            })
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_https_params_submodules() {
@@ -1005,6 +625,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_marcurial_and_https_simpe_uri() {
@@ -1018,6 +641,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     #[should_panic]
@@ -1034,7 +660,11 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
+    // TODO: https://github.com/a-kenji/nix-uri/issues/157
     #[test]
     fn parse_git_and_file_shallow() {
         let uri = "git+file:/path/to/repo?shallow=1";
@@ -1049,6 +679,10 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        //
+        // let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        // assert_eq!("", rest);
+        // assert_eq!(expected, nommed);
     }
     // TODO: allow them with an optional cli parser
     // #[test]
@@ -1078,29 +712,35 @@ mod tests {
     fn parse_simple_uri_sourcehut() {
         let uri = "sourcehut:~misterio/nix-colors";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: None,
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_rev() {
         let uri = "sourcehut:~misterio/nix-colors/main";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("main".to_owned()),
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_host_param() {
@@ -1108,30 +748,36 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("git.example.org".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: None,
-            })
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_ref() {
         let uri = "sourcehut:~misterio/nix-colors/182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c".to_owned()),
-            })
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_uri_sourcehut_ref_params() {
@@ -1140,27 +786,30 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-            })
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn display_simple_sourcehut_uri_ref_or_rev() {
         let expected = "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de";
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-            })
+            }))
             .to_string();
         assert_eq!(expected, flake_ref);
     }
@@ -1171,12 +820,12 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::SourceHut,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::SourceHut,
                 owner: "~misterio".to_owned(),
                 repo: "nix-colors".to_owned(),
                 ref_or_rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-            })
+            }))
             .params(params)
             .to_string();
         assert_eq!(expected, flake_ref);
@@ -1187,12 +836,12 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(flake_attrs)
             .to_string();
         assert_eq!(flake_ref, expected);
@@ -1203,12 +852,12 @@ mod tests {
         let mut flake_attrs = FlakeRefParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
-            .r#type(FlakeRefType::GitForge {
-                platform: GitForge::GitHub,
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
                 owner: "zellij-org".into(),
                 repo: "zellij".into(),
                 ref_or_rev: None,
-            })
+            }))
             .params(flake_attrs)
             .to_string();
         assert_eq!(flake_ref, expected);
@@ -1223,6 +872,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_simple_path_uri_indirect_absolute_without_prefix_with_params() {
@@ -1237,6 +889,9 @@ mod tests {
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, nommed);
     }
 
     // TODO: allow them with an optional cli parser
@@ -1258,24 +913,31 @@ mod tests {
         let expected = NixUriError::UnknownUrlType("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
+        let e = FlakeRef::parse(uri).unwrap_err();
+        // todo: map to good error
+        // assert_eq!(expected, nommed);
     }
     #[test]
+    #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
         let expected = NixUriError::MissingTypeParameter("github".into(), ("owner".into()));
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
+        // let e = FlakeRef::parse(uri).unwrap_err();
+        // assert_eq!(e, expected);
     }
     #[test]
+    #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter_repo() {
         let uri = "github:nixos/";
-        assert_eq!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::MissingTypeParameter(
-                "github".into(),
-                ("repo".into())
-            ))
-        );
+        let expected = Err(NixUriError::MissingTypeParameter(
+            "github".into(),
+            ("repo".into()),
+        ));
+        assert_eq!(uri.parse::<FlakeRef>(), expected);
+        // let e = FlakeRef::parse(uri).unwrap_err();
+        // assert_eq!(e, expected);
     }
     #[test]
     fn parse_github_starts_with_whitespace() {

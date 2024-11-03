@@ -48,15 +48,16 @@
 //!  ```
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
+//!   # use nix_uri::GitForgePlatform;
 //!   # use nix_uri::GitForge;
 //!   let uri = "github:nixos/nixpkgs";
 //!   let expected = FlakeRef::new(
-//!                 FlakeRefType::GitForge {
-//!                 platform: GitForge::GitHub,
+//!                 FlakeRefType::GitForge (GitForge{
+//!                 platform: GitForgePlatform::GitHub,
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
-//!                 });
+//!                 }));
 //!      let parsed: FlakeRef = uri.parse().unwrap();
 //!      assert_eq!(expected, parsed);
 //!   ```
@@ -66,15 +67,16 @@
 //!   ```
 //!   # use nix_uri::FlakeRef;
 //!   # use nix_uri::FlakeRefType;
+//!   # use nix_uri::GitForgePlatform;
 //!   # use nix_uri::GitForge;
 //!   let expected = "github:nixos/nixpkgs";
 //!   let uri = FlakeRef::new(
-//!                 FlakeRefType::GitForge {
-//!                 platform: GitForge::GitHub,
+//!                 FlakeRefType::GitForge (GitForge{
+//!                 platform: GitForgePlatform::GitHub,
 //!                 owner: "nixos".into(),
 //!                 repo: "nixpkgs".into(),
 //!                 ref_or_rev: None,
-//!                 }).to_string();
+//!                 })).to_string();
 //!      assert_eq!(expected, uri);
 //!   ```
 
