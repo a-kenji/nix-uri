@@ -133,7 +133,7 @@ mod inc_parse {
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
         expected.r#type(FlakeRefType::File {
-            url: PathBuf::from("/phantom/root/path"),
+            location: PathBuf::from("/phantom/root/path"),
         });
         let mut exp_params = FlakeRefParameters::default();
         exp_params.dir(Some("foo".to_string()));
@@ -453,7 +453,7 @@ mod tests {
         let uri = "git+https://git.somehost.tld/user/path";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "git.somehost.tld/user/path".into(),
+                location: "git.somehost.tld/user/path".into(),
                 r#type: TransportLayer::Https,
             })
             .clone();
@@ -471,7 +471,7 @@ mod tests {
         params.rev(Some("fdc8ef970de2b4634e1b3dca296e1ed918459a9e".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "git.somehost.tld/user/path".into(),
+                location: "git.somehost.tld/user/path".into(),
                 r#type: TransportLayer::Https,
             })
             .params(params)
@@ -489,7 +489,7 @@ mod tests {
         params.r#ref(Some("upstream/nixpkgs-unstable".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/nix/nixpkgs".into(),
+                location: "/nix/nixpkgs".into(),
                 r#type: TransportLayer::File,
             })
             .params(params)
@@ -505,7 +505,7 @@ mod tests {
         let uri = "git+file:///nix/nixpkgs";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/nix/nixpkgs".into(),
+                location: "/nix/nixpkgs".into(),
                 r#type: TransportLayer::File,
             })
             .clone();
@@ -524,7 +524,7 @@ mod tests {
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/home/user/forked-flake".into(),
+                location: "/home/user/forked-flake".into(),
                 r#type: TransportLayer::File,
             })
             .params(params)
@@ -580,7 +580,7 @@ mod tests {
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/home/user/forked-flake".into(),
+                location: "/home/user/forked-flake".into(),
                 r#type: TransportLayer::File,
             })
             .params(params)
@@ -618,7 +618,7 @@ mod tests {
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
                 r#type: TransportLayer::Https,
             })
             .params(params)
@@ -635,7 +635,7 @@ mod tests {
         let mut params = FlakeRefParameters::default();
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Mercurial {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
                 r#type: TransportLayer::Https,
             })
             .clone();
@@ -653,7 +653,7 @@ mod tests {
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
                 r#type: TransportLayer::Https,
             })
             .params(params)
@@ -672,7 +672,7 @@ mod tests {
         params.set_shallow(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/path/to/repo".to_owned(),
+                location: "/path/to/repo".to_owned(),
                 r#type: TransportLayer::File,
             })
             .params(params)
