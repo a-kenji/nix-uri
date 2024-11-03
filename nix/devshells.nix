@@ -39,7 +39,7 @@
           name = "nix-uri-nightly-fuzz";
           inputsFrom = [ self'.devShells.default ];
           packages = [
-            rust.rustNightlyToolchainTOML
+            rust.rustLatestNightlyToolchain
             pkgs.cargo-fuzz
           ];
           inherit env;
