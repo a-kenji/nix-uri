@@ -9,7 +9,7 @@ use nom::{
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
+    flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, TransportLayer},
 };
 
 /// Take all that is behind the "?" tag
@@ -104,9 +104,9 @@ pub(crate) fn is_file(input: &str) -> bool {
 }
 
 // Parse the url type itself
-pub(crate) fn parse_url_type(input: &str) -> Result<UrlType, NixUriError> {
+pub(crate) fn parse_url_type(input: &str) -> Result<TransportLayer, NixUriError> {
     let (_, input) = parse_from_url_type(input)?;
-    TryInto::<UrlType>::try_into(input)
+    TryInto::<TransportLayer>::try_into(input)
 }
 
 #[cfg(test)]

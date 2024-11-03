@@ -20,7 +20,7 @@ pub use fr_type::FlakeRefType;
 mod fr_params;
 pub use fr_params::{FlakeRefParamKeys, FlakeRefParameters};
 mod fr_urls;
-pub use fr_urls::UrlType;
+pub use fr_urls::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
 
@@ -454,7 +454,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "git.somehost.tld/user/path".into(),
-                r#type: UrlType::Https,
+                r#type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -472,7 +472,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "git.somehost.tld/user/path".into(),
-                r#type: UrlType::Https,
+                r#type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -490,7 +490,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "/nix/nixpkgs".into(),
-                r#type: UrlType::File,
+                r#type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -506,7 +506,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "/nix/nixpkgs".into(),
-                r#type: UrlType::File,
+                r#type: TransportLayer::File,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -525,7 +525,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "/home/user/forked-flake".into(),
-                r#type: UrlType::File,
+                r#type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -581,7 +581,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "/home/user/forked-flake".into(),
-                r#type: UrlType::File,
+                r#type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -619,7 +619,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                r#type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -636,7 +636,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Mercurial {
                 url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                r#type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -654,7 +654,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                r#type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -673,7 +673,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 url: "/path/to/repo".to_owned(),
-                r#type: UrlType::File,
+                r#type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
-        let expected = NixUriError::UnknownUrlType("(".into());
+        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
         let e = FlakeRef::parse(uri).unwrap_err();
