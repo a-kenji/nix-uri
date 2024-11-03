@@ -125,7 +125,7 @@ mod inc_parse_platform {
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
         assert_eq!(rest, stripped);
         assert_eq!(platform, GitForgePlatform::SourceHut);
-        // TODO?: fuzz test where `:` is preceeded by bad string
+        // TODO?: fuzz test where `:` is preceded by bad string
     }
 }
 #[cfg(test)]
