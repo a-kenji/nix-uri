@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type,
+    parser::parse_transport_type,
 };
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`

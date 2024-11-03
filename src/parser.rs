@@ -84,8 +84,8 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
     Ok(flake_ref)
 }
 
-/// Parses the url raw url type out of: `+type`
-pub(crate) fn parse_from_url_type(input: &str) -> IResult<&str, &str> {
+/// Parses the raw-string describing the transport type out of: `+type`
+pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
     let (input, rest) = take_until("+")(input)?;
     let (input, _) = anychar(input)?;
     Ok((rest, input))
@@ -103,9 +103,9 @@ pub(crate) fn is_file(input: &str) -> bool {
     !is_tarball(input)
 }
 
-// Parse the url type itself
-pub(crate) fn parse_url_type(input: &str) -> Result<TransportLayer, NixUriError> {
-    let (_, input) = parse_from_url_type(input)?;
+// Parse the transport type itself
+pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
+    let (_, input) = parse_from_transport_type(input)?;
     TryInto::<TransportLayer>::try_into(input)
 }
 

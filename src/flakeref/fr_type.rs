@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::forge::GitForge,
-    parser::parse_url_type,
+    parser::parse_transport_type,
 };
 
 use super::{GitForgePlatform, TransportLayer};
@@ -32,7 +32,7 @@ pub enum FlakeRefType {
     /// to `ref`.
     Git {
         location: String,
-        r#type: TransportLayer,
+        transport_type: TransportLayer,
     },
 
     GitForge(GitForge),
@@ -44,7 +44,7 @@ pub enum FlakeRefType {
     // `hg+http`, `hg+https`, `hg+ssh` or `hg+file`.
     Mercurial {
         location: String,
-        r#type: TransportLayer,
+        transport_type: TransportLayer,
     },
     /// Path must be a directory in the filesystem containing a `flake.nix`.
     /// Path must be an absolute path.
@@ -53,7 +53,7 @@ pub enum FlakeRefType {
     },
     Tarball {
         location: String,
-        r#type: TransportLayer,
+        transport_type: TransportLayer,
     },
     #[default]
     None,
@@ -106,7 +106,7 @@ impl FlakeRefType {
     pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
         map(GitForge::parse, Self::GitForge)(input)
     }
-    /// <git | hg>[+<url-type]://
+    /// <git | hg>[+<transport-type]://
     pub fn parse_vc(input: &str) -> IResult<&str, Self> {
         alt((Self::parse_git_vc, Self::parse_hg_vc))(input)
     }
@@ -134,7 +134,7 @@ impl FlakeRefType {
         Ok((
             rest,
             Self::Git {
-                r#type: tp,
+                transport_type: tp,
                 location: location.to_string(),
             },
         ))
@@ -161,7 +161,7 @@ impl FlakeRefType {
         Ok((
             rest,
             Self::Mercurial {
-                r#type: tp,
+                transport_type: tp,
                 location: location.to_string(),
             },
         ))
@@ -220,21 +220,21 @@ impl FlakeRefType {
 
                 _ => {
                     if flake_ref_type_str.starts_with("git+") {
-                        let url_type = parse_url_type(flake_ref_type_str)?;
+                        let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
                         let flake_ref_type = FlakeRefType::Git {
                             location: input.into(),
-                            r#type: url_type,
+                            transport_type,
                         };
                         Ok(flake_ref_type)
                     } else if flake_ref_type_str.starts_with("hg+") {
-                        let url_type = parse_url_type(flake_ref_type_str)?;
+                        let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
                         let flake_ref_type = FlakeRefType::Mercurial {
                             location: input.into(),
-                            r#type: url_type,
+                            transport_type,
                         };
                         Ok(flake_ref_type)
                     } else {
@@ -353,11 +353,11 @@ impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlakeRefType::File { location } => write!(f, "file:{}", location.display()),
-            FlakeRefType::Git { location, r#type } => {
-                if let TransportLayer::None = r#type {
+            FlakeRefType::Git { location, transport_type } => {
+                if let TransportLayer::None = transport_type {
                     return write!(f, "git:{location}");
                 }
-                let uri = format!("git+{}:{location}", r#type);
+                let uri = format!("git+{}:{location}", transport_type);
                 write!(f, "{uri}")
             }
             FlakeRefType::GitForge(GitForge {
@@ -379,16 +379,16 @@ impl Display for FlakeRefType {
                     write!(f, "{id}")
                 }
             }
-            FlakeRefType::Mercurial { location, r#type } => {
-                if let TransportLayer::None = r#type {
+            FlakeRefType::Mercurial { location, transport_type } => {
+                if let TransportLayer::None = transport_type {
                     return write!(f, "hg:{location}");
                 }
-                let uri = format!("hg+{}:{location}", r#type);
+                let uri = format!("hg+{}:{location}", transport_type);
                 write!(f, "{uri}")
             }
             FlakeRefType::Path { path } => write!(f, "{}", path),
             // TODO: alternate tarball representation
-            FlakeRefType::Tarball { location, r#type } => {
+            FlakeRefType::Tarball { location, transport_type } => {
                 write!(f, "file:{location}")
             }
             FlakeRefType::None => todo!(),
@@ -408,7 +408,7 @@ mod inc_parse_vc {
         assert_eq!(parsed_refpath, file_parsed_refpath);
         let expected_refpath = FlakeRefType::Git {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::File,
+            transport_type: TransportLayer::File,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -419,7 +419,7 @@ mod inc_parse_vc {
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
         let expected_refpath = FlakeRefType::Git {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::Http,
+            transport_type: TransportLayer::Http,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -430,7 +430,7 @@ mod inc_parse_vc {
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
         let expected_refpath = FlakeRefType::Git {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::Https,
+            transport_type: TransportLayer::Https,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -444,7 +444,7 @@ mod inc_parse_vc {
         assert_eq!(file_parsed_refpath, parsed_refpath);
         let expected_refpath = FlakeRefType::Mercurial {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::File,
+            transport_type: TransportLayer::File,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -455,7 +455,7 @@ mod inc_parse_vc {
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
         let expected_refpath = FlakeRefType::Mercurial {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::Http,
+            transport_type: TransportLayer::Http,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
@@ -466,7 +466,7 @@ mod inc_parse_vc {
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
         let expected_refpath = FlakeRefType::Mercurial {
             location: "/foo/bar".to_string(),
-            r#type: TransportLayer::Https,
+            transport_type: TransportLayer::Https,
         };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);

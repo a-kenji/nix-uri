@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type,
+    parser::parse_transport_type,
 };
 
 mod fr_type;
@@ -454,7 +454,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "git.somehost.tld/user/path".into(),
-                r#type: TransportLayer::Https,
+                transport_type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -472,7 +472,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "git.somehost.tld/user/path".into(),
-                r#type: TransportLayer::Https,
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -490,7 +490,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "/nix/nixpkgs".into(),
-                r#type: TransportLayer::File,
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -506,7 +506,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "/nix/nixpkgs".into(),
-                r#type: TransportLayer::File,
+                transport_type: TransportLayer::File,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -525,7 +525,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "/home/user/forked-flake".into(),
-                r#type: TransportLayer::File,
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -581,7 +581,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "/home/user/forked-flake".into(),
-                r#type: TransportLayer::File,
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -619,7 +619,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: TransportLayer::Https,
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -636,7 +636,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Mercurial {
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: TransportLayer::Https,
+                transport_type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -654,7 +654,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: TransportLayer::Https,
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -673,7 +673,7 @@ mod tests {
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
                 location: "/path/to/repo".to_owned(),
-                r#type: TransportLayer::File,
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
