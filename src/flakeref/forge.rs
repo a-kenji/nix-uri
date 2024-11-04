@@ -127,6 +127,54 @@ mod inc_parse_platform {
     }
 }
 #[cfg(test)]
+mod err_msgs {
+    use super::*;
+    #[test]
+    #[ignore = "partial owner-repo parsing not yet implemented"]
+    fn just_owner() {
+        let input = "owner";
+        let input_slash = "owner/";
+
+        let err = GitForge::parse_owner_repo_ref(input).unwrap_err();
+        let err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+
+        // assert_eq!(input, expected  `/` is missing);
+        // assert_eq!(input, expected repo-string is missing);
+    }
+    #[test]
+    #[ignore = "bad github ownerstring not yet impld"]
+    fn git_owner() {
+        let input = "bad-owner/";
+
+        // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
+        // assert_eq!(input, invalid github owner format);
+    }
+    #[test]
+    #[ignore = "bad github repostring not yet impld"]
+    fn git_repo() {
+        let input = "owner/bad-string";
+
+        // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
+        // assert_eq!(input, invalid github owner format);
+    }
+    #[test]
+    #[ignore = "bad mercurial ownerstring not yet impld"]
+    fn merc_owner() {
+        let input = "bad-owner/";
+
+        // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
+        // assert_eq!(input, invalid github owner format);
+    }
+    #[test]
+    #[ignore = "bad mercurial repostring not yet impld"]
+    fn merc_repo() {
+        let input = "owner/bad-string";
+
+        // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
+        // assert_eq!(input, invalid github owner format);
+    }
+}
+#[cfg(test)]
 mod inc_parse {
     use super::*;
     #[test]
