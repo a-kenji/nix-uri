@@ -317,6 +317,31 @@ impl Display for FlakeRefType {
 #[cfg(test)]
 mod inc_parse_vc {
     use super::*;
+
+    #[test]
+    fn parse_git_github_collision() {
+        let hub = "github:foo/bar";
+        let git = "git:///foo/bar";
+        let (rest_hub, parsed_hub) = FlakeRefType::parse(hub).unwrap();
+        let (rest_git, parsed_git) = FlakeRefType::parse(git).unwrap();
+        let expected_hub = FlakeRefType::GitForge(GitForge {
+            platform: GitForgePlatform::GitHub,
+            owner: "foo".to_string(),
+            repo: "bar".to_string(),
+            ref_or_rev: None,
+        });
+        let expected_git = FlakeRefType::Resource(ResourceUrl {
+            res_type: ResourceType::Git,
+            location: "/foo/bar".to_string(),
+            transport_type: None,
+        });
+
+        assert_eq!("", rest_hub);
+        assert_eq!("", rest_git);
+        assert_eq!(expected_git, parsed_git);
+        assert_eq!(expected_hub, parsed_hub);
+    }
+
     #[test]
     fn git_file() {
         let uri = "git:///foo/bar";
