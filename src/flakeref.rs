@@ -19,8 +19,8 @@ mod fr_type;
 pub use fr_type::FlakeRefType;
 mod fr_params;
 pub use fr_params::{FlakeRefParamKeys, FlakeRefParameters};
-mod fr_urls;
-pub use fr_urls::TransportLayer;
+mod transport_layer;
+pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
 
