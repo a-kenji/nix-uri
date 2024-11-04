@@ -73,6 +73,11 @@ mod inc_parse {
     use super::*;
     #[test]
     fn basic() {
+        let uri = "+http://";
+        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        assert_eq!(tp, TransportLayer::Http);
+        assert_eq!(rest, "://");
+
         let uri = "+https://";
         let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
         assert_eq!(tp, TransportLayer::Https);
@@ -94,5 +99,21 @@ mod inc_parse {
             panic!();
         };
         assert_eq!(e.input, "://");
+    }
+
+    // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It
+    // works more like a c-style switch-case than a rust `match`: This is to guard against
+    // regression tests, where we try and parse the `http` before `https`.
+    #[test]
+    fn http_s() {
+        let http = "+httpfoobar";
+        let https = "+httpsfoobar";
+        let (rest, http_parsed) = TransportLayer::plus_parse(http).unwrap();
+        let (rest, https_parsed) = TransportLayer::plus_parse(https).unwrap();
+        let http_expected = TransportLayer::Http;
+        let https_expected = TransportLayer::Https;
+        assert_eq!(http_expected, http_parsed);
+        assert_eq!(https_expected, https_parsed);
+        assert_eq!("foobar", rest);
     }
 }
