@@ -23,6 +23,7 @@ mod transport_layer;
 pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
+mod resource_url;
 
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,7 +109,7 @@ impl std::str::FromStr for FlakeRef {
 mod inc_parse {
     use std::path::PathBuf;
 
-    use fr_type::{ResourceType, ResourceUrl};
+    use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
     #[test]
@@ -150,7 +151,8 @@ mod inc_parse {
 
 #[cfg(test)]
 mod tests {
-    use fr_type::{ResourceType, ResourceUrl};
+
+    use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
     use crate::parser::{parse_nix_uri, parse_params};
