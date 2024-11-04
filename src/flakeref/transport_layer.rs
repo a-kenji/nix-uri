@@ -30,7 +30,7 @@ impl TransportLayer {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
             map(tag("https"), |_| TransportLayer::Https),
-            map(tag("http"), |_| TransportLayer::Https),
+            map(tag("http"), |_| TransportLayer::Http),
             map(tag("ssh"), |_| TransportLayer::Ssh),
             map(tag("file"), |_| TransportLayer::File),
         ))(input)
@@ -74,23 +74,23 @@ mod inc_parse {
     #[test]
     fn basic() {
         let uri = "+https://";
-        let (rest, tp) = TransportLayer::parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
         assert_eq!(tp, TransportLayer::Https);
         assert_eq!(rest, "://");
 
         let uri = "+ssh://";
-        let (rest, tp) = TransportLayer::parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
         assert_eq!(tp, TransportLayer::Ssh);
         assert_eq!(rest, "://");
 
         let uri = "+file://";
-        let (rest, tp) = TransportLayer::parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
         assert_eq!(tp, TransportLayer::File);
         assert_eq!(rest, "://");
 
         // TODO: #158
         let uri = "://";
-        let nom::Err::Error(e) = TransportLayer::parse(uri).unwrap_err() else {
+        let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
             panic!();
         };
         assert_eq!(e.input, "://");
