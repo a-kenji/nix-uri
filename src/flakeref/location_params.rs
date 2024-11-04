@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
-pub struct FlakeRefParameters {
+pub struct LocationParameters {
     /// The subdirectory of the flake in which flake.nix is located. This parameter
     /// enables having multiple flakes in a repository or tarball. The default is the
     /// root directory of the flake.
@@ -49,7 +49,7 @@ pub struct FlakeRefParameters {
 
 // TODO: convert into macro!
 // or have params in a vec of tuples? with param and option<string>
-impl Display for FlakeRefParameters {
+impl Display for LocationParameters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut res = String::new();
         if let Some(dir) = &self.dir {
@@ -88,7 +88,7 @@ impl Display for FlakeRefParameters {
     }
 }
 
-impl FlakeRefParameters {
+impl LocationParameters {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, param_values) = many_m_n(
             0,
@@ -100,22 +100,22 @@ impl FlakeRefParameters {
             ),
         )(input)?;
 
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         for (param, value) in param_values {
             // param can start with "&"
             // TODO: actual error handling instead of unwrapping
             // TODO: allow check of the parameters
             if let Ok(param) = param.parse() {
                 match param {
-                    FlakeRefParamKeys::Dir => params.set_dir(Some(value.into())),
-                    FlakeRefParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
-                    FlakeRefParamKeys::Host => params.set_host(Some(value.into())),
-                    FlakeRefParamKeys::Ref => params.set_ref(Some(value.into())),
-                    FlakeRefParamKeys::Rev => params.set_rev(Some(value.into())),
-                    FlakeRefParamKeys::Branch => params.set_branch(Some(value.into())),
-                    FlakeRefParamKeys::Submodules => params.set_submodules(Some(value.into())),
-                    FlakeRefParamKeys::Shallow => params.set_shallow(Some(value.into())),
-                    FlakeRefParamKeys::Arbitrary(param) => {
+                    LocationParamKeys::Dir => params.set_dir(Some(value.into())),
+                    LocationParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
+                    LocationParamKeys::Host => params.set_host(Some(value.into())),
+                    LocationParamKeys::Ref => params.set_ref(Some(value.into())),
+                    LocationParamKeys::Rev => params.set_rev(Some(value.into())),
+                    LocationParamKeys::Branch => params.set_branch(Some(value.into())),
+                    LocationParamKeys::Submodules => params.set_submodules(Some(value.into())),
+                    LocationParamKeys::Shallow => params.set_shallow(Some(value.into())),
+                    LocationParamKeys::Arbitrary(param) => {
                         params.add_arbitrary((param, value.into()))
                     }
                 }
@@ -192,7 +192,7 @@ impl FlakeRefParameters {
     }
 }
 
-pub enum FlakeRefParamKeys {
+pub enum LocationParamKeys {
     Dir,
     NarHash,
     Host,
@@ -204,11 +204,11 @@ pub enum FlakeRefParamKeys {
     Arbitrary(String),
 }
 
-impl std::str::FromStr for FlakeRefParamKeys {
+impl std::str::FromStr for LocationParamKeys {
     type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use FlakeRefParamKeys::*;
+        use LocationParamKeys::*;
         match s {
             "dir" | "&dir" => Ok(Dir),
             "nar_hash" | "&nar_hash" => Ok(NarHash),
@@ -229,75 +229,75 @@ mod inc_parse {
     use super::*;
     #[test]
     fn no_str() {
-        let expected = FlakeRefParameters::default();
+        let expected = LocationParameters::default();
         let in_str = "";
-        let (outstr, parsed_param) = FlakeRefParameters::parse(in_str).unwrap();
+        let (outstr, parsed_param) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", outstr);
         assert_eq!(expected, parsed_param);
     }
     #[test]
     fn empty() {
-        let expected = FlakeRefParameters::default();
+        let expected = LocationParameters::default();
         let in_str = "";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
     }
     #[test]
     fn empty_hash_terminated() {
-        let expected = FlakeRefParameters::default();
+        let expected = LocationParameters::default();
         let in_str = "#";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#", rest);
         assert_eq!(output, expected);
     }
     #[test]
     fn dir() {
-        let mut expected = FlakeRefParameters::default();
+        let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
         let in_str = "dir=foo";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
 
         let in_str = "&dir=foo";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
         let in_str = "dir=&dir=foo";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
 
         expected.dir(Some("".to_string()));
         let in_str = "dir=";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
         assert_eq!(output, expected);
     }
     #[test]
     fn dir_hash_term() {
-        let mut expected = FlakeRefParameters::default();
+        let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
         let in_str = "dir=foo#fizz";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
 
         let in_str = "&dir=foo#fizz";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
         let in_str = "dir=&dir=foo#fizz";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
 
         expected.dir(Some("".to_string()));
         let in_str = "dir=#fizz";
-        let (rest, output) = FlakeRefParameters::parse(in_str).unwrap();
+        let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
     }
