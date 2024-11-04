@@ -109,6 +109,10 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
     TryInto::<TransportLayer>::try_into(input)
 }
 
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
+    tag("://")(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

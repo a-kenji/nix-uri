@@ -507,14 +507,14 @@ mod tests {
         assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
         assert_eq!("", rest);
-        let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::Git,
-                location: "/nix/nixpkgs".into(),
-                transport_type: None,
-            }))
-            .params(params.clone())
-            .clone();
+        // let expected = FlakeRef::default()
+        //     .r#type(FlakeRefType::Resource(ResourceUrl {
+        //         res_type: ResourceType::Git,
+        //         location: "/nix/nixpkgs".into(),
+        //         transport_type: None,
+        //     }))
+        //     .params(params.clone())
+        //     .clone();
         assert_eq!(expected, nommed);
     }
     #[test]

@@ -6,7 +6,8 @@ use std::{
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
-    combinator::{cond, map, opt, peek, rest, verify},
+    combinator::{cond, map, not, opt, peek, rest, verify},
+    sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::forge::GitForge,
-    parser::parse_transport_type,
+    parser::{parse_sep, parse_transport_type},
 };
 
 use super::{GitForgePlatform, TransportLayer};
@@ -43,12 +44,41 @@ pub struct ResourceUrl {
     pub location: String,
     pub transport_type: Option<TransportLayer>,
 }
+
+impl ResourceUrl {
+    pub fn parse(input: &str) -> IResult<&str, Self> {
+        let (rest, res_type) = ResourceType::parse(input)?;
+        let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
+        let (rest, _tag) = parse_sep(rest)?;
+        let (res, location) = take_till(|c| c == '#' || c == '?')(rest)?;
+
+        Ok((
+            res,
+            Self {
+                res_type,
+                location: location.to_string(),
+                transport_type,
+            },
+        ))
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ResourceType {
     Git,
     Mercurial,
     File,
     Tarball,
+}
+
+impl ResourceType {
+    pub fn parse(input: &str) -> IResult<&str, Self> {
+        alt((
+            map(tag("git"), |_| Self::Git),
+            map(tag("hg"), |_| Self::Mercurial),
+            map(tag("file"), |_| Self::File),
+            map(tag("tarball"), |_| Self::Tarball),
+        ))(input)
+    }
 }
 
 impl Display for ResourceType {
@@ -68,9 +98,12 @@ impl FlakeRefType {
         alt((
             map(
                 alt((
+                    // file+file
                     Self::parse_explicit_file_scheme,
+                    // file+http(s)
                     Self::parse_http_file_scheme,
                 )),
+                // file
                 |path| {
                     Self::Resource(ResourceUrl {
                         res_type: ResourceType::File,
@@ -115,69 +148,15 @@ impl FlakeRefType {
         map(GitForge::parse, Self::GitForge)(input)
     }
     /// <git | hg>[+<transport-type]://
-    pub fn parse_vc(input: &str) -> IResult<&str, Self> {
-        alt((Self::parse_git_vc, Self::parse_hg_vc))(input)
-    }
-    pub fn parse_git_vc(input: &str) -> IResult<&str, Self> {
-        let (path, tag) = alt((
-            tag("git://"),
-            tag("git+http://"),
-            tag("git+https://"),
-            tag("git+ssh://"),
-            tag("git+file://"),
-        ))(input)?;
-        // TODO: un-yuck this trim-abomination
-        let tag = tag.trim_end_matches("://");
-        let tag = tag.trim_start_matches("git");
-        let tag = tag.trim_start_matches("+");
-
-        let tp = if !tag.is_empty() {
-            Some(TransportLayer::File)
-        } else {
-            None
-        };
-
-        let (rest, location) = take_till(|c| c == '#' || c == '?')(path)?;
-
-        Ok((
-            rest,
-            Self::Resource(ResourceUrl {
-                res_type: ResourceType::Git,
-                transport_type: tp,
-                location: location.to_string(),
-            }),
-        ))
-    }
-    pub fn parse_hg_vc(input: &str) -> IResult<&str, Self> {
-        let (path, tag) = alt((
-            tag("hg://"),
-            tag("hg+http://"),
-            tag("hg+https://"),
-            tag("hg+ssh://"),
-            tag("hg+file://"),
-        ))(input)?;
-        // TODO: un-yuck this trim-abomination
-        let tag = tag.trim_end_matches("://");
-        let tag = tag.trim_start_matches("hg");
-        let tag = tag.trim_start_matches("+");
-
-        let tp = if !tag.is_empty() {
-            Some(TransportLayer::File)
-        } else {
-            None
-        };
-        let (rest, location) = take_till(|c| c == '#' || c == '?')(path)?;
-        Ok((
-            rest,
-            Self::Resource(ResourceUrl {
-                res_type: ResourceType::Mercurial,
-                transport_type: tp,
-                location: location.to_string(),
-            }),
-        ))
+    pub fn parse_resource(input: &str) -> IResult<&str, Self> {
+        map(ResourceUrl::parse, Self::Resource)(input)
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        alt((Self::parse_git_forge, Self::parse_file, Self::parse_vc))(input)
+        alt((
+            Self::parse_git_forge,
+            Self::parse_file,
+            Self::parse_resource,
+        ))(input)
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input

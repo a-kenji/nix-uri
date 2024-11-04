@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
     combinator::{map, opt, rest},
+    sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -28,10 +29,14 @@ impl TransportLayer {
     /// TODO: refactor so None is not in TransportLayer. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag("+https"), |_| TransportLayer::Https),
-            map(tag("+ssh"), |_| TransportLayer::Ssh),
-            map(tag("+file"), |_| TransportLayer::File),
+            map(tag("https"), |_| TransportLayer::Https),
+            map(tag("http"), |_| TransportLayer::Https),
+            map(tag("ssh"), |_| TransportLayer::Ssh),
+            map(tag("file"), |_| TransportLayer::File),
         ))(input)
+    }
+    pub(crate) fn plus_parse(input: &str) -> IResult<&str, Self> {
+        preceded(tag("+"), Self::parse)(input)
     }
 }
 
