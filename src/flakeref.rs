@@ -486,10 +486,12 @@ mod tests {
             }))
             .params(params)
             .clone();
+
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -505,18 +507,12 @@ mod tests {
             }))
             .params(params.clone())
             .clone();
+
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
-        // let expected = FlakeRef::default()
-        //     .r#type(FlakeRefType::Resource(ResourceUrl {
-        //         res_type: ResourceType::Git,
-        //         location: "/nix/nixpkgs".into(),
-        //         transport_type: None,
-        //     }))
-        //     .params(params.clone())
-        //     .clone();
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -530,9 +526,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -551,9 +548,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -571,9 +569,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -589,9 +588,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -608,9 +608,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -628,9 +629,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -647,9 +649,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -664,9 +667,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -684,9 +688,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     // TODO: https://github.com/a-kenji/nix-uri/issues/157
@@ -746,9 +751,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -763,9 +769,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -783,9 +790,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -800,9 +808,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -821,9 +830,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -897,9 +907,10 @@ mod tests {
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -914,9 +925,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
 

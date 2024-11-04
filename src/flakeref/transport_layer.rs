@@ -29,10 +29,10 @@ impl TransportLayer {
     /// TODO: refactor so None is not in TransportLayer. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag("https"), |_| TransportLayer::Https),
-            map(tag("http"), |_| TransportLayer::Http),
-            map(tag("ssh"), |_| TransportLayer::Ssh),
-            map(tag("file"), |_| TransportLayer::File),
+            map(tag("https"), |_| Self::Https),
+            map(tag("http"), |_| Self::Http),
+            map(tag("ssh"), |_| Self::Ssh),
+            map(tag("file"), |_| Self::File),
         ))(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self> {
