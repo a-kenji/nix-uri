@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type,
+    parser::parse_transport_type,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

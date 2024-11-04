@@ -31,7 +31,7 @@ pub enum NixUriError {
     /// The type of the uri extensions for a uri type, for example `git+ssh`
     /// the ssh part is the type here.
     #[error("The type is not known: {0}")]
-    UnknownUrlType(String),
+    UnknownTransportLayer(String),
     /// Invalid Type
     #[error("Invalid FlakeRef Type: {0}")]
     InvalidType(String),

@@ -9,12 +9,12 @@ use nom::{
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    flakeref::{FlakeRef, FlakeRefParamKeys, FlakeRefParameters, FlakeRefType, UrlType},
+    flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
 };
 
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
-pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParameters>> {
+pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
     use nom::sequence::separated_pair;
 
     // This is the inverse of the general control flow
@@ -30,22 +30,22 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<FlakeRefParamete
             separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
         )(input)?;
 
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         for (param, value) in param_values {
             // param can start with "&"
             // TODO: actual error handling instead of unwrapping
             // TODO: allow check of the parameters
             if let Ok(param) = param.parse() {
                 match param {
-                    FlakeRefParamKeys::Dir => params.set_dir(Some(value.into())),
-                    FlakeRefParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
-                    FlakeRefParamKeys::Host => params.set_host(Some(value.into())),
-                    FlakeRefParamKeys::Ref => params.set_ref(Some(value.into())),
-                    FlakeRefParamKeys::Rev => params.set_rev(Some(value.into())),
-                    FlakeRefParamKeys::Branch => params.set_branch(Some(value.into())),
-                    FlakeRefParamKeys::Submodules => params.set_submodules(Some(value.into())),
-                    FlakeRefParamKeys::Shallow => params.set_shallow(Some(value.into())),
-                    FlakeRefParamKeys::Arbitrary(param) => {
+                    LocationParamKeys::Dir => params.set_dir(Some(value.into())),
+                    LocationParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
+                    LocationParamKeys::Host => params.set_host(Some(value.into())),
+                    LocationParamKeys::Ref => params.set_ref(Some(value.into())),
+                    LocationParamKeys::Rev => params.set_rev(Some(value.into())),
+                    LocationParamKeys::Branch => params.set_branch(Some(value.into())),
+                    LocationParamKeys::Submodules => params.set_submodules(Some(value.into())),
+                    LocationParamKeys::Shallow => params.set_shallow(Some(value.into())),
+                    LocationParamKeys::Arbitrary(param) => {
                         params.add_arbitrary((param, value.into()))
                     }
                 }
@@ -84,8 +84,8 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
     Ok(flake_ref)
 }
 
-/// Parses the url raw url type out of: `+type`
-pub(crate) fn parse_from_url_type(input: &str) -> IResult<&str, &str> {
+/// Parses the raw-string describing the transport type out of: `+type`
+pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
     let (input, rest) = take_until("+")(input)?;
     let (input, _) = anychar(input)?;
     Ok((rest, input))
@@ -103,10 +103,10 @@ pub(crate) fn is_file(input: &str) -> bool {
     !is_tarball(input)
 }
 
-// Parse the url type itself
-pub(crate) fn parse_url_type(input: &str) -> Result<UrlType, NixUriError> {
-    let (_, input) = parse_from_url_type(input)?;
-    TryInto::<UrlType>::try_into(input)
+// Parse the transport type itself
+pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
+    let (_, input) = parse_from_transport_type(input)?;
+    TryInto::<TransportLayer>::try_into(input)
 }
 
 #[cfg(test)]

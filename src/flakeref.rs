@@ -12,15 +12,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    parser::parse_url_type,
+    parser::parse_transport_type,
 };
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
-mod fr_params;
-pub use fr_params::{FlakeRefParamKeys, FlakeRefParameters};
-mod fr_urls;
-pub use fr_urls::UrlType;
+mod location_params;
+pub use location_params::{LocationParamKeys, LocationParameters};
+mod transport_layer;
+pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
 
@@ -30,7 +30,7 @@ pub use forge::{GitForge, GitForgePlatform};
 pub struct FlakeRef {
     pub r#type: FlakeRefType,
     flake: Option<bool>,
-    pub params: FlakeRefParameters,
+    pub params: LocationParameters,
 }
 
 impl FlakeRef {
@@ -56,13 +56,13 @@ impl FlakeRef {
         self.r#type.get_id()
     }
 
-    pub fn params(&mut self, params: FlakeRefParameters) -> &mut Self {
+    pub fn params(&mut self, params: LocationParameters) -> &mut Self {
         self.params = params;
         self
     }
     fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = opt(preceded(tag("?"), FlakeRefParameters::parse))(rest)?;
+        let (rest, params) = opt(preceded(tag("?"), LocationParameters::parse))(rest)?;
         Ok((
             rest,
             Self {
@@ -120,7 +120,7 @@ mod inc_parse {
             repo: "repo".into(),
             ref_or_rev: Some("rev".to_string()),
         }));
-        let mut exp_params = FlakeRefParameters::default();
+        let mut exp_params = LocationParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;
         // TODO: when attrs are implemented, this should assert `""`
@@ -133,9 +133,9 @@ mod inc_parse {
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
         expected.r#type(FlakeRefType::File {
-            url: PathBuf::from("/phantom/root/path"),
+            location: PathBuf::from("/phantom/root/path"),
         });
-        let mut exp_params = FlakeRefParameters::default();
+        let mut exp_params = LocationParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;
         // TODO: when attrs are implemented, this should assert `""`
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_attr_nom_params() {
         let uri = "github:zellij-org/zellij?dir=assets";
-        let mut flake_attrs = FlakeRefParameters::default();
+        let mut flake_attrs = LocationParameters::default();
         flake_attrs.dir(Some("assets".into()));
         let parsed = parse_params(uri).unwrap();
         assert_eq!(("github:zellij-org/zellij", Some(flake_attrs)), parsed);
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_ref() {
         let uri = "github:zellij-org/zellij?ref=main";
-        let mut flake_attrs = FlakeRefParameters::default();
+        let mut flake_attrs = LocationParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_rev() {
         let uri = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let mut flake_attrs = FlakeRefParameters::default();
+        let mut flake_attrs = LocationParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_ref_or_rev_attr_nom() {
         let uri = "github:zellij-org/zellij/main?dir=assets";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_attr_nom() {
         let uri = "github:zellij-org/zellij?dir=assets";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_attr_nom_alt() {
         let uri = "github:zellij-org/zellij/?dir=assets";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_params_nom_alt() {
         let uri = "github:zellij-org/zellij/?dir=assets&nar_hash=fakeHash256";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.dir(Some("assets".into()));
         params.nar_hash(Some("fakeHash256".into()));
         let flake_ref = FlakeRef::default()
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn parse_simple_path_params_nom() {
         let uri = "path:/home/kenji/.config/dotfiles/?dir=assets";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.dir(Some("assets".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::Path {
@@ -432,7 +432,7 @@ mod tests {
     fn parse_gitlab_simple_host_param() {
         let uri = "gitlab:openldap/openldap?host=git.openldap.org";
         let parsed = crate::parser::parse_nix_uri(uri).unwrap();
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.host(Some("git.openldap.org".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -453,8 +453,8 @@ mod tests {
         let uri = "git+https://git.somehost.tld/user/path";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "git.somehost.tld/user/path".into(),
-                r#type: UrlType::Https,
+                location: "git.somehost.tld/user/path".into(),
+                transport_type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -466,13 +466,13 @@ mod tests {
     #[test]
     fn parse_git_and_https_params() {
         let uri = "git+https://git.somehost.tld/user/path?ref=branch&rev=fdc8ef970de2b4634e1b3dca296e1ed918459a9e";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.r#ref(Some("branch".into()));
         params.rev(Some("fdc8ef970de2b4634e1b3dca296e1ed918459a9e".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "git.somehost.tld/user/path".into(),
-                r#type: UrlType::Https,
+                location: "git.somehost.tld/user/path".into(),
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -485,12 +485,12 @@ mod tests {
     #[test]
     fn parse_git_and_file_params() {
         let uri = "git+file:///nix/nixpkgs?ref=upstream/nixpkgs-unstable";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.r#ref(Some("upstream/nixpkgs-unstable".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/nix/nixpkgs".into(),
-                r#type: UrlType::File,
+                location: "/nix/nixpkgs".into(),
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -505,8 +505,8 @@ mod tests {
         let uri = "git+file:///nix/nixpkgs";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/nix/nixpkgs".into(),
-                r#type: UrlType::File,
+                location: "/nix/nixpkgs".into(),
+                transport_type: TransportLayer::File,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -520,12 +520,12 @@ mod tests {
     // git+file:/home/user/forked-flake?branch=feat/myNewFeature
     fn parse_git_and_file_params_alt() {
         let uri = "git+file:///home/user/forked-flake?branch=feat/myNewFeature";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/home/user/forked-flake".into(),
-                r#type: UrlType::File,
+                location: "/home/user/forked-flake".into(),
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn parse_github_simple_tag_non_alphabetic_params() {
         let uri = "github:smunix/MyST-Parser?ref=fix.hls-docutils";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_ref(Some("fix.hls-docutils".to_owned()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn parse_github_simple_tag() {
         let uri = "github:cachix/devenv/v0.5";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
                 platform: GitForgePlatform::GitHub,
@@ -576,12 +576,12 @@ mod tests {
     #[test]
     fn parse_git_and_file_params_alt_branch() {
         let uri = "git+file:///home/user/forked-flake?branch=feat/myNewFeature";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/home/user/forked-flake".into(),
-                r#type: UrlType::File,
+                location: "/home/user/forked-flake".into(),
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn parse_gitlab_with_host_params_alt() {
         let uri = "gitlab:fpottier/menhir/20201216?host=gitlab.inria.fr";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_host(Some("gitlab.inria.fr".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -614,12 +614,12 @@ mod tests {
     #[test]
     fn parse_git_and_https_params_submodules() {
         let uri = "git+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -632,11 +632,11 @@ mod tests {
     #[test]
     fn parse_marcurial_and_https_simpe_uri() {
         let uri = "hg+https://www.github.com/ocaml/ocaml-lsp";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Mercurial {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                transport_type: TransportLayer::Https,
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -649,12 +649,12 @@ mod tests {
     #[should_panic]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                r#type: UrlType::Https,
+                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
+                transport_type: TransportLayer::Https,
             })
             .params(params)
             .clone();
@@ -668,12 +668,12 @@ mod tests {
     #[test]
     fn parse_git_and_file_shallow() {
         let uri = "git+file:/path/to/repo?shallow=1";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_shallow(Some("1".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Git {
-                url: "/path/to/repo".to_owned(),
-                r#type: UrlType::File,
+                location: "/path/to/repo".to_owned(),
+                transport_type: TransportLayer::File,
             })
             .params(params)
             .clone();
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_sourcehut_host_param() {
         let uri = "sourcehut:~misterio/nix-colors?host=git.example.org";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_host(Some("git.example.org".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -783,7 +783,7 @@ mod tests {
     fn parse_simple_uri_sourcehut_ref_params() {
         let uri =
             "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de?host=hg.sr.ht";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -817,7 +817,7 @@ mod tests {
     fn display_simple_sourcehut_uri_ref_or_rev_host_param() {
         let expected =
             "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de?host=hg.sr.ht";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_host(Some("hg.sr.ht".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn display_simple_github_uri_ref() {
         let expected = "github:zellij-org/zellij?ref=main";
-        let mut flake_attrs = FlakeRefParameters::default();
+        let mut flake_attrs = LocationParameters::default();
         flake_attrs.r#ref(Some("main".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn display_simple_github_uri_rev() {
         let expected = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let mut flake_attrs = FlakeRefParameters::default();
+        let mut flake_attrs = LocationParameters::default();
         flake_attrs.rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn parse_simple_path_uri_indirect_absolute_without_prefix_with_params() {
         let uri = "/home/kenji/git?dir=dev";
-        let mut params = FlakeRefParameters::default();
+        let mut params = LocationParameters::default();
         params.set_dir(Some("dev".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Path {
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
-        let expected = NixUriError::UnknownUrlType("(".into());
+        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
         let e = FlakeRef::parse(uri).unwrap_err();
@@ -1005,7 +1005,7 @@ mod tests {
     // #[test]
     // fn parse_simple_tarball() {
     //     let uri = "https://hackage.haskell.org/package/lsp-test-0.14.0.3/lsp-test-0.14.0.3.tar.gz";
-    //     let mut params = FlakeRefParameters::default();
+    //     let mut params = LocationParameters::default();
     //     let expected = FlakeRef::default()
     //         .r#type(FlakeRefType::Tarball {
     //             id: "nixpkgs".to_owned(),
