@@ -35,7 +35,7 @@ impl TransportLayer {
             map(tag("file"), |_| TransportLayer::File),
         ))(input)
     }
-    pub(crate) fn plus_parse(input: &str) -> IResult<&str, Self> {
+    pub fn plus_parse(input: &str) -> IResult<&str, Self> {
         preceded(tag("+"), Self::parse)(input)
     }
 }
@@ -117,3 +117,26 @@ mod inc_parse {
         assert_eq!("foobar", rest);
     }
 }
+
+#[cfg(test)]
+mod err_msg {
+    use super::*;
+    #[test]
+    #[ignore = "need to impl good error handling"]
+    fn fizzbuzz() {
+        let url = "+fizzbuzz";
+        let err = TransportLayer::plus_parse(url).unwrap_err();
+        todo!("Impl informative errors");
+    }
+
+    #[test]
+    #[ignore = "need to impl good error handling"]
+    fn missing() {
+        let url = "+";
+        let plus_err = TransportLayer::plus_parse(url).unwrap_err();
+        let err = TransportLayer::parse("").unwrap_err();
+        assert_eq!(plus_err, err);
+        // todo!("Impl informative errors");
+    }
+}
+

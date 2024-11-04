@@ -66,3 +66,23 @@ impl Display for ResourceType {
         write!(f, "{}", out_str)
     }
 }
+
+#[cfg(test)]
+mod res_url {
+    use super::*;
+    #[test]
+    fn git() {
+        let url = "gitfoobar";
+        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let expected = ResourceType::Git;
+        assert_eq!(expected, parsed);
+        assert_eq!("foobar", rest);
+    }
+    #[test]
+    #[ignore = "need to impl good error handling"]
+    fn gat() {
+        let url = "gat";
+        let err = ResourceType::parse(url).unwrap_err();
+        todo!("Imple informative errors");
+    }
+}
