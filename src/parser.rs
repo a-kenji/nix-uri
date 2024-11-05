@@ -3,13 +3,16 @@ use nom::{
     bytes::complete::{tag, take_until},
     character::complete::anychar,
     combinator::{opt, rest},
+    error::{context, ParseError, VerboseError},
     multi::many_m_n,
     IResult,
 };
+use nom_locate::LocatedSpan;
 
 use crate::{
-    error::{NixUriError, NixUriResult},
+    error::{MyParseErrors, NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
+    NixUriIResult,
 };
 
 /// Take all that is behind the "?" tag
@@ -107,6 +110,25 @@ pub(crate) fn is_file(input: &str) -> bool {
 pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
     let (_, input) = parse_from_transport_type(input)?;
     TryInto::<TransportLayer>::try_into(input)
+}
+
+type Span<'a> = LocatedSpan<&'a str>;
+// pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
+pub(crate) fn parse_sep(input: Span) -> IResult<Span, Span, MyParseErrors<Span>> {
+    tag("://")(input).map_err(|e: nom::Err<(Span, nom::error::ErrorKind)>| {
+        nom::Err::Failure(MyParseErrors::Expected(Span::new("://"), e))
+    })
+}
+
+#[cfg(test)]
+mod test {
+    use nom::error::VerboseError;
+
+    #[test]
+    fn context() {
+        let e = super::parse_sep(super::Span::new(":oobar")).unwrap_err();
+        panic!("{:?}", e);
+    }
 }
 
 #[cfg(test)]

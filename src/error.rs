@@ -1,6 +1,8 @@
+use nom::IResult;
 use thiserror::Error;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
+pub type NixUriIResult<I, T> = IResult<I, T, NixUriError>;
 
 #[derive(Debug, Error, PartialEq)]
 #[non_exhaustive]
@@ -49,6 +51,11 @@ pub enum NixUriError {
     Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum MyParseErrors<I> {
+    Expected(I, nom::Err<(I, nom::error::ErrorKind)>),
 }
 
 impl From<nom::Err<nom::error::Error<&str>>> for NixUriError {
