@@ -17,7 +17,7 @@ impl TryFrom<&str> for UrlWrapper {
 }
 
 impl UrlWrapper {
-    pub(crate) fn new(url: Url) -> Self {
+    pub(crate) const fn new(url: Url) -> Self {
         Self {
             url,
             infer_type: true,
@@ -60,8 +60,8 @@ impl UrlWrapper {
                 let segments = self
                     .url
                     .path_segments()
-                    .map(|c| c.collect::<Vec<_>>())
-                    .ok_or(NixUriError::Error(format!(
+                    .map(std::iter::Iterator::collect::<Vec<_>>)
+                    .ok_or_else(|| NixUriError::Error(format!(
                         "Error parsing from host: {}",
                         input
                     )))?;

@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(expected, nommed);
     }
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: UnknownUriType(\"gt+https\")")]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
         let mut params = LocationParameters::default();

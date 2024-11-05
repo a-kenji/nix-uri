@@ -1,5 +1,12 @@
 // #![forbid(unsafe_code)]
-// #![warn(clippy::pedantic, clippy::nursery, clippy::cargo, unused)]
+// #![warn(clippy::pedantic)]
+// #![warn(clippy::nursery)]
+// #![warn(clippy::cargo, unused)]
+// #![allow(clippy::module_name_repetitions)]
+// #![allow(clippy::uninlined_format_args)]
+// #![allow(clippy::missing_errors_doc)]
+// #![allow(clippy::must_use_candidate)]
+// #![allow(clippy::no_effect_underscore_binding)]
 //!
 //! [nix-uri](https://crates.io/crates/nix-uri) is a rust crate that parses
 //! the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
@@ -83,7 +90,7 @@
 // TODO: remove from error
 mod error;
 mod flakeref;
-mod parser;
+pub(crate) mod parser;
 pub mod urls;
 
 pub use error::*;

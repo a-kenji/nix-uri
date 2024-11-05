@@ -25,7 +25,7 @@ pub enum TransportLayer {
 }
 
 impl TransportLayer {
-    /// TODO: refactor so None is not in TransportLayer. Use Option to encapsulate this
+    /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
             map(tag("https"), |_| Self::Https),
@@ -43,13 +43,12 @@ impl TryFrom<&str> for TransportLayer {
     type Error = NixUriError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        use TransportLayer::*;
         match value {
-            "" => Ok(None),
-            "http" => Ok(Http),
-            "https" => Ok(Https),
-            "ssh" => Ok(Ssh),
-            "file" => Ok(File),
+            "" => Ok(Self::None),
+            "http" => Ok(Self::Http),
+            "https" => Ok(Self::Https),
+            "ssh" => Ok(Self::Ssh),
+            "file" => Ok(Self::File),
             err => Err(NixUriError::UnknownTransportLayer(err.into())),
         }
     }
@@ -58,11 +57,11 @@ impl TryFrom<&str> for TransportLayer {
 impl Display for TransportLayer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TransportLayer::None => write!(f, "No Url Type Specified"),
-            TransportLayer::Http => write!(f, "http"),
-            TransportLayer::Https => write!(f, "https"),
-            TransportLayer::Ssh => write!(f, "ssh"),
-            TransportLayer::File => write!(f, "file"),
+            Self::None => write!(f, "No Url Type Specified"),
+            Self::Http => write!(f, "http"),
+            Self::Https => write!(f, "https"),
+            Self::Ssh => write!(f, "ssh"),
+            Self::File => write!(f, "file"),
         }
     }
 }
@@ -111,9 +110,9 @@ mod inc_parse {
         assert_eq!("foobar", rest);
         let (rest, https_parsed) = TransportLayer::plus_parse(https).unwrap();
         let http_expected = TransportLayer::Http;
-        let https_expected = TransportLayer::Https;
+        let http_s_expected = TransportLayer::Https;
         assert_eq!(http_expected, http_parsed);
-        assert_eq!(https_expected, https_parsed);
+        assert_eq!(http_s_expected, https_parsed);
         assert_eq!("foobar", rest);
     }
 }

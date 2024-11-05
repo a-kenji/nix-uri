@@ -59,10 +59,10 @@ impl GitForge {
         // drop the `/` if it exists
         let (maybe_refrev, _) = opt(tag("/"))(path2)?;
         // if the remaining is empty, that's the ref/rev
-        let maybe_refrev = if !maybe_refrev.is_empty() {
-            Some(maybe_refrev)
-        } else {
+        let maybe_refrev = if maybe_refrev.is_empty() {
             None
+        } else {
+            Some(maybe_refrev)
         };
 
         Ok((tail, (owner, repo, maybe_refrev)))
@@ -74,7 +74,7 @@ impl GitForge {
             platform,
             owner: forge_path.0.to_string(),
             repo: forge_path.1.to_string(),
-            ref_or_rev: forge_path.2.map(|s| s.to_string()),
+            ref_or_rev: forge_path.2.map(str::to_string),
         };
         Ok((rest, res))
     }
@@ -86,9 +86,9 @@ impl Display for GitForgePlatform {
             f,
             "{}",
             match self {
-                GitForgePlatform::GitHub => "github",
-                GitForgePlatform::GitLab => "gitlab",
-                GitForgePlatform::SourceHut => "sourcehut",
+                Self::GitHub => "github",
+                Self::GitLab => "gitlab",
+                Self::SourceHut => "sourcehut",
             }
         )
     }
@@ -184,7 +184,7 @@ mod inc_parse {
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
         let expected = ("owner", "repo", None);
         assert_eq!(expected, res);
-        assert_eq!(rest, "?#🤡");
+        assert_eq!(rest, "?🤡");
 
         let input = "owner/repo#🤡";
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();

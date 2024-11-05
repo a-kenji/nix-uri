@@ -97,7 +97,7 @@ impl LocationParameters {
             ),
         )(input)?;
 
-        let mut params = LocationParameters::default();
+        let mut params = Self::default();
         for (param, value) in param_values {
             // param can start with "&"
             // TODO: actual error handling instead of unwrapping
@@ -113,7 +113,7 @@ impl LocationParameters {
                     LocationParamKeys::Submodules => params.set_submodules(Some(value.into())),
                     LocationParamKeys::Shallow => params.set_shallow(Some(value.into())),
                     LocationParamKeys::Arbitrary(param) => {
-                        params.add_arbitrary((param, value.into()))
+                        params.add_arbitrary((param, value.into()));
                     }
                 }
             }
@@ -181,10 +181,10 @@ impl LocationParameters {
     pub fn add_arbitrary(&mut self, arbitrary: (String, String)) {
         self.arbitrary.push(arbitrary);
     }
-    pub fn get_rev(&self) -> Option<&String> {
+    pub const fn get_rev(&self) -> Option<&String> {
         self.rev.as_ref()
     }
-    pub fn get_ref(&self) -> Option<&String> {
+    pub const fn get_ref(&self) -> Option<&String> {
         self.r#ref.as_ref()
     }
 }
@@ -205,17 +205,16 @@ impl std::str::FromStr for LocationParamKeys {
     type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use LocationParamKeys::*;
         match s {
-            "dir" | "&dir" => Ok(Dir),
-            "nar_hash" | "&nar_hash" => Ok(NarHash),
-            "host" | "&host" => Ok(Host),
-            "rev" | "&rev" => Ok(Rev),
-            "ref" | "&ref" => Ok(Ref),
-            "branch" | "&branch" => Ok(Branch),
-            "submodules" | "&submodules" => Ok(Submodules),
-            "shallow" | "&shallow" => Ok(Shallow),
-            arbitrary => Ok(Arbitrary(arbitrary.into())),
+            "dir" | "&dir" => Ok(Self::Dir),
+            "nar_hash" | "&nar_hash" => Ok(Self::NarHash),
+            "host" | "&host" => Ok(Self::Host),
+            "rev" | "&rev" => Ok(Self::Rev),
+            "ref" | "&ref" => Ok(Self::Ref),
+            "branch" | "&branch" => Ok(Self::Branch),
+            "submodules" | "&submodules" => Ok(Self::Submodules),
+            "shallow" | "&shallow" => Ok(Self::Shallow),
+            arbitrary => Ok(Self::Arbitrary(arbitrary.into())),
             // unknown => Err(NixUriError::UnknownUriParameter(unknown.into())),
         }
     }
@@ -267,7 +266,7 @@ mod inc_parse {
         assert_eq!("", rest);
         assert_eq!(output, expected);
 
-        expected.dir(Some("".to_string()));
+        expected.dir(Some(String::new()));
         let in_str = "dir=";
         let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("", rest);
@@ -292,7 +291,7 @@ mod inc_parse {
         assert_eq!("#fizz", rest);
         assert_eq!(output, expected);
 
-        expected.dir(Some("".to_string()));
+        expected.dir(Some(String::new()));
         let in_str = "dir=#fizz";
         let (rest, output) = LocationParameters::parse(in_str).unwrap();
         assert_eq!("#fizz", rest);

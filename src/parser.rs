@@ -46,7 +46,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
                     LocationParamKeys::Submodules => params.set_submodules(Some(value.into())),
                     LocationParamKeys::Shallow => params.set_shallow(Some(value.into())),
                     LocationParamKeys::Arbitrary(param) => {
-                        params.add_arbitrary((param, value.into()))
+                        params.add_arbitrary((param, value.into()));
                     }
                 }
             }

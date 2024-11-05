@@ -73,7 +73,7 @@ impl FlakeRefType {
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str> {
         verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
-            Path::new(c).is_absolute() && !c.contains("[") && !c.contains("]")
+            Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
         })(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
@@ -108,7 +108,7 @@ impl FlakeRefType {
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
-    pub fn parse_type(input: &str) -> NixUriResult<FlakeRefType> {
+    pub fn parse_type(input: &str) -> NixUriResult<Self> {
         use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
             take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
@@ -132,7 +132,7 @@ impl FlakeRefType {
                         "sourcehut" => GitForgePlatform::SourceHut,
                         _ => unreachable!(),
                     };
-                    let res = FlakeRefType::GitForge(GitForge {
+                    let res = Self::GitForge(GitForge {
                         platform,
                         owner,
                         repo,
@@ -150,7 +150,7 @@ impl FlakeRefType {
                     if input.contains('#') || input.contains('?') {
                         return Err(NixUriError::PathCharacter(input.into()));
                     }
-                    let flake_ref_type = FlakeRefType::Path { path: input.into() };
+                    let flake_ref_type = Self::Path { path: input.into() };
                     Ok(flake_ref_type)
                 }
 
@@ -159,7 +159,7 @@ impl FlakeRefType {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
-                        let flake_ref_type = FlakeRefType::Resource(ResourceUrl {
+                        let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
                             transport_type: Some(transport_type),
@@ -169,7 +169,7 @@ impl FlakeRefType {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
                             tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
-                        let flake_ref_type = FlakeRefType::Resource(ResourceUrl {
+                        let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),
                             transport_type: Some(transport_type),
@@ -183,7 +183,7 @@ impl FlakeRefType {
         } else {
             // Implicit types can be paths, indirect flake_refs, or uri's.
             if input.starts_with('/') || input == "." {
-                let flake_ref_type = FlakeRefType::Path { path: input.into() };
+                let flake_ref_type = Self::Path { path: input.into() };
                 let path = Path::new(input);
                 // TODO: make this check configurable for cli usage
                 if !path.is_absolute()
@@ -212,9 +212,9 @@ impl FlakeRefType {
             {
                 return Err(NixUriError::InvalidUrl(input.into()));
             }
-            let flake_ref_type = FlakeRefType::Indirect {
+            let flake_ref_type = Self::Indirect {
                 id: owner_and_repo_or_ref.0.to_string(),
-                ref_or_rev: owner_and_repo_or_ref.2.map(|s| s.to_string()),
+                ref_or_rev: owner_and_repo_or_ref.2.map(str::to_string),
             };
             Ok(flake_ref_type)
             // } else {
@@ -237,28 +237,28 @@ impl FlakeRefType {
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge(GitForge { repo, .. }) => Some(repo.to_string()),
+            Self::GitForge(GitForge { repo, .. }) => Some(repo.to_string()),
             _ => None,
         }
     }
     pub fn get_repo(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge(GitForge { repo, .. }) => Some(repo.into()),
+            Self::GitForge(GitForge { repo, .. }) => Some(repo.into()),
             // TODO: #158
             _ => None,
         }
     }
     pub fn get_owner(&self) -> Option<String> {
         match self {
-            FlakeRefType::GitForge(GitForge { owner, .. }) => Some(owner.into()),
+            Self::GitForge(GitForge { owner, .. }) => Some(owner.into()),
             // TODO: #158
             _ => None,
         }
     }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
         match self {
-            FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
-            | FlakeRefType::Indirect { ref_or_rev, .. } => {
+            Self::GitForge(GitForge { ref_or_rev, .. })
+            | Self::Indirect { ref_or_rev, .. } => {
                 *ref_or_rev = ref_or_rev_alt;
             }
             // TODO: #158
@@ -277,7 +277,7 @@ impl Display for FlakeRefType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             // TODO: alternate tarball representation
-            FlakeRefType::Resource(ResourceUrl {
+            Self::Resource(ResourceUrl {
                 res_type,
                 location,
                 transport_type,
@@ -288,7 +288,7 @@ impl Display for FlakeRefType {
                 }
                 write!(f, "://{}", location)
             }
-            FlakeRefType::GitForge(GitForge {
+            Self::GitForge(GitForge {
                 platform,
                 owner,
                 repo,
@@ -300,15 +300,15 @@ impl Display for FlakeRefType {
                 }
                 Ok(())
             }
-            FlakeRefType::Indirect { id, ref_or_rev } => {
+            Self::Indirect { id, ref_or_rev } => {
                 if let Some(ref_or_rev) = ref_or_rev {
                     write!(f, "{id}/{ref_or_rev}")
                 } else {
                     write!(f, "{id}")
                 }
             }
-            FlakeRefType::Path { path } => write!(f, "{}", path),
-            FlakeRefType::None => todo!(),
+            Self::Path { path } => write!(f, "{}", path),
+            Self::None => todo!(),
         }
     }
 }
