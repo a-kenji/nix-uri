@@ -182,14 +182,13 @@ impl FlakeRefType {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
                     let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-                    let mut parsed_iter = owner_and_repo_or_ref.map(|s| s.to_string());
                     // TODO: #158
                     let er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
                     };
-                    let owner = parsed_iter.next().ok_or(er_fn("owner"))?;
-                    let repo = parsed_iter.next().ok_or(er_fn("repo"))?;
-                    let ref_or_rev = parsed_iter.next();
+                    let owner = owner_and_repo_or_ref.0.to_string();
+                    let repo = owner_and_repo_or_ref.1.to_string();
+                    let ref_or_rev = owner_and_repo_or_ref.2.map(str::to_string);
                     let platform = match flake_ref_type_str {
                         "github" => GitForgePlatform::GitHub,
                         "gitlab" => GitForgePlatform::GitLab,
@@ -260,36 +259,40 @@ impl FlakeRefType {
                 }
                 return Ok(flake_ref_type);
             }
-            //TODO: parse uri
+
             let (input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-            if let Some(id) = owner_and_repo_or_ref.next() {
-                if !id
-                    .chars()
-                    .all(|c| c.is_ascii_alphabetic() || c.is_control())
-                    || id.is_empty()
-                {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                let flake_ref_type = FlakeRefType::Indirect {
-                    id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
-                };
-                Ok(flake_ref_type)
-            } else {
-                let (_input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-                let id = if let Some(id) = owner_and_repo_or_ref.next() {
-                    id
-                } else {
-                    input
-                };
-                if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                Ok(FlakeRefType::Indirect {
-                    id: id.to_string(),
-                    ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
-                })
+            // Comments left in for reference. We are in the process of moving error context
+            // generation into the parser itself, as opposed to up here. The GitForge parser used
+            // here will have to take on responsibility of contextualising failures;
+            // if let Some(id) = owner_and_repo_or_ref {
+            if !owner_and_repo_or_ref
+                .0
+                .chars()
+                .all(|c| c.is_ascii_alphabetic() || c.is_control())
+                || owner_and_repo_or_ref.0.is_empty()
+            {
+                return Err(NixUriError::InvalidUrl(input.into()));
             }
+            let flake_ref_type = FlakeRefType::Indirect {
+                id: owner_and_repo_or_ref.0.to_string(),
+                ref_or_rev: owner_and_repo_or_ref.2.map(|s| s.to_string()),
+            };
+            Ok(flake_ref_type)
+            // } else {
+            //     let (_input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+            //     let id = if let Some(id) = owner_and_repo_or_ref.next() {
+            //         id
+            //     } else {
+            //         input
+            //     };
+            //     if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
+            //         return Err(NixUriError::InvalidUrl(input.into()));
+            //     }
+            //     Ok(FlakeRefType::Indirect {
+            //         id: id.to_string(),
+            //         ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
+            //     })
+            // }
         }
     }
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
