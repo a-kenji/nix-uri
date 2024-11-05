@@ -1,13 +1,12 @@
 use std::{
     fmt::Display,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
-    combinator::{cond, map, not, opt, peek, rest, verify},
-    sequence::preceded,
+    combinator::{map, opt, peek, rest, verify},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -15,12 +14,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::forge::GitForge,
-    parser::{parse_sep, parse_transport_type},
+    parser::parse_transport_type,
 };
 
 use super::{
     resource_url::{ResourceType, ResourceUrl},
-    GitForgePlatform, TransportLayer,
+    GitForgePlatform,
 };
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
@@ -83,7 +82,7 @@ impl FlakeRefType {
         Ok((rest, Path::new(path_str)))
     }
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
+        let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
         Err(nom::Err::Failure(nom::error::Error {
             input,
@@ -119,9 +118,9 @@ impl FlakeRefType {
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-                    let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+                    let (_input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
                     // TODO: #158
-                    let er_fn = |st: &str| {
+                    let _er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
                     };
                     let owner = owner_and_repo_or_ref.0.to_string();
@@ -200,7 +199,7 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
 
-            let (input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
             // Comments left in for reference. We are in the process of moving error context
             // generation into the parser itself, as opposed to up here. The GitForge parser used
             // here will have to take on responsibility of contextualising failures;
@@ -295,9 +294,9 @@ impl Display for FlakeRefType {
                 repo,
                 ref_or_rev,
             }) => {
-                write!(f, "{platform}:{owner}/{repo}");
+                write!(f, "{platform}:{owner}/{repo}")?;
                 if let Some(ref_or_rev) = ref_or_rev {
-                    write!(f, "/{ref_or_rev}");
+                    write!(f, "/{ref_or_rev}")?;
                 }
                 Ok(())
             }
@@ -316,6 +315,8 @@ impl Display for FlakeRefType {
 
 #[cfg(test)]
 mod inc_parse_vc {
+    use crate::TransportLayer;
+
     use super::*;
 
     #[test]
@@ -348,6 +349,7 @@ mod inc_parse_vc {
         let file_uri = "git+file:///foo/bar";
 
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        assert!(rest.is_empty());
         let (rest, file_parsed_refpath) = FlakeRefType::parse(file_uri).unwrap();
 
         let expected_refpath = FlakeRefType::Resource(ResourceUrl {
@@ -395,6 +397,7 @@ mod inc_parse_vc {
         let uri = "hg:///foo/bar";
         let file_uri = "hg+file:///foo/bar";
         let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        assert!(rest.is_empty());
         let (rest, file_parsed_refpath) = FlakeRefType::parse(file_uri).unwrap();
 
         let expected_refpath = FlakeRefType::Resource(ResourceUrl {

@@ -82,7 +82,7 @@ mod res_url {
     #[ignore = "need to impl good error handling"]
     fn gat() {
         let url = "gat";
-        let err = ResourceType::parse(url).unwrap_err();
+        let _err = ResourceType::parse(url).unwrap_err();
         todo!("Imple informative errors");
     }
 }

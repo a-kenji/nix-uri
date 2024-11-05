@@ -1,19 +1,16 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
-    combinator::{opt, rest},
+    combinator::rest,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{NixUriError, NixUriResult},
-    parser::parse_transport_type,
-};
+use crate::error::NixUriError;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]

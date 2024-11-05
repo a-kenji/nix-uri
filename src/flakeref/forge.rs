@@ -1,19 +1,13 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_till1, take_until, take_while1},
-    combinator::{map, opt, rest, verify},
-    multi::many_m_n,
-    sequence::tuple,
+    bytes::complete::{tag, take_till, take_till1},
+    combinator::{map, opt},
     IResult,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{NixUriError, NixUriResult},
-    parser::parse_transport_type,
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -103,7 +97,6 @@ impl Display for GitForgePlatform {
 #[cfg(test)]
 mod inc_parse_platform {
     use super::*;
-    use crate::parser::{parse_nix_uri, parse_params};
 
     #[test]
     fn platform() {
@@ -135,8 +128,8 @@ mod err_msgs {
         let input = "owner";
         let input_slash = "owner/";
 
-        let err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
+        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);
@@ -144,7 +137,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad github ownerstring not yet impld"]
     fn git_owner() {
-        let input = "bad-owner/";
+        let _input = "bad-owner/";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -152,7 +145,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad github repostring not yet impld"]
     fn git_repo() {
-        let input = "owner/bad-string";
+        let _input = "owner/bad-string";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -160,7 +153,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad mercurial ownerstring not yet impld"]
     fn merc_owner() {
-        let input = "bad-owner/";
+        let _input = "bad-owner/";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -168,7 +161,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad mercurial repostring not yet impld"]
     fn merc_repo() {
-        let input = "owner/bad-string";
+        let _input = "owner/bad-string";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -191,6 +184,7 @@ mod inc_parse {
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
         let expected = ("owner", "repo", None);
         assert_eq!(expected, res);
+        assert_eq!(rest, "?#🤡");
 
         let input = "owner/repo#🤡";
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();

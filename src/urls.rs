@@ -1,5 +1,4 @@
-// use url::{ParseError, Url};
-use url::{ParseError, Url};
+use url::Url;
 
 use crate::{parser::is_tarball, FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult};
 

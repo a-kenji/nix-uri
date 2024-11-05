@@ -1,18 +1,17 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until},
-    combinator::{map, opt, rest},
+    bytes::complete::tag,
+    combinator::map,
     sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{NixUriError, NixUriResult},
-    parser::parse_transport_type,
-};
+use crate::
+    error::NixUriError
+;
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,6 +108,7 @@ mod inc_parse {
         let http = "+httpfoobar";
         let https = "+httpsfoobar";
         let (rest, http_parsed) = TransportLayer::plus_parse(http).unwrap();
+        assert_eq!("foobar", rest);
         let (rest, https_parsed) = TransportLayer::plus_parse(https).unwrap();
         let http_expected = TransportLayer::Http;
         let https_expected = TransportLayer::Https;
@@ -125,7 +125,7 @@ mod err_msg {
     #[ignore = "need to impl good error handling"]
     fn fizzbuzz() {
         let url = "+fizzbuzz";
-        let err = TransportLayer::plus_parse(url).unwrap_err();
+        let _err = TransportLayer::plus_parse(url).unwrap_err();
         todo!("Impl informative errors");
     }
 

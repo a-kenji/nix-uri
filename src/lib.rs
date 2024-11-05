@@ -81,12 +81,9 @@
 //!   ```
 
 // TODO: remove from error
-#[allow(unused)]
 mod error;
-#[allow(unused)]
 mod flakeref;
 mod parser;
-#[allow(unused)]
 pub mod urls;
 
 pub use error::*;
