@@ -70,6 +70,7 @@ impl Display for ResourceType {
 #[cfg(test)]
 mod res_url {
     use super::*;
+
     #[test]
     fn git() {
         let url = "gitfoobar";
@@ -78,6 +79,27 @@ mod res_url {
         assert_eq!(expected, parsed);
         assert_eq!("foobar", rest);
     }
+
+    #[test]
+    #[ignore = "TODO: handle colission between git and git<hub|lab> meaningfully"]
+    fn github() {
+        let url = "github";
+        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let expected = ResourceType::Git;
+        assert_eq!(expected, parsed);
+        assert_eq!("foobar", rest);
+    }
+
+    #[test]
+    #[ignore = "TODO: handle colission between git and git<hub|lab> meaningfully"]
+    fn gitlab() {
+        let url = "gitlab";
+        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let expected = ResourceType::Git;
+        assert_eq!(expected, parsed);
+        assert_eq!("foobar", rest);
+    }
+
     #[test]
     #[ignore = "need to impl good error handling"]
     fn gat() {

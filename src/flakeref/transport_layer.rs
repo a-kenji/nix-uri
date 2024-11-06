@@ -93,7 +93,7 @@ mod inc_parse {
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It
     // works more like a c-style switch-case than a rust `match`: This is to guard against
-    // regression tests, where we try and parse the `http` before `https`.
+    // regressions, where we try and parse the `http` before `https`.
     #[test]
     fn http_s() {
         let http = "+httpfoobar";
@@ -122,11 +122,10 @@ mod err_msg {
 
     #[test]
     #[ignore = "need to impl good error handling"]
-    fn missing() {
+    fn missing_plus() {
         let url = "+";
-        let plus_err = TransportLayer::plus_parse(url).unwrap_err();
-        let err = TransportLayer::parse("").unwrap_err();
-        assert_eq!(plus_err, err);
-        // todo!("Impl informative errors");
+        let _plus_err = TransportLayer::plus_parse(url).unwrap_err();
+        let _err = TransportLayer::parse("").unwrap_err();
+        todo!("Impl informative errors");
     }
 }

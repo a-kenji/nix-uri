@@ -102,16 +102,19 @@ mod inc_parse_platform {
         let stripped = "nixos/nixpkgs";
 
         let uri = "github:nixos/nixpkgs";
+
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
         assert_eq!(rest, stripped);
         assert_eq!(platform, GitForgePlatform::GitHub);
 
         let uri = "gitlab:nixos/nixpkgs";
+
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
         assert_eq!(rest, stripped);
         assert_eq!(platform, GitForgePlatform::GitLab);
 
         let uri = "sourcehut:nixos/nixpkgs";
+
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
         assert_eq!(rest, stripped);
         assert_eq!(platform, GitForgePlatform::SourceHut);
@@ -169,6 +172,7 @@ mod err_msgs {
 #[cfg(test)]
 mod inc_parse {
     use super::*;
+
     #[test]
     fn plain() {
         let input = "owner/repo";
@@ -177,11 +181,13 @@ mod inc_parse {
         assert_eq!(rest, "");
         assert_eq!(expected, res);
     }
+
     #[test]
     fn param_terminated() {
         let input = "owner/repo?🤡";
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
         let expected = ("owner", "repo", None);
+        assert_eq!(rest, "?🤡");
         assert_eq!(expected, res);
         assert_eq!(rest, "?🤡");
 

@@ -12,6 +12,7 @@ use crate::{
     flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
 };
 
+// TODO: use a param-specific parser, handle the inversion specificially
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
