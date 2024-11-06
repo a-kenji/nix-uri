@@ -61,10 +61,9 @@ impl UrlWrapper {
                     .url
                     .path_segments()
                     .map(std::iter::Iterator::collect::<Vec<_>>)
-                    .ok_or_else(|| NixUriError::Error(format!(
-                        "Error parsing from host: {}",
-                        input
-                    )))?;
+                    .ok_or_else(|| {
+                        NixUriError::Error(format!("Error parsing from host: {}", input))
+                    })?;
                 let ref_or_rev = if segments.len() > 2 {
                     Some(segments[2..].join("/"))
                 } else {

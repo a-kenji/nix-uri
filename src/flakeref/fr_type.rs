@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    path::Path,
-};
+use std::{fmt::Display, path::Path};
 
 use nom::{
     branch::alt,
@@ -257,8 +254,7 @@ impl FlakeRefType {
     }
     pub fn ref_or_rev(&mut self, ref_or_rev_alt: Option<String>) -> Result<(), NixUriError> {
         match self {
-            Self::GitForge(GitForge { ref_or_rev, .. })
-            | Self::Indirect { ref_or_rev, .. } => {
+            Self::GitForge(GitForge { ref_or_rev, .. }) | Self::Indirect { ref_or_rev, .. } => {
                 *ref_or_rev = ref_or_rev_alt;
             }
             // TODO: #158

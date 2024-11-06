@@ -1,16 +1,9 @@
 use std::fmt::Display;
 
-use nom::{
-    bytes::complete::tag,
-    combinator::opt,
-    sequence::preceded,
-    IResult,
-};
+use nom::{bytes::complete::tag, combinator::opt, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
-use crate::
-    error::NixUriError
-;
+use crate::error::NixUriError;
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
@@ -151,7 +144,10 @@ mod tests {
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
-    use crate::{parser::{parse_nix_uri, parse_params}, NixUriResult};
+    use crate::{
+        parser::{parse_nix_uri, parse_params},
+        NixUriResult,
+    };
 
     #[test]
     fn parse_simple_uri() {
@@ -668,7 +664,9 @@ mod tests {
         assert_eq!(expected, nommed);
     }
     #[test]
-    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: UnknownUriType(\"gt+https\")")]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnknownUriType(\"gt+https\")"
+    )]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
         let mut params = LocationParameters::default();
