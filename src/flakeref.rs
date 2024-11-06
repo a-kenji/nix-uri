@@ -346,8 +346,13 @@ mod tests {
                 path: "/home/kenji/.config/dotfiles/".into(),
             })
             .clone();
+
         let parsed = parse_nix_uri(uri).unwrap();
-        assert_eq!(flake_ref, parsed);
+        let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
+        assert_eq!("", rest);
+        assert_eq!(flake_ref, parsed, "{}", uri);
+        assert_eq!(flake_ref, nommed, "{}", uri);
     }
     #[test]
     fn parse_simple_path_params_nom() {

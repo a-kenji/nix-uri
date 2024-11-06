@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
     combinator::{map, opt, peek, rest, verify},
+    sequence::preceded,
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,13 @@ pub enum FlakeRefType {
 }
 
 impl FlakeRefType {
+    pub fn parse_path(input: &str) -> IResult<&str, Self> {
+        let path_map = map(Self::path_parser, |path_str| Self::Path {
+            path: path_str.to_string(),
+        });
+        preceded(opt(alt((tag("path://"), tag("path:")))), path_map)(input)
+    }
+
     // TODO: #158
     pub fn parse_file(input: &str) -> IResult<&str, Self> {
         alt((
@@ -74,7 +82,12 @@ impl FlakeRefType {
         })(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = alt((tag("path:"), tag("file://"), tag("file+file://")))(input)?;
+        let (rest, _) = alt((
+            tag("file://"),
+            tag("file+file://"),
+            tag("file:"),
+            tag("file+file:"),
+        ))(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
@@ -98,6 +111,7 @@ impl FlakeRefType {
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
+            Self::parse_path,
             Self::parse_git_forge,
             Self::parse_file,
             Self::parse_resource,
@@ -441,12 +455,10 @@ mod inc_parse_file {
     #[test]
     fn path_leader() {
         let uri = "path:/foo/bar";
-        let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
-        let expected_refpath = FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/foo/bar".to_string(),
-            transport_type: None,
-        });
+        let (rest, parsed_refpath) = FlakeRefType::parse(uri).unwrap();
+        let expected_refpath = FlakeRefType::Path {
+            path: "/foo/bar".to_string(),
+        };
         assert!(rest.is_empty());
         assert_eq!(expected_refpath, parsed_refpath);
     }
