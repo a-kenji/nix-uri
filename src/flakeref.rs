@@ -23,6 +23,7 @@ mod transport_layer;
 pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
+mod resource_url;
 
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +109,8 @@ impl std::str::FromStr for FlakeRef {
 mod inc_parse {
     use std::path::PathBuf;
 
+    use resource_url::{ResourceType, ResourceUrl};
+
     use super::*;
     #[test]
     fn full_github() {
@@ -132,9 +135,11 @@ mod inc_parse {
         let uri = "file:///phantom/root/path?dir=foo#fizz.buzz";
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         let mut expected = FlakeRef::default();
-        expected.r#type(FlakeRefType::File {
-            location: PathBuf::from("/phantom/root/path"),
-        });
+        expected.r#type(FlakeRefType::Resource(ResourceUrl {
+            res_type: ResourceType::File,
+            location: "/phantom/root/path".to_string(),
+            transport_type: None,
+        }));
         let mut exp_params = LocationParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;
@@ -146,6 +151,9 @@ mod inc_parse {
 
 #[cfg(test)]
 mod tests {
+
+    use resource_url::{ResourceType, ResourceUrl};
+
     use super::*;
     use crate::parser::{parse_nix_uri, parse_params};
 
@@ -452,10 +460,11 @@ mod tests {
     fn parse_git_and_https_simple() {
         let uri = "git+https://git.somehost.tld/user/path";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "git.somehost.tld/user/path".into(),
-                transport_type: TransportLayer::Https,
-            })
+                transport_type: Some(TransportLayer::Https),
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
         assert_eq!(expected, parsed);
@@ -470,16 +479,19 @@ mod tests {
         params.r#ref(Some("branch".into()));
         params.rev(Some("fdc8ef970de2b4634e1b3dca296e1ed918459a9e".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "git.somehost.tld/user/path".into(),
-                transport_type: TransportLayer::Https,
-            })
+                transport_type: Some(TransportLayer::Https),
+            }))
             .params(params)
             .clone();
+
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -488,31 +500,36 @@ mod tests {
         let mut params = LocationParameters::default();
         params.r#ref(Some("upstream/nixpkgs-unstable".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "/nix/nixpkgs".into(),
-                transport_type: TransportLayer::File,
-            })
-            .params(params)
+                transport_type: Some(TransportLayer::File),
+            }))
+            .params(params.clone())
             .clone();
+
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
     fn parse_git_and_file_simple() {
         let uri = "git+file:///nix/nixpkgs";
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "/nix/nixpkgs".into(),
-                transport_type: TransportLayer::File,
-            })
+                transport_type: Some(TransportLayer::File),
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -523,16 +540,18 @@ mod tests {
         let mut params = LocationParameters::default();
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "/home/user/forked-flake".into(),
-                transport_type: TransportLayer::File,
-            })
+                transport_type: Some(TransportLayer::File),
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -550,9 +569,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -568,9 +588,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -579,16 +600,18 @@ mod tests {
         let mut params = LocationParameters::default();
         params.set_branch(Some("feat/myNewFeature".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "/home/user/forked-flake".into(),
-                transport_type: TransportLayer::File,
-            })
+                transport_type: Some(TransportLayer::File),
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -606,9 +629,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -617,16 +641,18 @@ mod tests {
         let mut params = LocationParameters::default();
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                transport_type: TransportLayer::Https,
-            })
+                transport_type: Some(TransportLayer::Https),
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -634,15 +660,17 @@ mod tests {
         let uri = "hg+https://www.github.com/ocaml/ocaml-lsp";
         let mut params = LocationParameters::default();
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Mercurial {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Mercurial,
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                transport_type: TransportLayer::Https,
-            })
+                transport_type: Some(TransportLayer::Https),
+            }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -652,16 +680,18 @@ mod tests {
         let mut params = LocationParameters::default();
         params.set_submodules(Some("1".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                transport_type: TransportLayer::Https,
-            })
+                transport_type: Some(TransportLayer::Https),
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     // TODO: https://github.com/a-kenji/nix-uri/issues/157
@@ -671,10 +701,11 @@ mod tests {
         let mut params = LocationParameters::default();
         params.set_shallow(Some("1".into()));
         let expected = FlakeRef::default()
-            .r#type(FlakeRefType::Git {
+            .r#type(FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
                 location: "/path/to/repo".to_owned(),
-                transport_type: TransportLayer::File,
-            })
+                transport_type: Some(TransportLayer::File),
+            }))
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
@@ -720,9 +751,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -737,9 +769,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -757,9 +790,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -774,9 +808,10 @@ mod tests {
             }))
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -795,9 +830,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -871,9 +907,10 @@ mod tests {
             })
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
     #[test]
@@ -888,9 +925,10 @@ mod tests {
             .params(params)
             .clone();
         let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
         let (rest, nommed) = FlakeRef::parse(uri).unwrap();
+
         assert_eq!("", rest);
+        assert_eq!(expected, parsed);
         assert_eq!(expected, nommed);
     }
 
