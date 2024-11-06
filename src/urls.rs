@@ -32,6 +32,15 @@ impl UrlWrapper {
         self.explicit_type = explicit_type;
         self
     }
+
+    /// ```rust
+    /// use nix_uri::urls::UrlWrapper;
+    /// let http = "https://github.com/nixos/nixpkgs";
+    /// let forge = "github:nixos/nixpkgs";
+    /// let http_parsed = UrlWrapper::convert_or_parse(http);
+    /// let forge_parsed = UrlWrapper::convert_or_parse(forge);
+    /// assert_eq!(http_parsed, forge_parsed);
+    /// ```
     pub fn convert_or_parse(input: &str) -> NixUriResult<FlakeRef> {
         // If default parsing fails, it might still be a `nix-uri`.
         let url = Self::try_from(input).ok();
@@ -105,18 +114,35 @@ mod tests {
             .clone();
         assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
     }
-    // #[test]
-    // fn check_tarball_uri_conversion() {
-    //     let filename = "https://github.com/NixOS/patchelf/archive/master.tar.gz";
-    //     assert!(is_tarball(filename));
-    // }
-    // let uri = "github:nixos/nixpkgs";
-    // let expected = FlakeRef::default()
-    //     .r#type(FlakeRefType::GitHub {
-    //         owner: "nixos".into(),
-    //         repo: "nixpkgs".into(),
-    //         ref_or_rev: None,
-    //     })
-    //     .clone();
-    // let parsed: FlakeRef = uri.try_into().unwrap();
+    #[test]
+    fn simple_url_conversion_with_param() {
+        let url = "https://github.com/nixos/nixpkgs?dir=foo";
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: crate::flakeref::GitForgePlatform::GitHub,
+                owner: "nixos".into(),
+                repo: "nixpkgs".into(),
+                ref_or_rev: None,
+            }))
+            .clone();
+        assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
+    }
+    #[test]
+    fn simple_url_conversion_with_flake() {
+        let url = "https://github.com/nixos/nixpkgs#fizz";
+        let expected = FlakeRef::default()
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: crate::flakeref::GitForgePlatform::GitHub,
+                owner: "nixos".into(),
+                repo: "nixpkgs".into(),
+                ref_or_rev: None,
+            }))
+            .clone();
+        assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
+    }
+    #[test]
+    fn check_tarball_uri_conversion() {
+        let filename = "https://github.com/NixOS/patchelf/archive/master.tar.gz";
+        assert!(is_tarball(filename));
+    }
 }
