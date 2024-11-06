@@ -1,19 +1,12 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_till1, take_until, take_while1},
-    combinator::{map, opt, rest, verify},
-    multi::many_m_n,
-    sequence::tuple,
+    bytes::complete::{tag, take_till, take_till1},
+    combinator::{map, opt},
     IResult,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    error::{NixUriError, NixUriResult},
-    parser::parse_transport_type,
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -65,10 +58,10 @@ impl GitForge {
         // drop the `/` if it exists
         let (maybe_refrev, _) = opt(tag("/"))(path2)?;
         // if the remaining is empty, that's the ref/rev
-        let maybe_refrev = if !maybe_refrev.is_empty() {
-            Some(maybe_refrev)
-        } else {
+        let maybe_refrev = if maybe_refrev.is_empty() {
             None
+        } else {
+            Some(maybe_refrev)
         };
 
         Ok((tail, (owner, repo, maybe_refrev)))
@@ -80,7 +73,7 @@ impl GitForge {
             platform,
             owner: forge_path.0.to_string(),
             repo: forge_path.1.to_string(),
-            ref_or_rev: forge_path.2.map(|s| s.to_string()),
+            ref_or_rev: forge_path.2.map(str::to_string),
         };
         Ok((rest, res))
     }
@@ -92,9 +85,9 @@ impl Display for GitForgePlatform {
             f,
             "{}",
             match self {
-                GitForgePlatform::GitHub => "github",
-                GitForgePlatform::GitLab => "gitlab",
-                GitForgePlatform::SourceHut => "sourcehut",
+                Self::GitHub => "github",
+                Self::GitLab => "gitlab",
+                Self::SourceHut => "sourcehut",
             }
         )
     }
@@ -103,7 +96,6 @@ impl Display for GitForgePlatform {
 #[cfg(test)]
 mod inc_parse_platform {
     use super::*;
-    use crate::parser::{parse_nix_uri, parse_params};
 
     #[test]
     fn platform() {
@@ -135,8 +127,8 @@ mod err_msgs {
         let input = "owner";
         let input_slash = "owner/";
 
-        let err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
+        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);
@@ -144,7 +136,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad github ownerstring not yet impld"]
     fn git_owner() {
-        let input = "bad-owner/";
+        let _input = "bad-owner/";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -152,7 +144,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad github repostring not yet impld"]
     fn git_repo() {
-        let input = "owner/bad-string";
+        let _input = "owner/bad-string";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::GitHub).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -160,7 +152,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad mercurial ownerstring not yet impld"]
     fn merc_owner() {
-        let input = "bad-owner/";
+        let _input = "bad-owner/";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -168,7 +160,7 @@ mod err_msgs {
     #[test]
     #[ignore = "bad mercurial repostring not yet impld"]
     fn merc_repo() {
-        let input = "owner/bad-string";
+        let _input = "owner/bad-string";
 
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
         // assert_eq!(input, invalid github owner format);
@@ -191,6 +183,7 @@ mod inc_parse {
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
         let expected = ("owner", "repo", None);
         assert_eq!(expected, res);
+        assert_eq!(rest, "?🤡");
 
         let input = "owner/repo#🤡";
         let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();

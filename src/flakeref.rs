@@ -1,19 +1,9 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
-use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_until},
-    combinator::{map, opt, rest},
-    multi::many_m_n,
-    sequence::preceded,
-    IResult,
-};
+use nom::{bytes::complete::tag, combinator::opt, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{NixUriError, NixUriResult},
-    parser::parse_transport_type,
-};
+use crate::error::NixUriError;
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
@@ -61,7 +51,7 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(tag("?"), LocationParameters::parse))(rest)?;
         Ok((
@@ -107,7 +97,6 @@ impl std::str::FromStr for FlakeRef {
 
 #[cfg(test)]
 mod inc_parse {
-    use std::path::PathBuf;
 
     use resource_url::{ResourceType, ResourceUrl};
 
@@ -155,7 +144,10 @@ mod tests {
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
-    use crate::parser::{parse_nix_uri, parse_params};
+    use crate::{
+        parser::{parse_nix_uri, parse_params},
+        NixUriResult,
+    };
 
     #[test]
     fn parse_simple_uri() {
@@ -578,7 +570,6 @@ mod tests {
     #[test]
     fn parse_github_simple_tag() {
         let uri = "github:cachix/devenv/v0.5";
-        let mut params = LocationParameters::default();
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
                 platform: GitForgePlatform::GitHub,
@@ -658,7 +649,6 @@ mod tests {
     #[test]
     fn parse_marcurial_and_https_simpe_uri() {
         let uri = "hg+https://www.github.com/ocaml/ocaml-lsp";
-        let mut params = LocationParameters::default();
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::Resource(ResourceUrl {
                 res_type: ResourceType::Mercurial,
@@ -674,7 +664,9 @@ mod tests {
         assert_eq!(expected, nommed);
     }
     #[test]
-    #[should_panic]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: UnknownUriType(\"gt+https\")"
+    )]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
         let mut params = LocationParameters::default();
@@ -951,7 +943,7 @@ mod tests {
         let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
-        let e = FlakeRef::parse(uri).unwrap_err();
+        let _e = FlakeRef::parse(uri).unwrap_err();
         // todo: map to good error
         // assert_eq!(expected, nommed);
     }
@@ -959,7 +951,7 @@ mod tests {
     #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
-        let expected = NixUriError::MissingTypeParameter("github".into(), ("owner".into()));
+        let expected = NixUriError::MissingTypeParameter("github".into(), "owner".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err());
         // let e = FlakeRef::parse(uri).unwrap_err();
@@ -971,7 +963,7 @@ mod tests {
         let uri = "github:nixos/";
         let expected = Err(NixUriError::MissingTypeParameter(
             "github".into(),
-            ("repo".into()),
+            "repo".into(),
         ));
         assert_eq!(uri.parse::<FlakeRef>(), expected);
         // let e = FlakeRef::parse(uri).unwrap_err();

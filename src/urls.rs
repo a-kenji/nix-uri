@@ -1,5 +1,4 @@
-// use url::{ParseError, Url};
-use url::{ParseError, Url};
+use url::Url;
 
 use crate::{parser::is_tarball, FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult};
 
@@ -18,7 +17,7 @@ impl TryFrom<&str> for UrlWrapper {
 }
 
 impl UrlWrapper {
-    pub(crate) fn new(url: Url) -> Self {
+    pub(crate) const fn new(url: Url) -> Self {
         Self {
             url,
             infer_type: true,
@@ -61,11 +60,10 @@ impl UrlWrapper {
                 let segments = self
                     .url
                     .path_segments()
-                    .map(|c| c.collect::<Vec<_>>())
-                    .ok_or(NixUriError::Error(format!(
-                        "Error parsing from host: {}",
-                        input
-                    )))?;
+                    .map(std::iter::Iterator::collect::<Vec<_>>)
+                    .ok_or_else(|| {
+                        NixUriError::Error(format!("Error parsing from host: {}", input))
+                    })?;
                 let ref_or_rev = if segments.len() > 2 {
                     Some(segments[2..].join("/"))
                 } else {
