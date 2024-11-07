@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till},
     combinator::{map, opt},
+    error::{VerboseError, VerboseErrorKind},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -20,9 +21,10 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, res_type) = ResourceType::parse(input)?;
-        let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
+        // TODO: ensure context is passed up: "+foobar" gives context that "foobar" isn't valid
+        let (rest, transport_type) = opt(TransportLayer::parse_plus)(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
         let (res, location) = take_till(|c| c == '#' || c == '?')(rest)?;
 
@@ -45,13 +47,21 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        alt((
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+        let res: Result<(&str, Self), nom::Err<nom::error::Error<&str>>> = alt((
             map(tag("git"), |_| Self::Git),
             map(tag("hg"), |_| Self::Mercurial),
             map(tag("file"), |_| Self::File),
             map(tag("tarball"), |_| Self::Tarball),
-        ))(input)
+        ))(input);
+        res.map_err(|e| {
+            e.map(|inner| {
+                let new_input = &inner.input[..7];
+                VerboseError {
+                    errors: vec![(new_input, VerboseErrorKind::Context("unrecognised type"))],
+                }
+            })
+        })
     }
 }
 

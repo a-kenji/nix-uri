@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
     combinator::{map, opt},
+    error::{context, VerboseError, VerboseErrorKind},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -23,20 +24,23 @@ pub struct GitForge {
 }
 
 impl GitForgePlatform {
-    fn parse_hub(input: &str) -> IResult<&str, Self> {
+    fn parse_hub(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("github"), |_| Self::GitHub)(input)
     }
-    fn parse_lab(input: &str) -> IResult<&str, Self> {
+    fn parse_lab(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("gitlab"), |_| Self::GitLab)(input)
     }
-    fn parse_sourcehut(input: &str) -> IResult<&str, Self> {
+    fn parse_sourcehut(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("sourcehut"), |_| Self::SourceHut)(input)
     }
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut))(input)?;
-        let (rest, _) = tag(":")(rest)?;
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+        let (rest, res) = context(
+            "valid gitforge platforms: `github`|`gitlab`|`sourcehut`",
+            alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut)),
+        )(input)?;
+        let (rest, _) = context("Expected `:`", tag(":"))(rest)?;
         Ok((rest, res))
     }
 }
@@ -46,15 +50,25 @@ impl GitForge {
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
+    pub(crate) fn parse_owner_repo_ref(
+        input: &str,
+    ) -> IResult<&str, (&str, &str, Option<&str>), VerboseError<&str>> {
         // pull out the component we are parsing
         let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
         // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
+        let (path1, owner) = context("missing repository owner", take_till1(|c| c == '/'))(path0)?;
         // ...and discard the `/` separator
-        let (path1, _) = tag("/")(path1)?;
+        let (path1, _) = tag("/")(path1).map_err(|e| {
+            e.map(|(inp, _)| VerboseError {
+                errors: vec![(inp, VerboseErrorKind::Context("expecting '/'"))],
+            })
+        })?;
         // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
+        let (path2, repo) = take_till1(|c| c == '/')(path1).map_err(|e| {
+            e.map(|(inp, _)| VerboseError {
+                errors: vec![(inp, VerboseErrorKind::Context("Missing repository name"))],
+            })
+        })?;
         // drop the `/` if it exists
         let (maybe_refrev, _) = opt(tag("/"))(path2)?;
         // if the remaining is empty, that's the ref/rev
@@ -66,9 +80,10 @@ impl GitForge {
 
         Ok((tail, (owner, repo, maybe_refrev)))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, platform) = GitForgePlatform::parse(input)?;
-        let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
+        let (rest, forge_path) =
+            context("Invalid platform directive", Self::parse_owner_repo_ref)(rest)?;
         let res = Self {
             platform,
             owner: forge_path.0.to_string(),
@@ -124,18 +139,28 @@ mod inc_parse_platform {
 #[cfg(test)]
 mod err_msgs {
     use super::*;
+    use nom::error::VerboseErrorKind;
     #[test]
-    #[ignore = "partial owner-repo parsing not yet implemented"]
-    fn just_owner() {
+    // #[ignore = "partial owner-repo parsing not yet implemented"]
+    fn missing_platform() {
         let input = "owner";
         let input_slash = "owner/";
 
-        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let err = GitForge::parse_owner_repo_ref(input).unwrap_err();
+        let err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let exp_err = nom::Err::Error(VerboseError {
+            errors: vec![("", VerboseErrorKind::Context("expecting '/'"))],
+        });
+        let exp_err_slash = nom::Err::Error(VerboseError {
+            errors: vec![("", VerboseErrorKind::Context("Missing repository name"))],
+        });
+        assert_eq!(exp_err, err);
+        assert_eq!(exp_err_slash, err_slash);
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);
     }
+
     #[test]
     #[ignore = "bad github ownerstring not yet impld"]
     fn git_owner() {
@@ -168,7 +193,28 @@ mod err_msgs {
         // let err = GitForge::parse_owner_repo_ref(input, GitForgePlatform::Mercurial).unwrap_err();
         // assert_eq!(input, invalid github owner format);
     }
+
+    #[test]
+    fn missing_owner() {
+        let e = GitForge::parse("").unwrap_err();
+        let expected_err = nom::Err::Error(VerboseError {
+            errors: vec![(
+                "",
+                VerboseErrorKind::Context(
+                    "valid gitforge platforms: `github`|`gitlab`|`sourcehut`",
+                ),
+            )],
+        });
+
+        let e = e.map(|mut err| {
+            err.errors
+                .retain(|(_, e)| matches!(e, VerboseErrorKind::Context(..)));
+            err
+        });
+        assert_eq!(expected_err, e);
+    }
 }
+
 #[cfg(test)]
 mod inc_parse {
     use super::*;

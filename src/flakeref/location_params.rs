@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_until},
     combinator::rest,
+    error::VerboseError,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
@@ -86,7 +87,7 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, param_values) = many_m_n(
             0,
             11,
