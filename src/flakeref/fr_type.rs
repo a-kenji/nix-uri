@@ -4,7 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
     combinator::{map, opt, peek, rest, verify},
-    error::context,
+    error::{context, VerboseError, VerboseErrorKind},
     sequence::preceded,
     IResult,
 };
@@ -40,7 +40,7 @@ pub enum FlakeRefType {
 }
 
 impl FlakeRefType {
-    pub fn parse_path(input: &str) -> IResult<&str, Self> {
+    pub fn parse_path(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let path_map = map(Self::path_validator, |path_str| Self::Path {
             path: path_str.to_string(),
         });
@@ -51,7 +51,7 @@ impl FlakeRefType {
     }
 
     // TODO: #158
-    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+    pub fn parse_file(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             map(
                 alt((
@@ -74,7 +74,7 @@ impl FlakeRefType {
             }),
         ))(input)
     }
-    pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_naked(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         // Check if input starts with `.` or `/`
         let (is_path, _) = context(
             "expected `.` or `/` as path-leader",
@@ -83,12 +83,12 @@ impl FlakeRefType {
         let (rest, path_str) = Self::path_validator(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
-    pub fn path_validator(input: &str) -> IResult<&str, &str> {
+    pub fn path_validator(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
         verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
             Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
         })(input)
     }
-    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         let (rest, _) = alt((
             tag("file://"),
             tag("file+file://"),
@@ -98,25 +98,24 @@ impl FlakeRefType {
         let (rest, path_str) = Self::path_validator(rest)?;
         Ok((rest, Path::new(path_str)))
     }
-    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
-        eprintln!("`file+http[s]://` not yet implemented");
-        Err(nom::Err::Failure(nom::error::Error {
-            input,
-            code: nom::error::ErrorKind::Fail,
+        eprintln!();
+        Err(nom::Err::Failure(nom::error::VerboseError {
+            errors: vec![(input, VerboseErrorKind::Context("`file+http[s]://` not yet implemented"))],
         }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
-    pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
+    pub fn parse_git_forge(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(GitForge::parse, Self::GitForge)(input)
     }
     /// <git | hg>[+<transport-type]://
-    pub fn parse_resource(input: &str) -> IResult<&str, Self> {
+    pub fn parse_resource(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(ResourceUrl::parse, Self::Resource)(input)
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         context(
             "all parsers failed",
             alt((
@@ -139,7 +138,11 @@ impl FlakeRefType {
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-                    let (_input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+
+                    let (_input, owner_and_repo_or_ref) = match GitForge::parse_owner_repo_ref(input) {
+                        Err(e) => todo!(),
+                        Ok(o) => o,
+                    };
                     // TODO: #158
                     let _er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
@@ -220,7 +223,10 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
 
-            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+            let (input, owner_and_repo_or_ref) = match GitForge::parse_owner_repo_ref(input) {
+                        Err(e) => todo!(),
+                        Ok(o) => o,
+            };
             // Comments left in for reference. We are in the process of moving error context
             // generation into the parser itself, as opposed to up here. The GitForge parser used
             // here will have to take on responsibility of contextualising failures;

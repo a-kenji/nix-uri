@@ -4,7 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
     combinator::{map, opt},
-    error::context,
+    error::{context, VerboseError},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -24,18 +24,18 @@ pub struct GitForge {
 }
 
 impl GitForgePlatform {
-    fn parse_hub(input: &str) -> IResult<&str, Self> {
+    fn parse_hub(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("github"), |_| Self::GitHub)(input)
     }
-    fn parse_lab(input: &str) -> IResult<&str, Self> {
+    fn parse_lab(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("gitlab"), |_| Self::GitLab)(input)
     }
-    fn parse_sourcehut(input: &str) -> IResult<&str, Self> {
+    fn parse_sourcehut(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(tag("sourcehut"), |_| Self::SourceHut)(input)
     }
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, res) = context(
             "valid gitforge platforms: `github`|`gitlab`|`sourcehut`",
             alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut)),
@@ -50,7 +50,7 @@ impl GitForge {
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
+    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>), VerboseError<&str>> {
         // pull out the component we are parsing
         let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
         // pull out the owner
@@ -70,7 +70,7 @@ impl GitForge {
 
         Ok((tail, (owner, repo, maybe_refrev)))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, platform) = GitForgePlatform::parse(input)?;
         let (rest, forge_path) =
             context("Invalid platform directive", Self::parse_owner_repo_ref)(rest)?;

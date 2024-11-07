@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::tag, combinator::{cut, map}, error::context, sequence::preceded, IResult,
+    branch::alt, bytes::complete::tag, combinator::{cut, map}, error::{context, VerboseError}, sequence::preceded, IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             map(tag("https"), |_| Self::Https),
             map(tag("http"), |_| Self::Http),
@@ -28,9 +28,9 @@ impl TransportLayer {
             map(tag("file"), |_| Self::File),
         ))(input)
     }
-    pub fn parse_plus(input: &str) -> IResult<&str, Self> {
+    pub fn parse_plus(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         preceded(
-            tag("+"),
+            context("expected '+'", tag("+")),
             context("unrecognised transport method", cut(Self::parse)),
         )(input)
     }
@@ -93,7 +93,8 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::parse_plus(uri).unwrap_err() else {
             panic!();
         };
-        assert_eq!(e.input, "://");
+        let expected_err = vec![("://", nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag))];
+        assert_eq!(expected_err, e.errors);
     }
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It

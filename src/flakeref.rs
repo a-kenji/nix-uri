@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{bytes::complete::tag, combinator::opt, error::context, sequence::preceded, IResult};
+use nom::{bytes::complete::tag, combinator::opt, error::{context, VerboseError}, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -51,7 +51,7 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(
             tag("?"),

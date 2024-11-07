@@ -1,10 +1,7 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_till},
-    combinator::{map, opt},
-    IResult,
+    branch::alt, bytes::complete::{tag, take_till}, combinator::{map, opt}, error::VerboseError, IResult
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +17,7 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let (rest, res_type) = ResourceType::parse(input)?;
         // TODO: ensure context is passed up: "+foobar" gives context that "foobar" isn't valid
         let (rest, transport_type) = opt(TransportLayer::parse_plus)(rest)?;
@@ -46,7 +43,7 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             map(tag("git"), |_| Self::Git),
             map(tag("hg"), |_| Self::Mercurial),
