@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
     combinator::{map, opt},
+    error::context,
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -35,8 +36,11 @@ impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut))(input)?;
-        let (rest, _) = tag(":")(rest)?;
+        let (rest, res) = context(
+            "valid gitforge platforms: `github`|`gitlab`|`sourcehut`",
+            alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut)),
+        )(input)?;
+        let (rest, _) = context("Expected `:`", tag(":"))(rest)?;
         Ok((rest, res))
     }
 }
@@ -50,11 +54,11 @@ impl GitForge {
         // pull out the component we are parsing
         let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
         // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
+        let (path1, owner) = context("missing repository owner", take_till1(|c| c == '/'))(path0)?;
         // ...and discard the `/` separator
         let (path1, _) = tag("/")(path1)?;
         // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
+        let (path2, repo) = context("missing repository name", take_till1(|c| c == '/'))(path1)?;
         // drop the `/` if it exists
         let (maybe_refrev, _) = opt(tag("/"))(path2)?;
         // if the remaining is empty, that's the ref/rev
@@ -68,7 +72,8 @@ impl GitForge {
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, platform) = GitForgePlatform::parse(input)?;
-        let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
+        let (rest, forge_path) =
+            context("Invalid platform directive", Self::parse_owner_repo_ref)(rest)?;
         let res = Self {
             platform,
             owner: forge_path.0.to_string(),

@@ -22,7 +22,8 @@ pub struct ResourceUrl {
 impl ResourceUrl {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, res_type) = ResourceType::parse(input)?;
-        let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
+        // TODO: ensure context is passed up: "+foobar" gives context that "foobar" isn't valid
+        let (rest, transport_type) = opt(TransportLayer::parse_plus)(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
         let (res, location) = take_till(|c| c == '#' || c == '?')(rest)?;
 

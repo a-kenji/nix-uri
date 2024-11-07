@@ -4,6 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
     combinator::{map, opt, peek, rest, verify},
+    error::context,
     sequence::preceded,
     IResult,
 };
@@ -40,10 +41,13 @@ pub enum FlakeRefType {
 
 impl FlakeRefType {
     pub fn parse_path(input: &str) -> IResult<&str, Self> {
-        let path_map = map(Self::path_parser, |path_str| Self::Path {
+        let path_map = map(Self::path_validator, |path_str| Self::Path {
             path: path_str.to_string(),
         });
-        preceded(opt(alt((tag("path://"), tag("path:")))), path_map)(input)
+        context(
+            "Expected `path:[//]`",
+            preceded(opt(alt((tag("path://"), tag("path:")))), path_map),
+        )(input)
     }
 
     // TODO: #158
@@ -72,11 +76,14 @@ impl FlakeRefType {
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((tag("."), tag("/"))))(input)?;
-        let (rest, path_str) = Self::path_parser(is_path)?;
+        let (is_path, _) = context(
+            "expected `.` or `/` as path-leader",
+            peek(alt((tag("."), tag("/")))),
+        )(input)?;
+        let (rest, path_str) = Self::path_validator(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
-    pub fn path_parser(input: &str) -> IResult<&str, &str> {
+    pub fn path_validator(input: &str) -> IResult<&str, &str> {
         verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
             Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
         })(input)
@@ -88,12 +95,12 @@ impl FlakeRefType {
             tag("file:"),
             tag("file+file:"),
         ))(input)?;
-        let (rest, path_str) = Self::path_parser(rest)?;
+        let (rest, path_str) = Self::path_validator(rest)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
-        eprintln!("`file+http[s]://` not pet implemented");
+        eprintln!("`file+http[s]://` not yet implemented");
         Err(nom::Err::Failure(nom::error::Error {
             input,
             code: nom::error::ErrorKind::Fail,
@@ -110,12 +117,15 @@ impl FlakeRefType {
         map(ResourceUrl::parse, Self::Resource)(input)
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        alt((
-            Self::parse_path,
-            Self::parse_git_forge,
-            Self::parse_file,
-            Self::parse_resource,
-        ))(input)
+        context(
+            "all parsers failed",
+            alt((
+                Self::parse_path,
+                Self::parse_git_forge,
+                Self::parse_file,
+                Self::parse_resource,
+            )),
+        )(input)
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input

@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded, IResult};
+use nom::{
+    branch::alt, bytes::complete::tag, combinator::{cut, map}, error::context, sequence::preceded, IResult,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -26,8 +28,11 @@ impl TransportLayer {
             map(tag("file"), |_| Self::File),
         ))(input)
     }
-    pub fn plus_parse(input: &str) -> IResult<&str, Self> {
-        preceded(tag("+"), Self::parse)(input)
+    pub fn parse_plus(input: &str) -> IResult<&str, Self> {
+        preceded(
+            tag("+"),
+            context("unrecognised transport method", cut(Self::parse)),
+        )(input)
     }
 }
 
@@ -64,28 +69,28 @@ mod inc_parse {
     #[test]
     fn basic() {
         let uri = "+http://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::parse_plus(uri).unwrap();
         assert_eq!(tp, TransportLayer::Http);
         assert_eq!(rest, "://");
 
         let uri = "+https://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::parse_plus(uri).unwrap();
         assert_eq!(tp, TransportLayer::Https);
         assert_eq!(rest, "://");
 
         let uri = "+ssh://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::parse_plus(uri).unwrap();
         assert_eq!(tp, TransportLayer::Ssh);
         assert_eq!(rest, "://");
 
         let uri = "+file://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let (rest, tp) = TransportLayer::parse_plus(uri).unwrap();
         assert_eq!(tp, TransportLayer::File);
         assert_eq!(rest, "://");
 
         // TODO: #158
         let uri = "://";
-        let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
+        let nom::Err::Error(e) = TransportLayer::parse_plus(uri).unwrap_err() else {
             panic!();
         };
         assert_eq!(e.input, "://");
@@ -98,9 +103,9 @@ mod inc_parse {
     fn http_s() {
         let http = "+httpfoobar";
         let https = "+httpsfoobar";
-        let (rest, http_parsed) = TransportLayer::plus_parse(http).unwrap();
+        let (rest, http_parsed) = TransportLayer::parse_plus(http).unwrap();
         assert_eq!("foobar", rest);
-        let (rest, https_parsed) = TransportLayer::plus_parse(https).unwrap();
+        let (rest, https_parsed) = TransportLayer::parse_plus(https).unwrap();
         let http_expected = TransportLayer::Http;
         let http_s_expected = TransportLayer::Https;
         assert_eq!(http_expected, http_parsed);
@@ -116,7 +121,7 @@ mod err_msg {
     #[ignore = "need to impl good error handling"]
     fn fizzbuzz() {
         let url = "+fizzbuzz";
-        let _err = TransportLayer::plus_parse(url).unwrap_err();
+        let _err = TransportLayer::parse_plus(url).unwrap_err();
         todo!("Impl informative errors");
     }
 
@@ -124,7 +129,7 @@ mod err_msg {
     #[ignore = "need to impl good error handling"]
     fn missing_plus() {
         let url = "+";
-        let _plus_err = TransportLayer::plus_parse(url).unwrap_err();
+        let _plus_err = TransportLayer::parse_plus(url).unwrap_err();
         let _err = TransportLayer::parse("").unwrap_err();
         todo!("Impl informative errors");
     }

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{bytes::complete::tag, combinator::opt, sequence::preceded, IResult};
+use nom::{bytes::complete::tag, combinator::opt, error::context, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -53,7 +53,13 @@ impl FlakeRef {
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = opt(preceded(tag("?"), LocationParameters::parse))(rest)?;
+        let (rest, params) = opt(preceded(
+            tag("?"),
+            context(
+                "location parameters parse failed",
+                LocationParameters::parse,
+            ),
+        ))(rest)?;
         Ok((
             rest,
             Self {

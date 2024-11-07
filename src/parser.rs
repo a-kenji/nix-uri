@@ -3,6 +3,7 @@ use nom::{
     bytes::complete::{tag, take_until},
     character::complete::anychar,
     combinator::{opt, rest},
+    error::context,
     multi::many_m_n,
     IResult,
 };
@@ -111,7 +112,7 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
 }
 
 pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
-    tag("://")(input)
+    context("Expected `://`", tag("://"))(input)
 }
 
 #[cfg(test)]
