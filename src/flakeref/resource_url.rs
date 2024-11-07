@@ -3,7 +3,7 @@ use std::fmt::Display;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till},
-    combinator::{map, opt},
+    combinator::{opt, value},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -47,10 +47,10 @@ pub enum ResourceType {
 impl ResourceType {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag("git"), |_| Self::Git),
-            map(tag("hg"), |_| Self::Mercurial),
-            map(tag("file"), |_| Self::File),
-            map(tag("tarball"), |_| Self::Tarball),
+            value(Self::Git, tag("git")),
+            value(Self::Mercurial, tag("hg")),
+            value(Self::File, tag("file")),
+            value(Self::Tarball, tag("tarball")),
         ))(input)
     }
 }
