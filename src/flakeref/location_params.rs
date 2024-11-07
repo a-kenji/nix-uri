@@ -1,7 +1,13 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_until}, combinator::rest, error::VerboseError, multi::many_m_n, sequence::separated_pair, IResult
+    branch::alt,
+    bytes::complete::{tag, take_until},
+    combinator::rest,
+    error::VerboseError,
+    multi::many_m_n,
+    sequence::separated_pair,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
 

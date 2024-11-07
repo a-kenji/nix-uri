@@ -50,7 +50,9 @@ impl GitForge {
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>), VerboseError<&str>> {
+    pub(crate) fn parse_owner_repo_ref(
+        input: &str,
+    ) -> IResult<&str, (&str, &str, Option<&str>), VerboseError<&str>> {
         // pull out the component we are parsing
         let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
         // pull out the owner

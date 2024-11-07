@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::{tag, take_till}, combinator::{map, opt}, error::VerboseError, IResult
+    branch::alt,
+    bytes::complete::{tag, take_till},
+    combinator::{map, opt},
+    error::{VerboseError, VerboseErrorKind},
+    IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,12 +48,20 @@ pub enum ResourceType {
 
 impl ResourceType {
     pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        alt((
+        let res: Result<(&str, Self), nom::Err<nom::error::Error<&str>>> = alt((
             map(tag("git"), |_| Self::Git),
             map(tag("hg"), |_| Self::Mercurial),
             map(tag("file"), |_| Self::File),
             map(tag("tarball"), |_| Self::Tarball),
-        ))(input)
+        ))(input);
+        res.map_err(|e| {
+            e.map(|inner| {
+                let new_input = &inner.input[..7];
+                VerboseError {
+                    errors: vec![(new_input, VerboseErrorKind::Context("unrecognised type"))],
+                }
+            })
+        })
     }
 }
 

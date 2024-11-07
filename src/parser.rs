@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     error::{NixUriError, NixUriResult},
-    flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
+    flakeref::{FlakeRef, LocationParamKeys, LocationParameters, TransportLayer},
 };
 
 // TODO: use a param-specific parser, handle the inversion specificially
@@ -75,15 +75,11 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         return Err(NixUriError::InvalidUrl(input.into()));
     }
 
-    let (input, params) = parse_params(input)?;
-    let mut flake_ref = FlakeRef::default();
-    let flake_ref_type = FlakeRefType::parse_type(input)?;
-    flake_ref.r#type(flake_ref_type);
-    if let Some(params) = params {
-        flake_ref.params(params);
+    // let (input, params) = parse_params(input)?;
+    match FlakeRef::parse(input) {
+        Ok((_, res)) => Ok(res),
+        Err(e) => Err(NixUriError::NomParseError(todo!("{:?}", e))),
     }
-
-    Ok(flake_ref)
 }
 
 /// Parses the raw-string describing the transport type out of: `+type`

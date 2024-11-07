@@ -1,7 +1,12 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::tag, combinator::{cut, map}, error::{context, VerboseError}, sequence::preceded, IResult,
+    branch::alt,
+    bytes::complete::tag,
+    combinator::{cut, map},
+    error::{context, VerboseError},
+    sequence::preceded,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,18 +26,18 @@ pub enum TransportLayer {
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        alt((
-            map(tag("https"), |_| Self::Https),
-            map(tag("http"), |_| Self::Http),
-            map(tag("ssh"), |_| Self::Ssh),
-            map(tag("file"), |_| Self::File),
-        ))(input)
+        context(
+            "unrecognised transport method",
+            alt((
+                map(tag("https"), |_| Self::Https),
+                map(tag("http"), |_| Self::Http),
+                map(tag("ssh"), |_| Self::Ssh),
+                map(tag("file"), |_| Self::File),
+            )),
+        )(input)
     }
     pub fn parse_plus(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        preceded(
-            context("expected '+'", tag("+")),
-            context("unrecognised transport method", cut(Self::parse)),
-        )(input)
+        preceded(context("expected '+'", tag("+")), cut(Self::parse))(input)
     }
 }
 
@@ -93,7 +98,13 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::parse_plus(uri).unwrap_err() else {
             panic!();
         };
-        let expected_err = vec![("://", nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag))];
+        let expected_err = vec![
+            (
+                "://",
+                nom::error::VerboseErrorKind::Nom(nom::error::ErrorKind::Tag),
+            ),
+            ("://", nom::error::VerboseErrorKind::Context("expected '+'")),
+        ];
         assert_eq!(expected_err, e.errors);
     }
 

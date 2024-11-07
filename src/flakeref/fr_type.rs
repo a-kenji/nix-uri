@@ -102,7 +102,10 @@ impl FlakeRefType {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
         eprintln!();
         Err(nom::Err::Failure(nom::error::VerboseError {
-            errors: vec![(input, VerboseErrorKind::Context("`file+http[s]://` not yet implemented"))],
+            errors: vec![(
+                input,
+                VerboseErrorKind::Context("`file+http[s]://` not yet implemented"),
+            )],
         }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
@@ -116,18 +119,23 @@ impl FlakeRefType {
         map(ResourceUrl::parse, Self::Resource)(input)
     }
     pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        context(
-            "all parsers failed",
-            alt((
-                Self::parse_path,
-                Self::parse_git_forge,
-                Self::parse_file,
-                Self::parse_resource,
-            )),
-        )(input)
+        alt((
+            Self::parse_path,
+            Self::parse_git_forge,
+            Self::parse_file,
+            Self::parse_resource,
+        ))(input)
+        .map_err(|e: nom::Err<VerboseError<&str>>| {
+            e.map(|mut e| {
+                e.errors
+                    .retain(|(_ct, vek)| matches!(vek, VerboseErrorKind::Context(_)));
+                e
+            })
+        })
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
+    #[deprecated = "use `FlakeRef::parse` instead"]
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
         use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
@@ -138,11 +146,11 @@ impl FlakeRefType {
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-
-                    let (_input, owner_and_repo_or_ref) = match GitForge::parse_owner_repo_ref(input) {
-                        Err(e) => todo!(),
-                        Ok(o) => o,
-                    };
+                    let (_input, owner_and_repo_or_ref) =
+                        match GitForge::parse_owner_repo_ref(input) {
+                            Err(_e) => unimplemented!("this function will shourtly be removed"),
+                            Ok(o) => o,
+                        };
                     // TODO: #158
                     let _er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
@@ -224,8 +232,8 @@ impl FlakeRefType {
             }
 
             let (input, owner_and_repo_or_ref) = match GitForge::parse_owner_repo_ref(input) {
-                        Err(e) => todo!(),
-                        Ok(o) => o,
+                Err(_e) => unimplemented!("this function will shourtly be removed"),
+                Ok(o) => o,
             };
             // Comments left in for reference. We are in the process of moving error context
             // generation into the parser itself, as opposed to up here. The GitForge parser used
