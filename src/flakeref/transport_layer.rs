@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded, IResult};
+use nom::{branch::alt, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -20,10 +20,10 @@ impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            map(tag("https"), |_| Self::Https),
-            map(tag("http"), |_| Self::Http),
-            map(tag("ssh"), |_| Self::Ssh),
-            map(tag("file"), |_| Self::File),
+            value(Self::Https, tag("https")),
+            value(Self::Http, tag("http")),
+            value(Self::Ssh, tag("ssh")),
+            value(Self::File, tag("file")),
         ))(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self> {

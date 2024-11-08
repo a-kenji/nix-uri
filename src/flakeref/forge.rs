@@ -3,7 +3,7 @@ use std::fmt::Display;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
-    combinator::{map, opt},
+    combinator::{opt, value},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -23,19 +23,14 @@ pub struct GitForge {
 }
 
 impl GitForgePlatform {
-    fn parse_hub(input: &str) -> IResult<&str, Self> {
-        map(tag("github"), |_| Self::GitHub)(input)
-    }
-    fn parse_lab(input: &str) -> IResult<&str, Self> {
-        map(tag("gitlab"), |_| Self::GitLab)(input)
-    }
-    fn parse_sourcehut(input: &str) -> IResult<&str, Self> {
-        map(tag("sourcehut"), |_| Self::SourceHut)(input)
-    }
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((Self::parse_hub, Self::parse_lab, Self::parse_sourcehut))(input)?;
+        let (rest, res) = alt((
+            value(Self::GitHub, tag("github")),
+            value(Self::GitLab, tag("gitlab")),
+            value(Self::SourceHut, tag("sourcehut")),
+        ))(input)?;
         let (rest, _) = tag(":")(rest)?;
         Ok((rest, res))
     }
