@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use winnow::{
     branch::alt,
-    bytes::{any, tag, take_until0},
+    bytes::{any, take_until0},
     combinator::{opt, repeat, rest},
     IResult, Parser,
 };
@@ -27,7 +27,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         // TODO: is this input really not needed?
         let (_input, param_values): (_, BTreeMap<&str, &str>) = repeat(
             0..11,
-            separated_pair(take_until0("="), tag("="), alt((take_until0("&"), rest))),
+            separated_pair(take_until0("="), "=", alt((take_until0("&"), rest))),
         )
         .parse_next(input)?;
 
@@ -111,7 +111,7 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
 }
 
 pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
-    tag("://").parse_next(input)
+    "://".parse_next(input)
 }
 
 #[cfg(test)]

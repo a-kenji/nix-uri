@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{branch::alt, bytes::tag, sequence::preceded, IResult, Parser};
+use winnow::{branch::alt, sequence::preceded, IResult, Parser};
 
 use crate::error::NixUriError;
 
@@ -20,15 +20,15 @@ impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            tag("https").value(Self::Https),
-            tag("http").value(Self::Http),
-            tag("ssh").value(Self::Ssh),
-            tag("file").value(Self::File),
+            "https".value(Self::Https),
+            "http".value(Self::Http),
+            "ssh".value(Self::Ssh),
+            "file".value(Self::File),
         ))
         .parse_next(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self> {
-        preceded(tag("+"), Self::parse).parse_next(input)
+        preceded("+", Self::parse).parse_next(input)
     }
 }
 

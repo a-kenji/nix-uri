@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fmt::Display};
 use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
-    bytes::{tag, take_until0},
+    bytes::take_until0,
     combinator::{repeat, rest},
     sequence::separated_pair,
     IResult, Parser,
@@ -90,7 +90,7 @@ impl LocationParameters {
             0..11,
             separated_pair(
                 take_until0("="),
-                tag("="),
+                "=",
                 alt((take_until0("&"), take_until0("#"), rest)),
             ),
         )

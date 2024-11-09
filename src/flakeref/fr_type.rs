@@ -3,10 +3,11 @@ use std::{fmt::Display, path::Path};
 use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
-    bytes::{tag, take_till0, take_until0},
+    bytes::{take_till0, take_until0},
     combinator::{opt, peek, rest},
     error::Error,
     sequence::preceded,
+    token::tag,
     IResult, Parser,
 };
 
@@ -44,7 +45,7 @@ impl FlakeRefType {
         let path_map = Self::path_parser.map(|path_str| Self::Path {
             path: path_str.to_string(),
         });
-        preceded(opt(alt((tag("path://"), tag("path:")))), path_map).parse_next(input)
+        preceded(opt(alt(("path://", "path:"))), path_map).parse_next(input)
     }
 
     // TODO: #158
@@ -74,7 +75,7 @@ impl FlakeRefType {
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((tag("."), tag("/")))).parse_next(input)?;
+        let (is_path, _) = peek(alt((".", "/"))).parse_next(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
@@ -84,18 +85,13 @@ impl FlakeRefType {
             .parse_next(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) = alt((
-            tag("file://"),
-            tag("file+file://"),
-            tag("file:"),
-            tag("file+file:"),
-        ))
-        .parse_next(input)?;
+        let (rest, _) =
+            alt(("file://", "file+file://", "file:", "file+file:")).parse_next(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (_rest, _) = alt((tag("file+http://"), tag("file+https://"))).parse_next(input)?;
+        let (_rest, _) = alt(("file+http://", "file+https://")).parse_next(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
         Err(winnow::error::ErrMode::Cut(winnow::error::Error {
             input,
@@ -127,7 +123,7 @@ impl FlakeRefType {
         use winnow::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
             take_until0::<&str, &str, Error<&str>>(":"),
-            tag(":"),
+            ":",
             rest,
         ))
         .parse_next(input)?;

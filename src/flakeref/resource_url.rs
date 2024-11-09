@@ -1,12 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{
-    branch::alt,
-    bytes::{tag, take_till0},
-    combinator::opt,
-    IResult, Parser,
-};
+use winnow::{branch::alt, bytes::take_till0, combinator::opt, IResult, Parser};
 
 use crate::parser::parse_sep;
 
@@ -47,10 +42,10 @@ pub enum ResourceType {
 impl ResourceType {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            tag("git").value(Self::Git),
-            tag("hg").value(Self::Mercurial),
-            tag("file").value(Self::File),
-            tag("tarball").value(Self::Tarball),
+            "git".value(Self::Git),
+            "hg".value(Self::Mercurial),
+            "file".value(Self::File),
+            "tarball".value(Self::Tarball),
         ))
         .parse_next(input)
     }
