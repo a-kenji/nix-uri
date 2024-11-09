@@ -3,9 +3,9 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
-    bytes::complete::{tag, take_till},
-    combinator::{opt, value},
-    IResult,
+    bytes::{tag, take_till0},
+    combinator::opt,
+    IResult, Parser,
 };
 
 use crate::parser::parse_sep;
@@ -24,7 +24,7 @@ impl ResourceUrl {
         let (rest, res_type) = ResourceType::parse(input)?;
         let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
-        let (res, location) = take_till(|c| c == '#' || c == '?')(rest)?;
+        let (res, location) = take_till0(|c| c == '#' || c == '?')(rest)?;
 
         Ok((
             res,
@@ -47,10 +47,10 @@ pub enum ResourceType {
 impl ResourceType {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
-            value(Self::Git, tag("git")),
-            value(Self::Mercurial, tag("hg")),
-            value(Self::File, tag("file")),
-            value(Self::Tarball, tag("tarball")),
+            tag("git").value(Self::Git),
+            tag("hg").value(Self::Mercurial),
+            tag("file").value(Self::File),
+            tag("tarball").value(Self::Tarball),
         ))(input)
     }
 }

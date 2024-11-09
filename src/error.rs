@@ -55,7 +55,7 @@ pub enum NixUriError {
 
 impl From<winnow::error::ErrMode<winnow::error::Error<&str>>> for NixUriError {
     fn from(value: winnow::error::ErrMode<winnow::error::Error<&str>>) -> Self {
-        Self::NomParseError(value.to_owned())
+        Self::NomParseError(value.map_input(str::to_string))
     }
 }
 

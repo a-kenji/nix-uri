@@ -3,11 +3,12 @@ use std::{fmt::Display, path::Path};
 use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_until},
-    combinator::{map, opt, peek, rest, verify},
+    bytes::{tag, take_till0, take_until0},
+    combinator::{opt, peek, rest},
     error::Error,
     sequence::preceded,
     IResult,
+    Parser
 };
 
 use crate::{
@@ -41,7 +42,7 @@ pub enum FlakeRefType {
 
 impl FlakeRefType {
     pub fn parse_path(input: &str) -> IResult<&str, Self> {
-        let path_map = map(Self::path_parser, |path_str| Self::Path {
+        let path_map = Self::path_parser.map( |path_str| Self::Path {
             path: path_str.to_string(),
         });
         preceded(opt(alt((tag("path://"), tag("path:")))), path_map)(input)
@@ -50,13 +51,13 @@ impl FlakeRefType {
     // TODO: #158
     pub fn parse_file(input: &str) -> IResult<&str, Self> {
         alt((
-            map(
+
                 alt((
                     // file+file
                     Self::parse_explicit_file_scheme,
                     // file+http(s)
                     Self::parse_http_file_scheme,
-                )),
+                )).map(
                 // file
                 |path| {
                     Self::Resource(ResourceUrl {
@@ -66,9 +67,9 @@ impl FlakeRefType {
                     })
                 },
             ),
-            map(Self::parse_naked, |path| Self::Path {
+            Self::parse_naked.map( |path| Self::Path {
                 path: format!("{}", path.display()),
-            }),
+            })
         ))(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
@@ -78,9 +79,9 @@ impl FlakeRefType {
         Ok((rest, Path::new(path_str)))
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str> {
-        verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
+        take_till0(|c| c == '#' || c == '?').verify( |c: &str| {
             Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
-        })(input)
+        }).parse_next(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
         let (rest, _) = alt((
@@ -104,11 +105,11 @@ impl FlakeRefType {
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
     pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
-        map(GitForge::parse, Self::GitForge)(input)
+        GitForge::parse.map(Self::GitForge).parse_next(input)
     }
     /// <git | hg>[+<transport-type]://
     pub fn parse_resource(input: &str) -> IResult<&str, Self> {
-        map(ResourceUrl::parse, Self::Resource)(input)
+        ResourceUrl::parse.map(Self::Resource).parse_next(input)
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         alt((
@@ -123,7 +124,7 @@ impl FlakeRefType {
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
         use winnow::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, Error<&str>>(":"),
+            take_until0::<&str, &str, Error<&str>>(":"),
             tag(":"),
             rest,
         ))(input)?;

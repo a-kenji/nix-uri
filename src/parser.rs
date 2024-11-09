@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use winnow::{
     branch::alt,
-    bytes::complete::{tag, take_until},
-    character::complete::anychar,
+    bytes::{tag, take_until0, any},
     combinator::{opt, rest},
     multi::many_m_n,
     IResult,
@@ -21,16 +20,16 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
     use winnow::sequence::separated_pair;
 
     // This is the inverse of the general control flow
-    let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
+    let (input, maybe_flake_type) = opt(take_until0("?"))(input)?;
 
     if let Some(flake_type) = maybe_flake_type {
         // discard leading "?"
-        let (input, _) = anychar(input)?;
+        let (input, _) = any(input)?;
         // TODO: is this input really not needed?
         let (_input, param_values): (_, BTreeMap<&str, &str>) = many_m_n(
             0,
             11,
-            separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
+            separated_pair(take_until0("="), tag("="), alt((take_until0("&"), rest))),
         )(input)?;
 
         let mut params = LocationParameters::default();
@@ -89,8 +88,8 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
 
 /// Parses the raw-string describing the transport type out of: `+type`
 pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
-    let (input, rest) = take_until("+")(input)?;
-    let (input, _) = anychar(input)?;
+    let (input, rest) = take_until0("+")(input)?;
+    let (input, _) = any(input)?;
     Ok((rest, input))
 }
 

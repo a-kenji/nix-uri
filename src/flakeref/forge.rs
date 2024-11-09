@@ -3,9 +3,10 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_till1},
-    combinator::{opt, value},
+    bytes::{tag, take_till0, take_till1},
+    combinator::opt,
     IResult,
+    Parser
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,9 +28,9 @@ impl GitForgePlatform {
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, res) = alt((
-            value(Self::GitHub, tag("github")),
-            value(Self::GitLab, tag("gitlab")),
-            value(Self::SourceHut, tag("sourcehut")),
+            tag("github").value(Self::GitHub),
+            tag("gitlab").value(Self::GitLab),
+            tag("sourcehut").value(Self::SourceHut),
         ))(input)?;
         let (rest, _) = tag(":")(rest)?;
         Ok((rest, res))
@@ -43,7 +44,7 @@ impl GitForge {
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
         // pull out the component we are parsing
-        let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
+        let (tail, path0) = take_till0(|c| c == '#' || c == '?')(input)?;
         // pull out the owner
         let (path1, owner) = take_till1(|c| c == '/')(path0)?;
         // ...and discard the `/` separator
