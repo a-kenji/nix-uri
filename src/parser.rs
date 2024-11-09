@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use winnow::{
     branch::alt,
     bytes::{any, tag, take_until0},
-    combinator::{opt, rest},
-    multi::many_m_n,
+    combinator::{opt, repeat, rest},
     IResult, Parser,
 };
 
@@ -26,9 +25,8 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         // discard leading "?"
         let (input, _) = any(input)?;
         // TODO: is this input really not needed?
-        let (_input, param_values): (_, BTreeMap<&str, &str>) = many_m_n(
-            0,
-            11,
+        let (_input, param_values): (_, BTreeMap<&str, &str>) = repeat(
+            0..11,
             separated_pair(take_until0("="), tag("="), alt((take_until0("&"), rest))),
         )
         .parse_next(input)?;

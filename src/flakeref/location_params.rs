@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use winnow::{
     branch::alt,
     bytes::{tag, take_until0},
-    combinator::rest,
-    multi::many_m_n,
+    combinator::{repeat, rest},
     sequence::separated_pair,
     IResult, Parser,
 };
@@ -87,9 +86,8 @@ impl Display for LocationParameters {
 
 impl LocationParameters {
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, param_values): (_, BTreeMap<&str, &str>) = many_m_n(
-            0,
-            11,
+        let (rest, param_values): (_, BTreeMap<&str, &str>) = repeat(
+            0..11,
             separated_pair(
                 take_until0("="),
                 tag("="),
