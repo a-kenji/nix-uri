@@ -1,12 +1,12 @@
 use std::fmt::Display;
 
-use nom::{
+use serde::{Deserialize, Serialize};
+use winnow::{
     branch::alt,
     bytes::complete::{tag, take_till},
     combinator::{opt, value},
     IResult,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::parser::parse_sep;
 

@@ -1,4 +1,6 @@
-use nom::{
+use std::collections::BTreeMap;
+
+use winnow::{
     branch::alt,
     bytes::complete::{tag, take_until},
     character::complete::anychar,
@@ -16,7 +18,7 @@ use crate::{
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
-    use nom::sequence::separated_pair;
+    use winnow::sequence::separated_pair;
 
     // This is the inverse of the general control flow
     let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
@@ -25,7 +27,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         // discard leading "?"
         let (input, _) = anychar(input)?;
         // TODO: is this input really not needed?
-        let (_input, param_values) = many_m_n(
+        let (_input, param_values): (_, BTreeMap<&str, &str>) = many_m_n(
             0,
             11,
             separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),

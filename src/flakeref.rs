@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use nom::{bytes::complete::tag, combinator::opt, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
+use winnow::{bytes::complete::tag, combinator::opt, sequence::preceded, IResult};
 
 use crate::error::NixUriError;
 

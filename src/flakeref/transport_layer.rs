@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use nom::{branch::alt, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
+use winnow::{branch::alt, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
 
 use crate::error::NixUriError;
 
@@ -60,6 +60,8 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
+    use winnow::error::{Error, ErrorKind};
+
     use super::*;
     #[test]
     fn basic() {
@@ -85,10 +87,12 @@ mod inc_parse {
 
         // TODO: #158
         let uri = "://";
-        let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
-            panic!();
-        };
-        assert_eq!(e.input, "://");
+        let e = TransportLayer::plus_parse(uri).unwrap_err();
+        let expected_err = winnow::error::ErrMode::Backtrack(Error {
+            input: "://",
+            kind: ErrorKind::Tag,
+        });
+        assert_eq!(expected_err, e);
     }
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It

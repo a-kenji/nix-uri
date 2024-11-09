@@ -1,12 +1,12 @@
 use std::fmt::Display;
 
-use nom::{
+use serde::{Deserialize, Serialize};
+use winnow::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
     combinator::{opt, value},
     IResult,
 };
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {

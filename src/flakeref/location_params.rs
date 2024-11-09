@@ -1,6 +1,7 @@
-use std::fmt::Display;
+use std::{collections::BTreeMap, fmt::Display};
 
-use nom::{
+use serde::{Deserialize, Serialize};
+use winnow::{
     branch::alt,
     bytes::complete::{tag, take_until},
     combinator::rest,
@@ -8,7 +9,6 @@ use nom::{
     sequence::separated_pair,
     IResult,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
 
@@ -87,7 +87,7 @@ impl Display for LocationParameters {
 
 impl LocationParameters {
     pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, param_values) = many_m_n(
+        let (rest, param_values): (_, BTreeMap<&str, &str>) = many_m_n(
             0,
             11,
             separated_pair(

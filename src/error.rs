@@ -45,22 +45,22 @@ pub enum NixUriError {
     /// TODO: Implement real conversion instead of this hack.
     #[error("Nom Error: {0}")]
     Nom(String),
-    #[error(transparent)]
-    NomParseError(#[from] nom::Err<nom::error::Error<String>>),
-    #[error(transparent)]
-    Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
+    #[error("todo: err msg")]
+    NomParseError(winnow::error::ErrMode<winnow::error::Error<String>>),
+    #[error("todo: err msg")]
+    Parser(winnow::error::ErrMode<(String, winnow::error::ErrorKind)>),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<nom::Err<nom::error::Error<&str>>> for NixUriError {
-    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
+impl From<winnow::error::ErrMode<winnow::error::Error<&str>>> for NixUriError {
+    fn from(value: winnow::error::ErrMode<winnow::error::Error<&str>>) -> Self {
         Self::NomParseError(value.to_owned())
     }
 }
 
-impl From<nom::Err<(&str, nom::error::ErrorKind)>> for NixUriError {
-    fn from(value: nom::Err<(&str, nom::error::ErrorKind)>) -> Self {
-        Self::Parser(value.to_owned())
+impl From<winnow::error::ErrMode<(&str, winnow::error::ErrorKind)>> for NixUriError {
+    fn from(value: winnow::error::ErrMode<(&str, winnow::error::ErrorKind)>) -> Self {
+        Self::Parser(value.map(|(s, e)| (s.to_string(), e)))
     }
 }
