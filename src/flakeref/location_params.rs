@@ -7,7 +7,7 @@ use winnow::{
     combinator::rest,
     multi::many_m_n,
     sequence::separated_pair,
-    IResult,
+    IResult, Parser,
 };
 
 use crate::error::NixUriError;
@@ -95,7 +95,8 @@ impl LocationParameters {
                 tag("="),
                 alt((take_until0("&"), take_until0("#"), rest)),
             ),
-        )(input)?;
+        )
+        .parse_next(input)?;
 
         let mut params = Self::default();
         for (param, value) in param_values {

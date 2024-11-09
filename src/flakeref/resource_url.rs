@@ -22,9 +22,9 @@ pub struct ResourceUrl {
 impl ResourceUrl {
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, res_type) = ResourceType::parse(input)?;
-        let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
+        let (rest, transport_type) = opt(TransportLayer::plus_parse).parse_next(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
-        let (res, location) = take_till0(|c| c == '#' || c == '?')(rest)?;
+        let (res, location) = take_till0(|c| c == '#' || c == '?').parse_next(rest)?;
 
         Ok((
             res,
@@ -51,7 +51,8 @@ impl ResourceType {
             tag("hg").value(Self::Mercurial),
             tag("file").value(Self::File),
             tag("tarball").value(Self::Tarball),
-        ))(input)
+        ))
+        .parse_next(input)
     }
 }
 

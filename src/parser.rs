@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use winnow::{
     branch::alt,
-    bytes::{tag, take_until0, any},
+    bytes::{any, tag, take_until0},
     combinator::{opt, rest},
     multi::many_m_n,
-    IResult,
+    IResult, Parser,
 };
 
 use crate::{
@@ -20,7 +20,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
     use winnow::sequence::separated_pair;
 
     // This is the inverse of the general control flow
-    let (input, maybe_flake_type) = opt(take_until0("?"))(input)?;
+    let (input, maybe_flake_type) = opt(take_until0("?")).parse_next(input)?;
 
     if let Some(flake_type) = maybe_flake_type {
         // discard leading "?"
@@ -30,7 +30,8 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
             0,
             11,
             separated_pair(take_until0("="), tag("="), alt((take_until0("&"), rest))),
-        )(input)?;
+        )
+        .parse_next(input)?;
 
         let mut params = LocationParameters::default();
         for (param, value) in param_values {
@@ -88,7 +89,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
 
 /// Parses the raw-string describing the transport type out of: `+type`
 pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
-    let (input, rest) = take_until0("+")(input)?;
+    let (input, rest) = take_until0("+").parse_next(input)?;
     let (input, _) = any(input)?;
     Ok((rest, input))
 }
@@ -112,7 +113,7 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
 }
 
 pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
-    tag("://")(input)
+    tag("://").parse_next(input)
 }
 
 #[cfg(test)]

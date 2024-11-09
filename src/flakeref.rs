@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{bytes::tag, combinator::opt, sequence::preceded, IResult};
+use winnow::{bytes::tag, combinator::opt, sequence::preceded, IResult, Parser};
 
 use crate::error::NixUriError;
 
@@ -53,7 +53,7 @@ impl FlakeRef {
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = opt(preceded(tag("?"), LocationParameters::parse))(rest)?;
+        let (rest, params) = opt(preceded(tag("?"), LocationParameters::parse)).parse_next(rest)?;
         Ok((
             rest,
             Self {

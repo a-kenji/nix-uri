@@ -5,8 +5,7 @@ use winnow::{
     branch::alt,
     bytes::{tag, take_till0, take_till1},
     combinator::opt,
-    IResult,
-    Parser
+    IResult, Parser,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,8 +30,9 @@ impl GitForgePlatform {
             tag("github").value(Self::GitHub),
             tag("gitlab").value(Self::GitLab),
             tag("sourcehut").value(Self::SourceHut),
-        ))(input)?;
-        let (rest, _) = tag(":")(rest)?;
+        ))
+        .parse_next(input)?;
+        let (rest, _) = tag(":").parse_next(rest)?;
         Ok((rest, res))
     }
 }
@@ -44,15 +44,15 @@ impl GitForge {
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
         // pull out the component we are parsing
-        let (tail, path0) = take_till0(|c| c == '#' || c == '?')(input)?;
+        let (tail, path0) = take_till0(|c| c == '#' || c == '?').parse_next(input)?;
         // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
+        let (path1, owner) = take_till1(|c| c == '/').parse_next(path0)?;
         // ...and discard the `/` separator
-        let (path1, _) = tag("/")(path1)?;
+        let (path1, _) = tag("/").parse_next(path1)?;
         // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
+        let (path2, repo) = take_till1(|c| c == '/').parse_next(path1)?;
         // drop the `/` if it exists
-        let (maybe_refrev, _) = opt(tag("/"))(path2)?;
+        let (maybe_refrev, _) = opt(tag("/")).parse_next(path2)?;
         // if the remaining is empty, that's the ref/rev
         let maybe_refrev = if maybe_refrev.is_empty() {
             None

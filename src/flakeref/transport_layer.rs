@@ -24,10 +24,11 @@ impl TransportLayer {
             tag("http").value(Self::Http),
             tag("ssh").value(Self::Ssh),
             tag("file").value(Self::File),
-        ))(input)
+        ))
+        .parse_next(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self> {
-        preceded(tag("+"), Self::parse)(input)
+        preceded(tag("+"), Self::parse).parse_next(input)
     }
 }
 
