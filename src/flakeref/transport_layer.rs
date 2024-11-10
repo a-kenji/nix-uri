@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{combinator::{alt, preceded}, IResult, PResult, Parser};
+use winnow::{combinator::{alt, preceded}, PResult, Parser};
 
 use crate::error::NixUriError;
 
@@ -18,7 +18,7 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         alt((
             "https".value(Self::Https),
             "http".value(Self::Http),
@@ -27,7 +27,7 @@ impl TransportLayer {
         ))
         .parse_next(input)
     }
-    pub fn plus_parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn plus_parse(input: &mut &str) -> PResult<Self> {
         preceded("+", Self::parse).parse_next(input)
     }
 }

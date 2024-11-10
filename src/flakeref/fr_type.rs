@@ -2,19 +2,15 @@ use std::{fmt::Display, path::Path};
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{alt, opt, peek, preceded, rest, separated_pair}, error::{ContextError, InputError}, token::{tag, take_till, take_until}, IResult, PResult, Parser
+    combinator::{alt, opt, peek, preceded}, error::ContextError, token::take_till, PResult, Parser
 };
 
 use crate::{
-    error::{NixUriError, NixUriResult},
+    error::NixUriError,
     flakeref::forge::GitForge,
-    parser::parse_transport_type,
 };
 
-use super::{
-    resource_url::{ResourceType, ResourceUrl},
-    GitForgePlatform,
-};
+use super::resource_url::{ResourceType, ResourceUrl};
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FlakeRefType {
@@ -35,7 +31,7 @@ pub enum FlakeRefType {
 }
 
 impl FlakeRefType {
-    pub fn parse_path<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse_path(input: &mut &str) -> PResult<Self> {
         let path_map = Self::path_parser.map(|path_str| Self::Path {
             path: path_str.to_string(),
         });
@@ -43,7 +39,7 @@ impl FlakeRefType {
     }
 
     // TODO: #158
-    pub fn parse_file<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse_file(input: &mut &str) -> PResult<Self> {
         alt((
             alt((
                 // file+file
@@ -92,14 +88,14 @@ impl FlakeRefType {
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
-    pub fn parse_git_forge<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse_git_forge(input: &mut &str) -> PResult<Self> {
         GitForge::parse.map(Self::GitForge).parse_next(input)
     }
     /// <git | hg>[+<transport-type]://
-    pub fn parse_resource<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse_resource(input: &mut &str) -> PResult<Self> {
         ResourceUrl::parse.map(Self::Resource).parse_next(input)
     }
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         alt((
             Self::parse_path,
             Self::parse_git_forge,

@@ -81,7 +81,7 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         let param_values: BTreeMap<&str, &str> = repeat(
             0..11,
             separated_pair(

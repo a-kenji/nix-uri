@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{alt, opt}, token::take_till, IResult, PResult, Parser
+    combinator::{alt, opt}, token::take_till, PResult, Parser
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         let res = alt((
             "github".value(Self::GitHub),
             "gitlab".value(Self::GitLab),
@@ -63,7 +63,7 @@ impl GitForge {
         Ok((owner, repo, maybe_refrev))
     }
 
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         let platform = GitForgePlatform::parse(input)?;
         let forge_path = Self::parse_owner_repo_ref(input)?;
         let res = Self {

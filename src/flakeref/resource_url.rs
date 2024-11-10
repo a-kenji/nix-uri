@@ -15,7 +15,7 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         let res_type = ResourceType::parse(input)?;
         let transport_type = opt(TransportLayer::plus_parse).parse_next(input)?;
         let _tag = parse_sep(input)?;
@@ -39,7 +39,7 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+    pub fn parse(input: &mut &str) -> PResult<Self> {
         alt((
             "git".value(Self::Git),
             "hg".value(Self::Mercurial),
