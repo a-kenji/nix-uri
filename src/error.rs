@@ -46,15 +46,22 @@ pub enum NixUriError {
     #[error("Nom Error: {0}")]
     Nom(String),
     #[error("todo: err msg")]
-    NomParseError(winnow::error::ErrMode<winnow::error::Error<String>>),
+    NomParseError(winnow::error::ErrMode<winnow::error::InputError<String>>),
+    #[error("todo: err msg")]
+    CtxError(winnow::error::ErrMode<winnow::error::ContextError>),
     #[error("todo: err msg")]
     Parser(winnow::error::ErrMode<(String, winnow::error::ErrorKind)>),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<winnow::error::ErrMode<winnow::error::Error<&str>>> for NixUriError {
-    fn from(value: winnow::error::ErrMode<winnow::error::Error<&str>>) -> Self {
+impl From<winnow::error::ErrMode<winnow::error::ContextError>> for NixUriError {
+    fn from(value: winnow::error::ErrMode<winnow::error::ContextError>) -> Self {
+        Self::CtxError(value)
+    }
+}
+impl From<winnow::error::ErrMode<winnow::error::InputError<&str>>> for NixUriError {
+    fn from(value: winnow::error::ErrMode<winnow::error::InputError<&str>>) -> Self {
         Self::NomParseError(value.map_input(str::to_string))
     }
 }

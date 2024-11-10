@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{branch::alt, sequence::preceded, IResult, Parser};
+use winnow::{combinator::{alt, preceded}, IResult, PResult, Parser};
 
 use crate::error::NixUriError;
 
@@ -18,7 +18,7 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
         alt((
             "https".value(Self::Https),
             "http".value(Self::Http),
@@ -27,7 +27,7 @@ impl TransportLayer {
         ))
         .parse_next(input)
     }
-    pub fn plus_parse(input: &str) -> IResult<&str, Self> {
+    pub fn plus_parse<'i>(input: &mut &'i str) -> PResult<Self> {
         preceded("+", Self::parse).parse_next(input)
     }
 }
@@ -61,7 +61,7 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
-    use winnow::error::{Error, ErrorKind};
+    use winnow::error::{InputError, ErrorKind};
 
     use super::*;
     #[test]
@@ -89,7 +89,7 @@ mod inc_parse {
         // TODO: #158
         let uri = "://";
         let e = TransportLayer::plus_parse(uri).unwrap_err();
-        let expected_err = winnow::error::ErrMode::Backtrack(Error {
+        let expected_err = winnow::error::ErrMode::Backtrack(InputError {
             input: "://",
             kind: ErrorKind::Tag,
         });

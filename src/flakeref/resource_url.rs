@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{branch::alt, bytes::take_till0, combinator::opt, IResult, Parser};
+use winnow::{token::take_till, combinator::{alt, opt }, PResult, Parser};
 
 use crate::parser::parse_sep;
 
@@ -15,20 +15,19 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res_type) = ResourceType::parse(input)?;
-        let (rest, transport_type) = opt(TransportLayer::plus_parse).parse_next(rest)?;
-        let (rest, _tag) = parse_sep(rest)?;
-        let (res, location) = take_till0(|c| c == '#' || c == '?').parse_next(rest)?;
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+        let res_type = ResourceType::parse(input)?;
+        let transport_type = opt(TransportLayer::plus_parse).parse_next(input)?;
+        let _tag = parse_sep(input)?;
+        let location = take_till(0.., |c| c == '#' || c == '?').parse_next(input)?;
 
-        Ok((
-            res,
+        Ok(
             Self {
                 res_type,
                 location: location.to_string(),
                 transport_type,
             },
-        ))
+        )
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,7 +39,7 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
         alt((
             "git".value(Self::Git),
             "hg".value(Self::Mercurial),

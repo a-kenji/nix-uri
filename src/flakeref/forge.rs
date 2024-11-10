@@ -2,10 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    branch::alt,
-    bytes::{take_till0, take_till1},
-    combinator::opt,
-    IResult, Parser,
+    combinator::{alt, opt}, token::take_till, IResult, PResult, Parser
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,15 +22,15 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+        let res = alt((
             "github".value(Self::GitHub),
             "gitlab".value(Self::GitLab),
             "sourcehut".value(Self::SourceHut),
         ))
         .parse_next(input)?;
-        let (rest, _) = ":".parse_next(rest)?;
-        Ok((rest, res))
+        let _ = ":".parse_next(input)?;
+        Ok(res)
     }
 }
 
@@ -42,40 +39,40 @@ impl GitForge {
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
+    pub(crate) fn parse_owner_repo_ref<'i>(input: &mut &'i str) -> PResult<(&'i str, &'i str, Option<&'i str>)> {
         // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/').parse_next(input)?;
+        let owner = take_till(1.., |c| c == '/').parse_next(input)?;
         // ...and discard the `/` separator
-        let (path1, _) = "/".parse_next(path1)?;
+        let _ = "/".parse_next(input)?;
         // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/' || c == '#' || c == '?').parse_next(path1)?;
+        let repo = take_till(1.., |c| c == '/' || c == '#' || c == '?').parse_next(input)?;
         // drop the `/` if it exists
-        let (maybe_refrev, slashed) = opt("/").parse_next(path2)?;
-        let (rest, maybe_refrev) = if slashed.is_some() {
-            let (rest, rr_str) = take_till0(|c| c == '#' || c == '?').parse_next(maybe_refrev)?;
+        let slashed = opt("/").parse_next(input)?;
+        let maybe_refrev = if slashed.is_some() {
+            let rr_str = take_till(0.., |c| c == '#' || c == '?').parse_next(input)?;
             // if the remaining is empty, that's the ref/rev
             if rr_str.is_empty() {
-                (rest, None)
+                None
             } else {
-                (rest, Some(rr_str))
+                Some(rr_str)
             }
         } else {
-            (maybe_refrev, None)
+            None
         };
 
-        Ok((rest, (owner, repo, maybe_refrev)))
+        Ok((owner, repo, maybe_refrev))
     }
 
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, platform) = GitForgePlatform::parse(input)?;
-        let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+        let platform = GitForgePlatform::parse(input)?;
+        let forge_path = Self::parse_owner_repo_ref(input)?;
         let res = Self {
             platform,
             owner: forge_path.0.to_string(),
             repo: forge_path.1.to_string(),
             ref_or_rev: forge_path.2.map(str::to_string),
         };
-        Ok((rest, res))
+        Ok(res)
     }
 }
 

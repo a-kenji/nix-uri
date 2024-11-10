@@ -2,11 +2,7 @@ use std::{collections::BTreeMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    branch::alt,
-    bytes::take_until0,
-    combinator::{repeat, rest},
-    sequence::separated_pair,
-    IResult, Parser,
+    combinator::{alt, repeat, rest, separated_pair}, token::take_until, PResult, Parser
 };
 
 use crate::error::NixUriError;
@@ -85,13 +81,13 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, param_values): (_, BTreeMap<&str, &str>) = repeat(
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+        let param_values: BTreeMap<&str, &str> = repeat(
             0..11,
             separated_pair(
-                take_until0("="),
+                take_until(0.., "="),
                 "=",
-                alt((take_until0("&"), take_until0("#"), rest)),
+                alt((take_until(0.., "&"), take_until(0.., "#"), rest)),
             ),
         )
         .parse_next(input)?;
@@ -117,7 +113,7 @@ impl LocationParameters {
                 }
             }
         }
-        Ok((rest, params))
+        Ok(params)
     }
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
         self.dir = dir;

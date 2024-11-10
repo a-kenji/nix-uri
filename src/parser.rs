@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use winnow::{
-    branch::alt,
-    bytes::{any, take_until0},
-    combinator::{opt, repeat, rest},
-    IResult, Parser,
+    combinator::{alt, opt, repeat, rest, separated_pair}, error::{ContextError, ErrMode}, token::{any, take_until}, IResult, PResult, Parser
 };
 
 use crate::{
@@ -15,19 +12,18 @@ use crate::{
 // TODO: use a param-specific parser, handle the inversion specificially
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
-pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
-    use winnow::sequence::separated_pair;
+pub(crate) fn parse_params<'i>(input: &mut &'i str) -> PResult<Option<LocationParameters>> {
 
     // This is the inverse of the general control flow
-    let (input, maybe_flake_type) = opt(take_until0("?")).parse_next(input)?;
+    let maybe_flake_type = opt(take_until(0.., "?")).parse_next(input)?;
 
     if let Some(flake_type) = maybe_flake_type {
         // discard leading "?"
-        let (input, _) = any(input)?;
+        let _ = any(input)?;
         // TODO: is this input really not needed?
-        let (_input, param_values): (_, BTreeMap<&str, &str>) = repeat(
+        let param_values: BTreeMap<&str, &str> = repeat(
             0..11,
-            separated_pair(take_until0("="), "=", alt((take_until0("&"), rest))),
+            separated_pair(take_until(0.., "="), "=", alt((take_until(0.., "&"), rest))),
         )
         .parse_next(input)?;
 
@@ -52,13 +48,13 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
                 }
             }
         }
-        Ok((flake_type, Some(params)))
+        Ok(Some(params))
     } else {
-        Ok((input, None))
+        Ok(None)
     }
 }
 
-pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
+pub(crate) fn parse_nix_uri<'i>(input: &mut &'i str) -> Result<FlakeRef, NixUriError> {
     // fluent_uri::Uri::parse(input)?;
     // Basic sanity checks
     if input.trim().is_empty()
@@ -71,25 +67,16 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         || (input.ends_with(char::is_whitespace))
         || (input.starts_with(char::is_whitespace))
     {
-        return Err(NixUriError::InvalidUrl(input.into()));
+        return Err(NixUriError::InvalidUrl(input.to_string()));
     }
-
-    let (input, params) = parse_params(input)?;
-    let mut flake_ref = FlakeRef::default();
-    let flake_ref_type = FlakeRefType::parse_type(input)?;
-    flake_ref.r#type(flake_ref_type);
-    if let Some(params) = params {
-        flake_ref.params(params);
-    }
-
-    Ok(flake_ref)
+    FlakeRef::parse(input).map_err(NixUriError::CtxError)
 }
 
 /// Parses the raw-string describing the transport type out of: `+type`
-pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
-    let (input, rest) = take_until0("+").parse_next(input)?;
-    let (input, _) = any(input)?;
-    Ok((rest, input))
+pub(crate) fn parse_from_transport_type<'i>(input: &mut &'i str) -> PResult<&'i str> {
+    let rest = take_until(0.., "+").parse_next(input)?;
+    let _ = any(input)?;
+    Ok(input)
 }
 
 pub(crate) fn is_tarball(input: &str) -> bool {
@@ -104,13 +91,13 @@ pub(crate) fn is_file(input: &str) -> bool {
     !is_tarball(input)
 }
 
-// Parse the transport type itself
-pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
-    let (_, input) = parse_from_transport_type(input)?;
+// // Parse the transport type itself
+pub(crate) fn parse_transport_type<'i>(input: &mut &'i str) -> Result<TransportLayer, NixUriError> {
+    let input = parse_from_transport_type(input)?;
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
+pub(crate) fn parse_sep<'i>(input: &mut &'i str) -> PResult<&'i str> {
     "://".parse_next(input)
 }
 

@@ -2,13 +2,7 @@ use std::{fmt::Display, path::Path};
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    branch::alt,
-    bytes::{take_till0, take_until0},
-    combinator::{opt, peek, rest},
-    error::Error,
-    sequence::preceded,
-    token::tag,
-    IResult, Parser,
+    combinator::{alt, opt, peek, preceded, rest, separated_pair}, error::{ContextError, InputError}, token::{tag, take_till, take_until}, IResult, PResult, Parser
 };
 
 use crate::{
@@ -41,7 +35,7 @@ pub enum FlakeRefType {
 }
 
 impl FlakeRefType {
-    pub fn parse_path(input: &str) -> IResult<&str, Self> {
+    pub fn parse_path<'i>(input: &mut &'i str) -> PResult<Self> {
         let path_map = Self::path_parser.map(|path_str| Self::Path {
             path: path_str.to_string(),
         });
@@ -49,7 +43,7 @@ impl FlakeRefType {
     }
 
     // TODO: #158
-    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+    pub fn parse_file<'i>(input: &mut &'i str) -> PResult<Self> {
         alt((
             alt((
                 // file+file
@@ -73,42 +67,39 @@ impl FlakeRefType {
         ))
         .parse_next(input)
     }
-    pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_naked<'i>(input: &mut &'i str) -> PResult<&'i Path> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((".", "/"))).parse_next(input)?;
-        let (rest, path_str) = Self::path_parser(is_path)?;
-        Ok((rest, Path::new(path_str)))
+        let _ = peek(alt((".", "/"))).parse_next(input)?;
+        let path_str = Self::path_parser(input)?;
+        Ok(Path::new(path_str))
     }
-    pub fn path_parser(input: &str) -> IResult<&str, &str> {
-        take_till0(|c| c == '#' || c == '?')
+    pub fn path_parser<'i>(input: &mut &'i str) -> PResult<&'i str> {
+        take_till(0.., |c| c == '#' || c == '?')
             .verify(|c: &str| Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']'))
             .parse_next(input)
     }
-    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (rest, _) =
+    pub fn parse_explicit_file_scheme<'i>(input: &mut &'i str) -> PResult<&'i Path> {
+        let _ =
             alt(("file://", "file+file://", "file:", "file+file:")).parse_next(input)?;
-        let (rest, path_str) = Self::path_parser(rest)?;
-        Ok((rest, Path::new(path_str)))
+        let path_str = Self::path_parser(input)?;
+        Ok(Path::new(path_str))
     }
-    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
-        let (_rest, _) = alt(("file+http://", "file+https://")).parse_next(input)?;
+    pub fn parse_http_file_scheme<'i>(input: &mut &'i str) -> PResult<&'i Path> {
+        let _ = alt(("file+http://", "file+https://")).parse_next(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
-        Err(winnow::error::ErrMode::Cut(winnow::error::Error {
-            input,
-            kind: winnow::error::ErrorKind::Fail,
-        }))
+        Err(winnow::error::ErrMode::Cut(ContextError::new()))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
-    pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
+    pub fn parse_git_forge<'i>(input: &mut &'i str) -> PResult<Self> {
         GitForge::parse.map(Self::GitForge).parse_next(input)
     }
     /// <git | hg>[+<transport-type]://
-    pub fn parse_resource(input: &str) -> IResult<&str, Self> {
+    pub fn parse_resource<'i>(input: &mut &'i str) -> PResult<Self> {
         ResourceUrl::parse.map(Self::Resource).parse_next(input)
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
         alt((
             Self::parse_path,
             Self::parse_git_forge,
@@ -117,135 +108,134 @@ impl FlakeRefType {
         ))
         .parse_next(input)
     }
-    /// Parse type specific information, returns the [`FlakeRefType`]
-    /// and the unparsed input
-    pub fn parse_type(input: &str) -> NixUriResult<Self> {
-        use winnow::sequence::separated_pair;
-        let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until0::<&str, &str, Error<&str>>(":"),
-            ":",
-            rest,
-        ))
-        .parse_next(input)?;
-        if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
-            match flake_ref_type_str {
-                "github" | "gitlab" | "sourcehut" => {
-                    let (_input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-                    // TODO: #158
-                    let _er_fn = |st: &str| {
-                        NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
-                    };
-                    let owner = owner_and_repo_or_ref.0.to_string();
-                    let repo = owner_and_repo_or_ref.1.to_string();
-                    let ref_or_rev = owner_and_repo_or_ref.2.map(str::to_string);
-                    let platform = match flake_ref_type_str {
-                        "github" => GitForgePlatform::GitHub,
-                        "gitlab" => GitForgePlatform::GitLab,
-                        "sourcehut" => GitForgePlatform::SourceHut,
-                        _ => unreachable!(),
-                    };
-                    let res = Self::GitForge(GitForge {
-                        platform,
-                        owner,
-                        repo,
-                        ref_or_rev,
-                    });
-                    Ok(res)
-                }
-                "path" => {
-                    // TODO: #162
-                    let path = Path::new(input);
-                    // TODO: make this check configurable for cli usage
-                    if !path.is_absolute() || input.contains(']') || input.contains('[') {
-                        return Err(NixUriError::NotAbsolute(input.into()));
-                    }
-                    if input.contains('#') || input.contains('?') {
-                        return Err(NixUriError::PathCharacter(input.into()));
-                    }
-                    let flake_ref_type = Self::Path { path: input.into() };
-                    Ok(flake_ref_type)
-                }
-
-                _ => {
-                    if flake_ref_type_str.starts_with("git+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            opt(tag::<&str, &str, Error<&str>>("//")).parse_next(input)?;
-                        let flake_ref_type = Self::Resource(ResourceUrl {
-                            res_type: ResourceType::Git,
-                            location: input.into(),
-                            transport_type: Some(transport_type),
-                        });
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str.starts_with("hg+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            tag::<&str, &str, Error<&str>>("//").parse_next(input)?;
-                        let flake_ref_type = Self::Resource(ResourceUrl {
-                            res_type: ResourceType::Mercurial,
-                            location: input.into(),
-                            transport_type: Some(transport_type),
-                        });
-                        Ok(flake_ref_type)
-                    } else {
-                        Err(NixUriError::UnknownUriType(flake_ref_type_str.into()))
-                    }
-                }
-            }
-        } else {
-            // Implicit types can be paths, indirect flake_refs, or uri's.
-            if input.starts_with('/') || input == "." {
-                let flake_ref_type = Self::Path { path: input.into() };
-                let path = Path::new(input);
-                // TODO: make this check configurable for cli usage
-                if !path.is_absolute()
-                    || input.contains(']')
-                    || input.contains('[')
-                    || !input.is_ascii()
-                {
-                    return Err(NixUriError::NotAbsolute(input.into()));
-                }
-                if input.contains('#') || input.contains('?') {
-                    return Err(NixUriError::PathCharacter(input.into()));
-                }
-                return Ok(flake_ref_type);
-            }
-
-            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-            // Comments left in for reference. We are in the process of moving error context
-            // generation into the parser itself, as opposed to up here. The GitForge parser used
-            // here will have to take on responsibility of contextualising failures;
-            // if let Some(id) = owner_and_repo_or_ref {
-            if !owner_and_repo_or_ref
-                .0
-                .chars()
-                .all(|c| c.is_ascii_alphabetic() || c.is_control())
-                || owner_and_repo_or_ref.0.is_empty()
-            {
-                return Err(NixUriError::InvalidUrl(input.into()));
-            }
-            let flake_ref_type = Self::Indirect {
-                id: owner_and_repo_or_ref.0.to_string(),
-                ref_or_rev: owner_and_repo_or_ref.2.map(str::to_string),
-            };
-            Ok(flake_ref_type)
-            // } else {
-            //     let (_input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
-            //     let id = if let Some(id) = owner_and_repo_or_ref.next() {
-            //         id
-            //     } else {
-            //         input
-            //     };
-            //     if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
-            //         return Err(NixUriError::InvalidUrl(input.into()));
-            //     }
-            //     Ok(FlakeRefType::Indirect {
-            //         id: id.to_string(),
-            //         ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
-            //     })
-            // }
-        }
-    }
+    // /// Parse type specific information, returns the [`FlakeRefType`]
+    // /// and the unparsed input
+    // pub fn parse_type<'i>(input: &mut &'i str) -> PResult<Self, NixUriError> {
+    //     let maybe_explicit_type = opt(separated_pair(
+    //         take_until::<&str, &str, InputError<&str>>(0.., ":"),
+    //         ":",
+    //         rest,
+    //     ))
+    //     .parse_next(input).map_err(|e| NixUriError::Error("foobar".to_string()))?;
+    //     if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
+    //         match flake_ref_type_str {
+    //             "github" | "gitlab" | "sourcehut" => {
+    //                 let owner_and_repo_or_ref = GitForge::parse_owner_repo_ref(input)?;
+    //                 // TODO: #158
+    //                 let _er_fn = |st: &str| {
+    //                     NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
+    //                 };
+    //                 let owner = owner_and_repo_or_ref.0.to_string();
+    //                 let repo = owner_and_repo_or_ref.1.to_string();
+    //                 let ref_or_rev = owner_and_repo_or_ref.2.map(str::to_string);
+    //                 let platform = match flake_ref_type_str {
+    //                     "github" => GitForgePlatform::GitHub,
+    //                     "gitlab" => GitForgePlatform::GitLab,
+    //                     "sourcehut" => GitForgePlatform::SourceHut,
+    //                     _ => unreachable!(),
+    //                 };
+    //                 let res = Self::GitForge(GitForge {
+    //                     platform,
+    //                     owner,
+    //                     repo,
+    //                     ref_or_rev,
+    //                 });
+    //                 Ok(res)
+    //             }
+    //             "path" => {
+    //                 // TODO: #162
+    //                 let path = Path::new(input);
+    //                 // TODO: make this check configurable for cli usage
+    //                 if !path.is_absolute() || input.contains(']') || input.contains('[') {
+    //                     return Err(NixUriError::NotAbsolute(input.into()));
+    //                 }
+    //                 if input.contains('#') || input.contains('?') {
+    //                     return Err(NixUriError::PathCharacter(input.into()));
+    //                 }
+    //                 let flake_ref_type = Self::Path { path: input.into() };
+    //                 Ok(flake_ref_type)
+    //             }
+    //
+    //             _ => {
+    //                 if flake_ref_type_str.starts_with("git+") {
+    //                     let transport_type = parse_transport_type(flake_ref_type_str)?;
+    //                     let (input, _tag) =
+    //                         opt(tag::<&str, &str, InputError<&str>>("//")).parse_next(input)?;
+    //                     let flake_ref_type = Self::Resource(ResourceUrl {
+    //                         res_type: ResourceType::Git,
+    //                         location: input.into(),
+    //                         transport_type: Some(transport_type),
+    //                     });
+    //                     Ok(flake_ref_type)
+    //                 } else if flake_ref_type_str.starts_with("hg+") {
+    //                     let transport_type = parse_transport_type(flake_ref_type_str)?;
+    //                     let (input, _tag) =
+    //                         tag::<&str, &str, InputError<&str>>("//").parse_next(input)?;
+    //                     let flake_ref_type = Self::Resource(ResourceUrl {
+    //                         res_type: ResourceType::Mercurial,
+    //                         location: input.into(),
+    //                         transport_type: Some(transport_type),
+    //                     });
+    //                     Ok(flake_ref_type)
+    //                 } else {
+    //                     Err(NixUriError::UnknownUriType(flake_ref_type_str.into()))
+    //                 }
+    //             }
+    //         }
+    //     } else {
+    //         // Implicit types can be paths, indirect flake_refs, or uri's.
+    //         if input.starts_with('/') || *input == "." {
+    //             let flake_ref_type = Self::Path { path: input.into() };
+    //             let path = Path::new(input);
+    //             // TODO: make this check configurable for cli usage
+    //             if !path.is_absolute()
+    //                 || input.contains(']')
+    //                 || input.contains('[')
+    //                 || !input.is_ascii()
+    //             {
+    //                 return Err(NixUriError::NotAbsolute(input.into()));
+    //             }
+    //             if input.contains('#') || input.contains('?') {
+    //                 return Err(NixUriError::PathCharacter(input.into()));
+    //             }
+    //             return Ok(flake_ref_type);
+    //         }
+    //
+    //         let owner_and_repo_or_ref = GitForge::parse_owner_repo_ref(input)?;
+    //         // Comments left in for reference. We are in the process of moving error context
+    //         // generation into the parser itself, as opposed to up here. The GitForge parser used
+    //         // here will have to take on responsibility of contextualising failures;
+    //         // if let Some(id) = owner_and_repo_or_ref {
+    //         if !owner_and_repo_or_ref
+    //             .0
+    //             .chars()
+    //             .all(|c| c.is_ascii_alphabetic() || c.is_control())
+    //             || owner_and_repo_or_ref.0.is_empty()
+    //         {
+    //             return Err(NixUriError::InvalidUrl(input.into()));
+    //         }
+    //         let flake_ref_type = Self::Indirect {
+    //             id: owner_and_repo_or_ref.0.to_string(),
+    //             ref_or_rev: owner_and_repo_or_ref.2.map(str::to_string),
+    //         };
+    //         Ok(flake_ref_type)
+    //         // } else {
+    //         //     let (_input, mut owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+    //         //     let id = if let Some(id) = owner_and_repo_or_ref.next() {
+    //         //         id
+    //         //     } else {
+    //         //         input
+    //         //     };
+    //         //     if !id.chars().all(|c| c.is_ascii_alphabetic()) || id.is_empty() {
+    //         //         return Err(NixUriError::InvalidUrl(input.into()));
+    //         //     }
+    //         //     Ok(FlakeRefType::Indirect {
+    //         //         id: id.to_string(),
+    //         //         ref_or_rev: owner_and_repo_or_ref.next().map(|s| s.to_string()),
+    //         //     })
+    //         // }
+    //     }
+    // }
     /// Extract a common identifier from it's [`FlakeRefType`] variant.
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {

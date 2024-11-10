@@ -1,9 +1,9 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{combinator::opt, sequence::preceded, IResult, Parser};
+use winnow::{combinator::{opt, preceded}, IResult, PResult, Parser};
 
-use crate::error::NixUriError;
+use crate::{error::NixUriError, parser::parse_nix_uri};
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
@@ -51,17 +51,16 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = opt(preceded("?", LocationParameters::parse)).parse_next(rest)?;
-        Ok((
-            rest,
+    pub fn parse<'i>(input: &mut &'i str) -> PResult<Self> {
+        let r#type = FlakeRefType::parse(input)?;
+        let params = opt(preceded("?", LocationParameters::parse)).parse_next(input)?;
+        Ok(
             Self {
                 r#type,
                 flake: None,
                 params: params.unwrap_or_default(),
             },
-        ))
+        )
     }
 }
 
@@ -80,18 +79,17 @@ impl Display for FlakeRef {
 impl TryFrom<&str> for FlakeRef {
     type Error = NixUriError;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        use crate::parser::parse_nix_uri;
-        parse_nix_uri(value)
+    fn try_from(mut value: &str) -> Result<Self, Self::Error> {
+        parse_nix_uri(&mut value)
     }
 }
 
 impl std::str::FromStr for FlakeRef {
     type Err = NixUriError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(mut s: &str) -> Result<Self, Self::Err> {
         use crate::parser::parse_nix_uri;
-        parse_nix_uri(s)
+        parse_nix_uri(&mut s)
     }
 }
 
