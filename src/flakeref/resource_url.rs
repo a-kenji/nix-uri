@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{token::take_till, combinator::{alt, opt }, PResult, Parser};
+use winnow::{
+    combinator::{alt, opt, trace},
+    token::take_till,
+    PResult, Parser,
+};
 
 use crate::parser::parse_sep;
 
@@ -21,13 +25,11 @@ impl ResourceUrl {
         let _tag = parse_sep(input)?;
         let location = take_till(0.., |c| c == '#' || c == '?').parse_next(input)?;
 
-        Ok(
-            Self {
-                res_type,
-                location: location.to_string(),
-                transport_type,
-            },
-        )
+        Ok(Self {
+            res_type,
+            location: location.to_string(),
+            transport_type,
+        })
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,10 +43,10 @@ pub enum ResourceType {
 impl ResourceType {
     pub fn parse(input: &mut &str) -> PResult<Self> {
         alt((
-            "git".value(Self::Git),
-            "hg".value(Self::Mercurial),
-            "file".value(Self::File),
-            "tarball".value(Self::Tarball),
+            trace("tag: git", "git".value(Self::Git)),
+            trace("tag: hg", "hg".value(Self::Mercurial)),
+            trace("tag: file", "file".value(Self::File)),
+            trace("tag: tarball", "tarball".value(Self::Tarball)),
         ))
         .parse_next(input)
     }
@@ -68,38 +70,38 @@ mod res_url {
 
     #[test]
     fn git() {
-        let url = "gitfoobar";
-        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let mut url = "gitfoobar";
+        let parsed = ResourceType::parse(&mut url).unwrap();
         let expected = ResourceType::Git;
         assert_eq!(expected, parsed);
-        assert_eq!("foobar", rest);
+        assert_eq!("foobar", url);
     }
 
     #[test]
     #[ignore = "TODO: handle colission between git and git<hub|lab> meaningfully"]
     fn github() {
-        let url = "github";
-        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let mut url = "github";
+        let parsed = ResourceType::parse(&mut url).unwrap();
         let expected = ResourceType::Git;
         assert_eq!(expected, parsed);
-        assert_eq!("foobar", rest);
+        assert_eq!("foobar", url);
     }
 
     #[test]
     #[ignore = "TODO: handle colission between git and git<hub|lab> meaningfully"]
     fn gitlab() {
-        let url = "gitlab";
-        let (rest, parsed) = ResourceType::parse(url).unwrap();
+        let mut url = "gitlab";
+        let parsed = ResourceType::parse(&mut url).unwrap();
         let expected = ResourceType::Git;
         assert_eq!(expected, parsed);
-        assert_eq!("foobar", rest);
+        assert_eq!("foobar", url);
     }
 
     #[test]
     #[ignore = "need to impl good error handling"]
     fn gat() {
-        let url = "gat";
-        let _err = ResourceType::parse(url).unwrap_err();
+        let mut url = "gat";
+        let _err = ResourceType::parse(&mut url).unwrap_err();
         todo!("Imple informative errors");
     }
 }

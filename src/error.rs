@@ -47,7 +47,7 @@ pub enum NixUriError {
     Nom(String),
     #[error("todo: err msg")]
     NomParseError(winnow::error::ErrMode<winnow::error::InputError<String>>),
-    #[error("todo: err msg")]
+    #[error("error: {0}")]
     CtxError(winnow::error::ErrMode<winnow::error::ContextError>),
     #[error("todo: err msg")]
     Parser(winnow::error::ErrMode<(String, winnow::error::ErrorKind)>),

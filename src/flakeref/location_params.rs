@@ -2,7 +2,9 @@ use std::{collections::BTreeMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{alt, repeat, rest, separated_pair}, token::take_until, PResult, Parser
+    combinator::{alt, repeat, rest, separated_pair},
+    token::take_until,
+    PResult, Parser,
 };
 
 use crate::error::NixUriError;
@@ -221,25 +223,25 @@ mod inc_parse {
     #[test]
     fn no_str() {
         let expected = LocationParameters::default();
-        let in_str = "";
-        let (outstr, parsed_param) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", outstr);
+        let mut in_str = "";
+        let parsed_param = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(expected, parsed_param);
     }
     #[test]
     fn empty() {
         let expected = LocationParameters::default();
-        let in_str = "";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
     }
     #[test]
     fn empty_hash_terminated() {
         let expected = LocationParameters::default();
-        let in_str = "#";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#", rest);
+        let mut in_str = "#";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#", in_str);
         assert_eq!(output, expected);
     }
     #[test]
@@ -247,24 +249,24 @@ mod inc_parse {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
 
-        let in_str = "&dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "&dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "dir=&dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
 
         expected.dir(Some(String::new()));
-        let in_str = "dir=";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "dir=";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
     }
     #[test]
@@ -272,24 +274,24 @@ mod inc_parse {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
+        let mut in_str = "dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
         assert_eq!(output, expected);
 
-        let in_str = "&dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
+        let mut in_str = "&dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
         assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "dir=&dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
+        assert_eq!(expected, output);
 
         expected.dir(Some(String::new()));
-        let in_str = "dir=#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
+        let mut in_str = "dir=#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
         assert_eq!(output, expected);
     }
 }

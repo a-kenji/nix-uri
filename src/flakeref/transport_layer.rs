@@ -1,7 +1,10 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{combinator::{alt, preceded}, PResult, Parser};
+use winnow::{
+    combinator::{alt, preceded},
+    PResult, Parser,
+};
 
 use crate::error::NixUriError;
 
@@ -61,38 +64,39 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
-    use winnow::error::{InputError, ErrorKind};
 
     use super::*;
     #[test]
     fn basic() {
-        let uri = "+http://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let mut uri = "+http://";
+        let tp = TransportLayer::plus_parse(&mut uri).unwrap();
         assert_eq!(tp, TransportLayer::Http);
-        assert_eq!(rest, "://");
+        assert_eq!(uri, "://");
 
-        let uri = "+https://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let mut uri = "+https://";
+        let tp = TransportLayer::plus_parse(&mut uri).unwrap();
         assert_eq!(tp, TransportLayer::Https);
-        assert_eq!(rest, "://");
+        assert_eq!(uri, "://");
 
-        let uri = "+ssh://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let mut uri = "+ssh://";
+        let tp = TransportLayer::plus_parse(&mut uri).unwrap();
         assert_eq!(tp, TransportLayer::Ssh);
-        assert_eq!(rest, "://");
+        assert_eq!(uri, "://");
 
-        let uri = "+file://";
-        let (rest, tp) = TransportLayer::plus_parse(uri).unwrap();
+        let mut uri = "+file://";
+        let tp = TransportLayer::plus_parse(&mut uri).unwrap();
         assert_eq!(tp, TransportLayer::File);
-        assert_eq!(rest, "://");
+        assert_eq!(uri, "://");
 
         // TODO: #158
-        let uri = "://";
-        let e = TransportLayer::plus_parse(uri).unwrap_err();
-        let expected_err = winnow::error::ErrMode::Backtrack(InputError {
-            input: "://",
-            kind: ErrorKind::Tag,
-        });
+        let mut uri = "://";
+        let e = TransportLayer::plus_parse(&mut uri).unwrap_err();
+        let expected_err = winnow::error::ContextError::new();
+        let expected_err = winnow::error::ErrMode::Backtrack(expected_err);
+        // let expected_err = winnow::error::ErrMode::Backtrack(InputError {
+        //     input: "://",
+        //     kind: ErrorKind::Tag,
+        // });
         assert_eq!(expected_err, e);
     }
 
@@ -101,16 +105,18 @@ mod inc_parse {
     // regressions, where we try and parse the `http` before `https`.
     #[test]
     fn http_s() {
-        let http = "+httpfoobar";
-        let https = "+httpsfoobar";
-        let (rest, http_parsed) = TransportLayer::plus_parse(http).unwrap();
-        assert_eq!("foobar", rest);
-        let (rest, https_parsed) = TransportLayer::plus_parse(https).unwrap();
+        let mut http = "+httpfoobar";
+        let mut https = "+httpsfoobar";
+        let http_parsed = TransportLayer::plus_parse(&mut http).unwrap();
+        let http_s_parsed = TransportLayer::plus_parse(&mut https).unwrap();
+
         let http_expected = TransportLayer::Http;
         let http_s_expected = TransportLayer::Https;
+
+        assert_eq!("foobar", http);
+        assert_eq!("foobar", http);
         assert_eq!(http_expected, http_parsed);
-        assert_eq!(http_s_expected, https_parsed);
-        assert_eq!("foobar", rest);
+        assert_eq!(http_s_expected, http_s_parsed);
     }
 }
 
@@ -120,17 +126,17 @@ mod err_msg {
     #[test]
     #[ignore = "need to impl good error handling"]
     fn fizzbuzz() {
-        let url = "+fizzbuzz";
-        let _err = TransportLayer::plus_parse(url).unwrap_err();
+        let mut url = "+fizzbuzz";
+        let _err = TransportLayer::plus_parse(&mut url).unwrap_err();
         todo!("Impl informative errors");
     }
 
     #[test]
     #[ignore = "need to impl good error handling"]
     fn missing_plus() {
-        let url = "+";
-        let _plus_err = TransportLayer::plus_parse(url).unwrap_err();
-        let _err = TransportLayer::parse("").unwrap_err();
+        let mut url = "+";
+        let _plus_err = TransportLayer::plus_parse(&mut url).unwrap_err();
+        let _err = TransportLayer::parse(&mut "").unwrap_err();
         todo!("Impl informative errors");
     }
 }

@@ -1,12 +1,6 @@
+use winnow::{PResult, Parser};
 
-use winnow::{
-    PResult, Parser
-};
-
-use crate::{
-    error::NixUriError,
-    flakeref::FlakeRef,
-};
+use crate::{error::NixUriError, flakeref::FlakeRef};
 
 // pub(crate) fn parse_params(input: &mut &str) -> PResult<Option<LocationParameters>> {
 //
