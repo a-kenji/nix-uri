@@ -84,7 +84,7 @@ impl Display for LocationParameters {
 
 impl LocationParameters {
     pub fn parse(input: &mut &str) -> PResult<Self> {
-        let param_values: BTreeMap<&str, &str> = repeat(
+        let param_values: Vec<(&str, &str)> = repeat(
             0..11,
             separated_pair(
                 take_until(0.., "="),
@@ -252,22 +252,22 @@ mod inc_parse {
         let mut in_str = "dir=foo";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
 
         let mut in_str = "&dir=foo";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
         let mut in_str = "dir=&dir=foo";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
 
         expected.dir(Some(String::new()));
         let mut in_str = "dir=";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
     }
     #[test]
     fn dir_hash_term() {
@@ -277,12 +277,12 @@ mod inc_parse {
         let mut in_str = "dir=foo#fizz";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("#fizz", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
 
         let mut in_str = "&dir=foo#fizz";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("#fizz", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
         let mut in_str = "dir=&dir=foo#fizz";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("#fizz", in_str);
@@ -292,6 +292,6 @@ mod inc_parse {
         let mut in_str = "dir=#fizz";
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("#fizz", in_str);
-        assert_eq!(output, expected);
+        assert_eq!(expected, output);
     }
 }
