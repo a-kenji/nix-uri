@@ -1,14 +1,11 @@
 use std::fmt::Display;
 
-use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_until},
-    combinator::rest,
-    multi::many_m_n,
-    sequence::separated_pair,
-    IResult,
-};
 use serde::{Deserialize, Serialize};
+use winnow::{
+    combinator::{alt, preceded, repeat, rest, separated_pair},
+    token::take_until,
+    PResult, Parser,
+};
 
 use crate::error::NixUriError;
 
@@ -86,16 +83,16 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, param_values) = many_m_n(
-            0,
-            11,
+    pub fn parse(input: &mut &str) -> PResult<Self> {
+        let param_values: Vec<(&str, &str)> = repeat(
+            0..11,
             separated_pair(
-                take_until("="),
-                tag("="),
-                alt((take_until("&"), take_until("#"), rest)),
+                take_until(0.., "="),
+                "=",
+                alt((take_until(0.., "&"), take_until(0.., "#"), rest)),
             ),
-        )(input)?;
+        )
+        .parse_next(input)?;
 
         let mut params = Self::default();
         for (param, value) in param_values {
@@ -118,7 +115,11 @@ impl LocationParameters {
                 }
             }
         }
-        Ok((rest, params))
+        Ok(params)
+    }
+
+    pub fn parse_preceded(input: &mut &str) -> PResult<Self> {
+        preceded("?", Self::parse).parse_next(input)
     }
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
         self.dir = dir;
@@ -224,27 +225,19 @@ impl std::str::FromStr for LocationParamKeys {
 mod inc_parse {
     use super::*;
     #[test]
-    fn no_str() {
-        let expected = LocationParameters::default();
-        let in_str = "";
-        let (outstr, parsed_param) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", outstr);
-        assert_eq!(expected, parsed_param);
-    }
-    #[test]
     fn empty() {
         let expected = LocationParameters::default();
-        let in_str = "";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
+        let mut in_str = "";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
         assert_eq!(output, expected);
     }
     #[test]
     fn empty_hash_terminated() {
         let expected = LocationParameters::default();
-        let in_str = "#";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#", rest);
+        let mut in_str = "#";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#", in_str);
         assert_eq!(output, expected);
     }
     #[test]
@@ -252,49 +245,64 @@ mod inc_parse {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
+        assert_eq!(expected, output);
 
-        let in_str = "&dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "&dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
+        assert_eq!(expected, output);
+        let mut in_str = "dir=&dir=foo";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
+        assert_eq!(expected, output);
 
         expected.dir(Some(String::new()));
-        let in_str = "dir=";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "dir=";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("", in_str);
+        assert_eq!(expected, output);
     }
     #[test]
     fn dir_hash_term() {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
 
-        let in_str = "dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
+        assert_eq!(expected, output);
 
-        let in_str = "&dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "&dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
+        assert_eq!(expected, output);
+        let mut in_str = "dir=&dir=foo#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
+        assert_eq!(expected, output);
 
         expected.dir(Some(String::new()));
-        let in_str = "dir=#fizz";
-        let (rest, output) = LocationParameters::parse(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+        let mut in_str = "dir=#fizz";
+        let output = LocationParameters::parse(&mut in_str).unwrap();
+        assert_eq!("#fizz", in_str);
+        assert_eq!(expected, output);
+    }
+    #[test]
+    fn preceded() {
+        let ins = [
+            "dir=foo#fizz",
+            "&dir=foo#fizz",
+            "dir=&dir=foo#fizz",
+            "dir=#fizz",
+        ];
+        for mut instr in ins {
+            assert_eq!(
+                LocationParameters::parse_preceded(&mut format!("?{}", instr).as_str()),
+                LocationParameters::parse(&mut instr)
+            );
+        }
     }
 }

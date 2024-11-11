@@ -1,12 +1,12 @@
 use std::fmt::Display;
 
-use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_till, take_till1},
-    combinator::{opt, value},
-    IResult,
-};
 use serde::{Deserialize, Serialize};
+use winnow::{
+    combinator::{alt, cut_err, opt, terminated, trace},
+    error::{StrContext, StrContextValue},
+    token::take_till,
+    PResult, Parser,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -25,52 +25,80 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((
-            value(Self::GitHub, tag("github")),
-            value(Self::GitLab, tag("gitlab")),
-            value(Self::SourceHut, tag("sourcehut")),
-        ))(input)?;
-        let (rest, _) = tag(":")(rest)?;
-        Ok((rest, res))
+    pub fn parse(input: &mut &str) -> PResult<Self> {
+        let res = alt((
+            trace("gitforge: github", "github".value(Self::GitHub)),
+            trace("gitforge: gitlab", "gitlab".value(Self::GitLab)),
+            trace("gitforge: sourcehut", "sourcehut".value(Self::SourceHut)),
+        ))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "gitforge|github|gitlab",
+        )))
+        .parse_next(input)?;
+        Ok(res)
+    }
+    pub fn parse_terminated(input: &mut &str) -> PResult<Self> {
+        terminated(Self::parse, ":")
+            .context(StrContext::Expected(StrContextValue::CharLiteral(':')))
+            .parse_next(input)
     }
 }
 
 impl GitForge {
+    pub(crate) fn parse_owner_repo<'i>(input: &mut &'i str) -> PResult<(&'i str, &'i str)> {
+        let owner = trace(
+            "til '/' for owner",
+            cut_err(take_till(1.., |c| c == '/').context(StrContext::Expected(
+                StrContextValue::StringLiteral("<owner>"),
+            ))),
+        )
+        .parse_next(input)?;
+        let _ = cut_err("/")
+            .context(StrContext::Expected(StrContextValue::CharLiteral('/')))
+            .parse_next(input)?;
+        // get the rest, halting at the optional `/`
+        let repo = trace(
+            "till '/#?' for repo",
+            cut_err(take_till(1.., |c| c == '/' || c == '#' || c == '?')),
+        )
+        .context(StrContext::Expected(StrContextValue::StringLiteral(
+            "<repo>",
+        )))
+        .parse_next(input)?;
+        let _ = opt("/").parse_next(input)?;
+        Ok((owner, repo))
+    }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
-        // pull out the component we are parsing
-        let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
+    pub(crate) fn parse_owner_repo_ref<'i>(
+        input: &mut &'i str,
+    ) -> PResult<(&'i str, &'i str, Option<&'i str>)> {
         // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
-        // ...and discard the `/` separator
-        let (path1, _) = tag("/")(path1)?;
-        // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
-        // drop the `/` if it exists
-        let (maybe_refrev, _) = opt(tag("/"))(path2)?;
-        // if the remaining is empty, that's the ref/rev
-        let maybe_refrev = if maybe_refrev.is_empty() {
-            None
-        } else {
-            Some(maybe_refrev)
-        };
+        let (owner, repo) = Self::parse_owner_repo
+            .context(StrContext::Label("owner/repo"))
+            .parse_next(input)?;
 
-        Ok((tail, (owner, repo, maybe_refrev)))
+        // drop the `/` if it exists
+        let maybe_refrev =
+            trace("till '#?'", opt(take_till(1.., |c| c == '#' || c == '?'))).parse_next(input)?;
+        // if the remaining is empty, that's the ref/rev
+
+        Ok((owner, repo, maybe_refrev))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, platform) = GitForgePlatform::parse(input)?;
-        let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
+
+    pub fn parse(input: &mut &str) -> PResult<Self> {
+        let platform = GitForgePlatform::parse_terminated(input)?;
+        // If we parsed the platform, but fail on owner/repo, don't try a backtrack
+        let forge_path = cut_err(Self::parse_owner_repo_ref).parse_next(input)?;
         let res = Self {
             platform,
             owner: forge_path.0.to_string(),
             repo: forge_path.1.to_string(),
             ref_or_rev: forge_path.2.map(str::to_string),
         };
-        Ok((rest, res))
+        Ok(res)
     }
 }
 
@@ -96,22 +124,22 @@ mod inc_parse_platform {
     fn platform() {
         let stripped = "nixos/nixpkgs";
 
-        let uri = "github:nixos/nixpkgs";
+        let mut uri = "github:nixos/nixpkgs";
 
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
+        assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::GitHub);
 
-        let uri = "gitlab:nixos/nixpkgs";
+        let mut uri = "gitlab:nixos/nixpkgs";
 
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
+        assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::GitLab);
 
-        let uri = "sourcehut:nixos/nixpkgs";
+        let mut uri = "sourcehut:nixos/nixpkgs";
 
-        let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
+        assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::SourceHut);
         // TODO?: fuzz test where `:` is preceded by bad string
     }
@@ -122,11 +150,11 @@ mod err_msgs {
     #[test]
     #[ignore = "partial owner-repo parsing not yet implemented"]
     fn just_owner() {
-        let input = "owner";
-        let input_slash = "owner/";
+        let mut input = "owner";
+        let mut input_slash = "owner/";
 
-        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let _err = GitForge::parse_owner_repo_ref(&mut input).unwrap_err();
+        let _err_slash = GitForge::parse_owner_repo_ref(&mut input_slash).unwrap_err();
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);
@@ -170,59 +198,59 @@ mod inc_parse {
 
     #[test]
     fn plain() {
-        let input = "owner/repo";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", None);
-        assert_eq!(rest, "");
+        assert_eq!("", input);
         assert_eq!(expected, res);
     }
 
     #[test]
     fn param_terminated() {
-        let input = "owner/repo?🤡";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo?🤡";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", None);
-        assert_eq!(rest, "?🤡");
+        assert_eq!("?🤡", input);
         assert_eq!(expected, res);
-        assert_eq!(rest, "?🤡");
 
-        let input = "owner/repo#🤡";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo#🤡";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", None);
-        assert_eq!(expected, res);
-        assert_eq!(rest, "#🤡");
 
-        let input = "owner/repo?#🤡";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
-        let expected = ("owner", "repo", None);
+        assert_eq!("#🤡", input);
         assert_eq!(expected, res);
-        assert_eq!(rest, "?#🤡");
+
+        let mut input = "owner/repo?#🤡";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
+        let expected = ("owner", "repo", None);
+        assert_eq!("?#🤡", input);
+        assert_eq!(expected, res);
     }
 
     #[test]
     fn attr_terminated() {
-        let input = "owner/repo#fizz.bar";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo#fizz.bar";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", None);
-        assert_eq!(rest, "#fizz.bar");
+        assert_eq!("#fizz.bar", input);
         assert_eq!(expected, res);
     }
 
     #[test]
     fn rev_param_terminated() {
-        let input = "owner/repo/rev?foo=bar";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo/rev?foo=bar";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", Some("rev"));
-        assert_eq!(rest, "?foo=bar");
+        assert_eq!("?foo=bar", input);
         assert_eq!(expected, res);
     }
 
     #[test]
     fn rev_attr_terminated() {
-        let input = "owner/repo/rev#fizz.bar";
-        let (rest, res) = GitForge::parse_owner_repo_ref(input).unwrap();
+        let mut input = "owner/repo/rev#fizz.bar";
+        let res = GitForge::parse_owner_repo_ref(&mut input).unwrap();
         let expected = ("owner", "repo", Some("rev"));
-        assert_eq!(rest, "#fizz.bar");
+        assert_eq!("#fizz.bar", input);
         assert_eq!(expected, res);
     }
 }
