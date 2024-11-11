@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: Backtrack(ContextError { context: [Label(\"FlakeRefType\")], cause: None })"
+        expected = "called `Result::unwrap()` on an `Err` value: Backtrack(ContextError { context: [Label(\"FlakeRef\")], cause: None })"
     )]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let mut uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
@@ -985,7 +985,7 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let mut uri = "git+(:z";
-        let expected = "ctx error: Parsing Error: ContextError { context: [Label(\"FlakeRefType\")], cause: None }";
+        let expected = "ctx error: Parsing Error: ContextError { context: [Label(\"FlakeRef\")], cause: None }";
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_eq!(expected, parsed.unwrap_err().to_string());
         let _e = FlakeRef::parse(&mut uri).unwrap_err();
