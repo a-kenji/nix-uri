@@ -1,4 +1,5 @@
 use thiserror::Error;
+use winnow::error::{ContextError, ErrMode, ErrorKind, InputError};
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
 
@@ -45,29 +46,29 @@ pub enum NixUriError {
     /// TODO: Implement real conversion instead of this hack.
     #[error("Nom Error: {0}")]
     Nom(String),
-    #[error("todo: err msg")]
-    NomParseError(winnow::error::ErrMode<winnow::error::InputError<String>>),
-    #[error("error: {0}")]
-    CtxError(winnow::error::ErrMode<winnow::error::ContextError>),
-    #[error("todo: err msg")]
-    Parser(winnow::error::ErrMode<(String, winnow::error::ErrorKind)>),
+    #[error("winnow parse error: {0}")]
+    WinParseError(ErrMode<InputError<String>>),
+    #[error("ctx error: {0}")]
+    CtxError(ErrMode<ContextError>),
+    #[error("Parser Error: {0}")]
+    Parser(ErrMode<(String, ErrorKind)>),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<winnow::error::ErrMode<winnow::error::ContextError>> for NixUriError {
-    fn from(value: winnow::error::ErrMode<winnow::error::ContextError>) -> Self {
+impl From<ErrMode<ContextError>> for NixUriError {
+    fn from(value: ErrMode<ContextError>) -> Self {
         Self::CtxError(value)
     }
 }
-impl From<winnow::error::ErrMode<winnow::error::InputError<&str>>> for NixUriError {
-    fn from(value: winnow::error::ErrMode<winnow::error::InputError<&str>>) -> Self {
-        Self::NomParseError(value.map_input(str::to_string))
+impl From<ErrMode<InputError<&str>>> for NixUriError {
+    fn from(value: ErrMode<InputError<&str>>) -> Self {
+        Self::WinParseError(value.map_input(str::to_string))
     }
 }
 
-impl From<winnow::error::ErrMode<(&str, winnow::error::ErrorKind)>> for NixUriError {
-    fn from(value: winnow::error::ErrMode<(&str, winnow::error::ErrorKind)>) -> Self {
+impl From<ErrMode<(&str, ErrorKind)>> for NixUriError {
+    fn from(value: ErrMode<(&str, ErrorKind)>) -> Self {
         Self::Parser(value.map(|(s, e)| (s.to_string(), e)))
     }
 }

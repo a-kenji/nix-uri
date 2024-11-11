@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{opt, preceded, trace},
+    combinator::{opt, trace},
     error::StrContext,
     PResult, Parser,
 };
@@ -57,11 +57,11 @@ impl FlakeRef {
     }
     pub fn parse(input: &mut &str) -> PResult<Self> {
         let r#type = trace("getting type", FlakeRefType::parse)
-            .context(StrContext::Label("Unknown Type"))
+            .context(StrContext::Label("FlakeRefType"))
             .parse_next(input)?;
         let params = opt(trace(
             "getting params",
-            preceded("?", LocationParameters::parse),
+            LocationParameters::parse_preceded.context(StrContext::Label("LocationParams")),
         ))
         .parse_next(input)?;
         Ok(Self {
@@ -176,18 +176,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_simple_uri_parsed() {
-        let mut uri = "github:zellij-org/zellij";
+    fn parse_simple_uri_slashed() {
+        let mut uri = "github:nixos/nixpkgs/";
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
                 platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
+                owner: "nixos".into(),
+                repo: "nixpkgs".into(),
                 ref_or_rev: None,
             }))
             .clone();
 
-        let parsed: FlakeRef = uri.parse().unwrap();
+        let parsed: FlakeRef = uri.try_into().unwrap();
         let nommed = FlakeRef::parse(&mut uri).unwrap();
 
         assert_eq!("", uri);
@@ -212,7 +212,27 @@ mod tests {
 
         let nommed = FlakeRef::parse(&mut uri).unwrap();
 
-        // maybe re-make uri for each parse if this is failing
+        assert_eq!("", uri);
+        assert_eq!(flake_ref, nommed);
+    }
+
+    #[test]
+    fn parse_simple_uri_ref_slashed() {
+        let mut uri = "github:zellij-org/zellij/?ref=main";
+        let mut flake_attrs = LocationParameters::default();
+        flake_attrs.r#ref(Some("main".into()));
+        let flake_ref = FlakeRef::default()
+            .r#type(FlakeRefType::GitForge(GitForge {
+                platform: GitForgePlatform::GitHub,
+                owner: "zellij-org".into(),
+                repo: "zellij".into(),
+                ref_or_rev: None,
+            }))
+            .params(flake_attrs)
+            .clone();
+
+        let nommed = FlakeRef::parse(&mut uri).unwrap();
+
         assert_eq!("", uri);
         assert_eq!(flake_ref, nommed);
     }
@@ -373,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_gitlab_simpleeee() {
+    fn parse_gitlab_simple() {
         let mut uri = "gitlab:veloren/veloren";
         let flake_ref = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
@@ -679,7 +699,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: Backtrack(ContextError { context: [Label(\"Unknown Type\")], cause: None })"
+        expected = "called `Result::unwrap()` on an `Err` value: Backtrack(ContextError { context: [Label(\"FlakeRefType\")], cause: None })"
     )]
     fn parse_git_and_https_params_submodules_wrong_type() {
         let mut uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
@@ -967,7 +987,7 @@ mod tests {
         let mut uri = "git+(:z";
         // let expected = NixUriError::CtxError(winnow::error::ErrMode::Backtrack(winnow::error::ContextError { context: vec![winnow::error::StrContext::Label("Unknown Type")], cause: None }));
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_eq!("error: Parsing Error: ContextError { context: [Label(\"Unknown Type\")], cause: None }", parsed.unwrap_err().to_string());
+        assert_eq!("ctx error: Parsing Error: ContextError { context: [Label(\"FlakeRefType\")], cause: None }", parsed.unwrap_err().to_string());
         let _e = FlakeRef::parse(&mut uri).unwrap_err();
         // todo: map to good error
         // assert_eq!(expected, e);

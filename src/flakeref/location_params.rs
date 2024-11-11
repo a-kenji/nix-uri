@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{alt, repeat, rest, separated_pair},
+    combinator::{alt, preceded, repeat, rest, separated_pair},
     token::take_until,
     PResult, Parser,
 };
@@ -117,6 +117,10 @@ impl LocationParameters {
         }
         Ok(params)
     }
+
+    pub fn parse_preceded(input: &mut &str) -> PResult<Self> {
+        preceded("?", Self::parse).parse_next(input)
+    }
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
         self.dir = dir;
         self
@@ -221,14 +225,6 @@ impl std::str::FromStr for LocationParamKeys {
 mod inc_parse {
     use super::*;
     #[test]
-    fn no_str() {
-        let expected = LocationParameters::default();
-        let mut in_str = "";
-        let parsed_param = LocationParameters::parse(&mut in_str).unwrap();
-        assert_eq!("", in_str);
-        assert_eq!(expected, parsed_param);
-    }
-    #[test]
     fn empty() {
         let expected = LocationParameters::default();
         let mut in_str = "";
@@ -293,5 +289,20 @@ mod inc_parse {
         let output = LocationParameters::parse(&mut in_str).unwrap();
         assert_eq!("#fizz", in_str);
         assert_eq!(expected, output);
+    }
+    #[test]
+    fn preceded() {
+        let ins = [
+            "dir=foo#fizz",
+            "&dir=foo#fizz",
+            "dir=&dir=foo#fizz",
+            "dir=#fizz",
+        ];
+        for mut instr in ins {
+            assert_eq!(
+                LocationParameters::parse_preceded(&mut format!("?{}", instr).as_str()),
+                LocationParameters::parse(&mut instr)
+            );
+        }
     }
 }

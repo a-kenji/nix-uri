@@ -3,7 +3,7 @@ use std::{fmt::Display, path::Path};
 use serde::{Deserialize, Serialize};
 use winnow::{
     combinator::{alt, fail, opt, peek, preceded, trace},
-    error::ContextError,
+    error::{ContextError, StrContext},
     token::take_till,
     PResult, Parser,
 };
@@ -32,10 +32,12 @@ pub enum FlakeRefType {
 
 impl FlakeRefType {
     pub fn parse_path(input: &mut &str) -> PResult<Self> {
-        let path_map = Self::path_parser.map(|path_str| Self::Path {
+        let path_map = Self::path_verifier.map(|path_str| Self::Path {
             path: path_str.to_string(),
         });
-        preceded(opt(trace("path:[//]", alt(("path://", "path:")))), path_map).parse_next(input)
+        preceded(opt(trace("path:[//]", alt(("path://", "path:")))), path_map)
+            .context(StrContext::Label("PathType"))
+            .parse_next(input)
     }
 
     // TODO: #158
@@ -61,22 +63,24 @@ impl FlakeRefType {
                 path: format!("{}", path.display()),
             }),
         ))
+        .context(StrContext::Label("FileParse"))
         .parse_next(input)
     }
     pub fn parse_naked<'i>(input: &mut &'i str) -> PResult<&'i Path> {
         // Check if input starts with `.` or `/`
         let _ = peek(alt((".", "/"))).parse_next(input)?;
-        let path_str = Self::path_parser(input)?;
+        let path_str = Self::path_verifier(input)?;
         Ok(Path::new(path_str))
     }
-    pub fn path_parser<'i>(input: &mut &'i str) -> PResult<&'i str> {
+    pub fn path_verifier<'i>(input: &mut &'i str) -> PResult<&'i str> {
         take_till(0.., |c| c == '#' || c == '?')
             .verify(|c: &str| Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']'))
+            .context(StrContext::Label("Invalid path"))
             .parse_next(input)
     }
     pub fn parse_explicit_file_scheme<'i>(input: &mut &'i str) -> PResult<&'i Path> {
         let _ = alt(("file://", "file+file://", "file:", "file+file:")).parse_next(input)?;
-        let path_str = Self::path_parser(input)?;
+        let path_str = Self::path_verifier(input)?;
         Ok(Path::new(path_str))
     }
     pub fn parse_http_file_scheme<'i>(input: &mut &'i str) -> PResult<&'i Path> {

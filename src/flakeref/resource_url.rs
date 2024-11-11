@@ -3,6 +3,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 use winnow::{
     combinator::{alt, opt, trace},
+    error::{StrContext, StrContextValue},
     token::take_till,
     PResult, Parser,
 };
@@ -23,7 +24,11 @@ impl ResourceUrl {
         let res_type = ResourceType::parse(input)?;
         let transport_type = opt(TransportLayer::plus_parse).parse_next(input)?;
         let _tag = parse_sep(input)?;
-        let location = take_till(0.., |c| c == '#' || c == '?').parse_next(input)?;
+        let location = take_till(0.., |c| c == '#' || c == '?')
+            .context(StrContext::Expected(StrContextValue::StringLiteral(
+                "Expected location",
+            )))
+            .parse_next(input)?;
 
         Ok(Self {
             res_type,
@@ -48,6 +53,9 @@ impl ResourceType {
             trace("tag: file", "file".value(Self::File)),
             trace("tag: tarball", "tarball".value(Self::Tarball)),
         ))
+        .context(StrContext::Expected(StrContextValue::StringLiteral(
+            "git|hg|file|tarball",
+        )))
         .parse_next(input)
     }
 }

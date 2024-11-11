@@ -2,7 +2,8 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 use winnow::{
-    combinator::{alt, opt, trace},
+    combinator::{alt, cut_err, opt, terminated, trace},
+    error::{StrContext, StrContextValue},
     token::take_till,
     PResult, Parser,
 };
@@ -28,15 +29,34 @@ impl GitForgePlatform {
         let res = alt((
             trace("gitforge: github", "github".value(Self::GitHub)),
             trace("gitforge: gitlab", "gitlab".value(Self::GitLab)),
-            trace("gitforge: sorcehut", "sourcehut".value(Self::SourceHut)),
+            trace("gitforge: sourcehut", "sourcehut".value(Self::SourceHut)),
         ))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "gitforge|github|gitlab",
+        )))
         .parse_next(input)?;
-        let _ = ":".parse_next(input)?;
         Ok(res)
+    }
+    pub fn parse_terminated(input: &mut &str) -> PResult<Self> {
+        terminated(Self::parse, ":")
+            .context(StrContext::Expected(StrContextValue::CharLiteral(':')))
+            .parse_next(input)
     }
 }
 
 impl GitForge {
+    pub(crate) fn parse_owner_repo<'i>(input: &mut &'i str) -> PResult<(&'i str, &'i str)> {
+        let owner = trace("til '/' for owner", take_till(1.., |c| c == '/')).parse_next(input)?;
+        let _ = "/".parse_next(input)?;
+        // get the rest, halting at the optional `/`
+        let repo = trace(
+            "till '/#?' for repo",
+            take_till(1.., |c| c == '/' || c == '#' || c == '?'),
+        )
+        .parse_next(input)?;
+        let _ = opt("/").parse_next(input)?;
+        Ok((owner, repo))
+    }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     // TODO: #158
     // TODO: #163
@@ -45,36 +65,22 @@ impl GitForge {
         input: &mut &'i str,
     ) -> PResult<(&'i str, &'i str, Option<&'i str>)> {
         // pull out the owner
-        let owner = trace("til '/'", take_till(1.., |c| c == '/')).parse_next(input)?;
-        // ...and discard the `/` separator
-        let _ = "/".parse_next(input)?;
-        // get the rest, halting at the optional `/`
-        let repo = trace(
-            "till '/#?'",
-            take_till(1.., |c| c == '/' || c == '#' || c == '?'),
-        )
-        .parse_next(input)?;
+        let (owner, repo) = Self::parse_owner_repo
+            .context(StrContext::Label("owner/repo"))
+            .parse_next(input)?;
+
         // drop the `/` if it exists
-        let slashed = opt("/").parse_next(input)?;
-        let maybe_refrev = if slashed.is_some() {
-            let rr_str =
-                trace("till '#?'", take_till(0.., |c| c == '#' || c == '?')).parse_next(input)?;
-            // if the remaining is empty, that's the ref/rev
-            if rr_str.is_empty() {
-                None
-            } else {
-                Some(rr_str)
-            }
-        } else {
-            None
-        };
+        let maybe_refrev =
+            trace("till '#?'", opt(take_till(1.., |c| c == '#' || c == '?'))).parse_next(input)?;
+        // if the remaining is empty, that's the ref/rev
 
         Ok((owner, repo, maybe_refrev))
     }
 
     pub fn parse(input: &mut &str) -> PResult<Self> {
-        let platform = GitForgePlatform::parse(input)?;
-        let forge_path = Self::parse_owner_repo_ref(input)?;
+        let platform = GitForgePlatform::parse_terminated(input)?;
+        // If we parsed the platform, but fail on owner/repo, don't try a backtrack
+        let forge_path = cut_err(Self::parse_owner_repo_ref).parse_next(input)?;
         let res = Self {
             platform,
             owner: forge_path.0.to_string(),
@@ -109,19 +115,19 @@ mod inc_parse_platform {
 
         let mut uri = "github:nixos/nixpkgs";
 
-        let platform = GitForgePlatform::parse(&mut uri).unwrap();
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
         assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::GitHub);
 
         let mut uri = "gitlab:nixos/nixpkgs";
 
-        let platform = GitForgePlatform::parse(&mut uri).unwrap();
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
         assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::GitLab);
 
         let mut uri = "sourcehut:nixos/nixpkgs";
 
-        let platform = GitForgePlatform::parse(&mut uri).unwrap();
+        let platform = GitForgePlatform::parse_terminated(&mut uri).unwrap();
         assert_eq!(uri, stripped);
         assert_eq!(platform, GitForgePlatform::SourceHut);
         // TODO?: fuzz test where `:` is preceded by bad string
