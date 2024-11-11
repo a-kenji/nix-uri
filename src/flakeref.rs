@@ -3,7 +3,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 use winnow::{
     combinator::{opt, trace},
-    error::StrContext,
+    error::{StrContext, StrContextValue},
     PResult, Parser,
 };
 
@@ -57,7 +57,7 @@ impl FlakeRef {
     }
     pub fn parse(input: &mut &str) -> PResult<Self> {
         let r#type = trace("getting type", FlakeRefType::parse)
-            .context(StrContext::Label("FlakeRefType"))
+            .context(StrContext::Label("FlakeRef"))
             .parse_next(input)?;
         let params = opt(trace(
             "getting params",
@@ -985,9 +985,9 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let mut uri = "git+(:z";
-        // let expected = NixUriError::CtxError(winnow::error::ErrMode::Backtrack(winnow::error::ContextError { context: vec![winnow::error::StrContext::Label("Unknown Type")], cause: None }));
+        let expected = "ctx error: Parsing Error: ContextError { context: [Label(\"FlakeRefType\")], cause: None }";
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_eq!("ctx error: Parsing Error: ContextError { context: [Label(\"FlakeRefType\")], cause: None }", parsed.unwrap_err().to_string());
+        assert_eq!(expected, parsed.unwrap_err().to_string());
         let _e = FlakeRef::parse(&mut uri).unwrap_err();
         // todo: map to good error
         // assert_eq!(expected, e);

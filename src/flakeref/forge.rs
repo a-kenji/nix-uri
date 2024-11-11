@@ -46,13 +46,24 @@ impl GitForgePlatform {
 
 impl GitForge {
     pub(crate) fn parse_owner_repo<'i>(input: &mut &'i str) -> PResult<(&'i str, &'i str)> {
-        let owner = trace("til '/' for owner", take_till(1.., |c| c == '/')).parse_next(input)?;
-        let _ = "/".parse_next(input)?;
+        let owner = trace(
+            "til '/' for owner",
+            cut_err(take_till(1.., |c| c == '/').context(StrContext::Expected(
+                StrContextValue::StringLiteral("<owner>"),
+            ))),
+        )
+        .parse_next(input)?;
+        let _ = cut_err("/")
+            .context(StrContext::Expected(StrContextValue::CharLiteral('/')))
+            .parse_next(input)?;
         // get the rest, halting at the optional `/`
         let repo = trace(
             "till '/#?' for repo",
-            take_till(1.., |c| c == '/' || c == '#' || c == '?'),
+            cut_err(take_till(1.., |c| c == '/' || c == '#' || c == '?')),
         )
+        .context(StrContext::Expected(StrContextValue::StringLiteral(
+            "<repo>",
+        )))
         .parse_next(input)?;
         let _ = opt("/").parse_next(input)?;
         Ok((owner, repo))
