@@ -3,7 +3,7 @@ use std::fmt::Display;
 use nom::{
     bytes::complete::{take_till, take_until},
     character::complete::char,
-    error::VerboseError,
+    error::{context, VerboseError},
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
@@ -87,13 +87,16 @@ impl Display for LocationParameters {
 
 impl LocationParameters {
     pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        let (rest, param_values) = many_m_n(
-            0,
-            11,
-            separated_pair(
-                take_until("="),
-                char('='),
-                take_till(|c| c == '&' || c == '#'),
+        let (rest, param_values) = context(
+            "location parameters",
+            many_m_n(
+                0,
+                11,
+                separated_pair(
+                    take_until("="),
+                    char('='),
+                    take_till(|c| c == '&' || c == '#'),
+                ),
             ),
         )(input)?;
 

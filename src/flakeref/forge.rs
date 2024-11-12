@@ -5,7 +5,7 @@ use nom::{
     bytes::complete::{tag, take_till1},
     character::complete::char,
     combinator::{opt, value},
-    error::VerboseError,
+    error::{context, VerboseError},
     sequence::{preceded, separated_pair},
     IResult,
 };
@@ -42,10 +42,13 @@ impl GitForgePlatform {
 impl GitForge {
     /// <owner>/<repo>[/?#]
     fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), VerboseError<&str>> {
-        separated_pair(
-            take_till1(|c| c == '/'),
-            char('/'),
-            take_till1(|c| c == '/' || c == '?' || c == '#'),
+        context(
+            "owner and repo",
+            separated_pair(
+                take_till1(|c| c == '/'),
+                char('/'),
+                take_till1(|c| c == '/' || c == '?' || c == '#'),
+            ),
         )(input)
     }
 

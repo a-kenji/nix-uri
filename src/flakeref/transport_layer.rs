@@ -1,8 +1,13 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::tag, character::complete::char, combinator::value,
-    error::VerboseError, sequence::preceded, IResult,
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::char,
+    combinator::value,
+    error::{context, VerboseError},
+    sequence::preceded,
+    IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,15 +27,18 @@ pub enum TransportLayer {
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
     pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        alt((
-            value(Self::Https, tag("https")),
-            value(Self::Http, tag("http")),
-            value(Self::Ssh, tag("ssh")),
-            value(Self::File, tag("file")),
-        ))(input)
+        context(
+            "transport type",
+            alt((
+                value(Self::Https, tag("https")),
+                value(Self::Http, tag("http")),
+                value(Self::Ssh, tag("ssh")),
+                value(Self::File, tag("file")),
+            )),
+        )(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        preceded(char('+'), Self::parse)(input)
+        context("transport type separator", preceded(char('+'), Self::parse))(input)
     }
 }
 

@@ -27,10 +27,13 @@ pub(crate) fn parse_params(
         // discard leading "?"
         let (input, _) = anychar(input)?;
         // TODO: is this input really not needed?
-        let (_input, param_values) = many_m_n(
-            0,
-            11,
-            separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
+        let (_input, param_values) = context(
+            "param_fetch",
+            many_m_n(
+                0,
+                11,
+                separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
+            ),
         )(input)?;
 
         let mut params = LocationParameters::default();

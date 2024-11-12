@@ -5,7 +5,7 @@ use nom::{
     bytes::complete::{tag, take_till, take_until},
     character::complete::char,
     combinator::{map, opt, peek, rest, verify},
-    error::{VerboseError, VerboseErrorKind},
+    error::{context, VerboseError, VerboseErrorKind},
     sequence::{preceded, separated_pair},
     Finish, IResult,
 };
@@ -50,51 +50,63 @@ impl FlakeRefType {
 
     // TODO: #158
     pub fn parse_file(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
-        alt((
-            map(
-                alt((
-                    // file+file
-                    Self::parse_explicit_file_scheme,
-                    // file+http(s)
-                    Self::parse_http_file_scheme,
-                )),
-                // file
-                |path| {
-                    Self::Resource(ResourceUrl {
-                        res_type: ResourceType::File,
-                        location: path.display().to_string(),
-                        transport_type: None,
-                    })
-                },
-            ),
-            map(Self::parse_naked, |path| Self::Path {
-                path: format!("{}", path.display()),
-            }),
-        ))(input)
+        context(
+            "path resource",
+            alt((
+                map(
+                    alt((
+                        // file+file
+                        Self::parse_explicit_file_scheme,
+                        // file+http(s)
+                        Self::parse_http_file_scheme,
+                    )),
+                    // file
+                    |path| {
+                        Self::Resource(ResourceUrl {
+                            res_type: ResourceType::File,
+                            location: path.display().to_string(),
+                            transport_type: None,
+                        })
+                    },
+                ),
+                map(Self::parse_naked, |path| Self::Path {
+                    path: format!("{}", path.display()),
+                }),
+            )),
+        )(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((char('.'), char('/'))))(input)?;
+        let (is_path, _) = peek(context("path location", alt((char('.'), char('/')))))(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
-        verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
-            Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
-        })(input)
+        context(
+            "path validation",
+            verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
+                Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
+            }),
+        )(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
-        let (rest, _) = alt((
-            tag("file://"),
-            tag("file+file://"),
-            tag("file:"),
-            tag("file+file:"),
-        ))(input)?;
+        let (rest, _) = context(
+            "file resource",
+            alt((
+                tag("file://"),
+                tag("file+file://"),
+                tag("file:"),
+                tag("file+file:"),
+            )),
+        )(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
-        let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
+        let (_rest, _) = context(
+            "networked file",
+            alt((tag("file+http://"), tag("file+https://"))),
+        )(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
         Err(nom::Err::Failure(VerboseError {
             errors: vec![(input, VerboseErrorKind::Context("http[s] not implemented"))],
