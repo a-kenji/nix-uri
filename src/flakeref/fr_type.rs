@@ -5,13 +5,14 @@ use nom::{
     bytes::complete::{tag, take_till, take_until},
     character::complete::char,
     combinator::{map, opt, peek, rest, verify},
+    error::{VerboseError, VerboseErrorKind},
     sequence::{preceded, separated_pair},
     Finish, IResult,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::{NixUriError, NixUriResult, NomError, NomErrorKind},
+    error::{NixUriError, NixUriResult},
     flakeref::forge::GitForge,
     parser::parse_transport_type,
 };
@@ -40,7 +41,7 @@ pub enum FlakeRefType {
 }
 
 impl FlakeRefType {
-    pub fn parse_path(input: &str) -> IResult<&str, Self> {
+    pub fn parse_path(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         let path_map = map(Self::path_parser, |path_str| Self::Path {
             path: path_str.to_string(),
         });
@@ -48,7 +49,7 @@ impl FlakeRefType {
     }
 
     // TODO: #158
-    pub fn parse_file(input: &str) -> IResult<&str, Self> {
+    pub fn parse_file(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             map(
                 alt((
@@ -71,18 +72,18 @@ impl FlakeRefType {
             }),
         ))(input)
     }
-    pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_naked(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         // Check if input starts with `.` or `/`
         let (is_path, _) = peek(alt((char('.'), char('/'))))(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
-    pub fn path_parser(input: &str) -> IResult<&str, &str> {
+    pub fn path_parser(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
         verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
             Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
         })(input)
     }
-    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         let (rest, _) = alt((
             tag("file://"),
             tag("file+file://"),
@@ -92,25 +93,24 @@ impl FlakeRefType {
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
-    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
+    pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path, VerboseError<&str>> {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
-        Err(nom::Err::Failure(NomError {
-            input,
-            code: NomErrorKind::Fail,
+        Err(nom::Err::Failure(VerboseError {
+            errors: vec![(input, VerboseErrorKind::Context("http[s] not implemented"))],
         }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
-    pub fn parse_git_forge(input: &str) -> IResult<&str, Self> {
+    pub fn parse_git_forge(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(GitForge::parse, Self::GitForge)(input)
     }
     /// <git | hg>[+<transport-type]://
-    pub fn parse_resource(input: &str) -> IResult<&str, Self> {
+    pub fn parse_resource(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         map(ResourceUrl::parse, Self::Resource)(input)
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             Self::parse_path,
             Self::parse_git_forge,
@@ -122,7 +122,7 @@ impl FlakeRefType {
     /// and the unparsed input
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
         let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, (&str, NomErrorKind)>(":"),
+            take_until::<&str, &str, VerboseError<&str>>(":"),
             char(':'),
             rest,
         ))(input)
@@ -171,7 +171,7 @@ impl FlakeRefType {
                     if flake_ref_type_str.starts_with("git+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            opt(tag::<&str, &str, (&str, NomErrorKind)>("//"))(input).finish()?;
+                            opt(tag::<&str, &str, VerboseError<&str>>("//"))(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
@@ -181,7 +181,7 @@ impl FlakeRefType {
                     } else if flake_ref_type_str.starts_with("hg+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            tag::<&str, &str, (&str, NomErrorKind)>("//")(input).finish()?;
+                            tag::<&str, &str, VerboseError<&str>>("//")(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),

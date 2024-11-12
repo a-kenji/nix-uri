@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use nom::{
     branch::alt, bytes::complete::tag, character::complete::char, combinator::value,
-    sequence::preceded, IResult,
+    error::VerboseError, sequence::preceded, IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         alt((
             value(Self::Https, tag("https")),
             value(Self::Http, tag("http")),
@@ -29,7 +29,7 @@ impl TransportLayer {
             value(Self::File, tag("file")),
         ))(input)
     }
-    pub fn plus_parse(input: &str) -> IResult<&str, Self> {
+    pub fn plus_parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
         preceded(char('+'), Self::parse)(input)
     }
 }
@@ -91,7 +91,7 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
             panic!();
         };
-        assert_eq!(e.input, "://");
+        assert_eq!(e.errors.first().unwrap().0, "://");
     }
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It
