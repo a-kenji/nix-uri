@@ -6,7 +6,7 @@ use nom::{
     character::complete::char,
     combinator::{opt, value},
     error::context,
-    sequence::{preceded, separated_pair},
+    sequence::{preceded, separated_pair, terminated},
     IResult,
 };
 use nom_supreme::{error::ErrorTree, tag::complete::tag};
@@ -30,13 +30,14 @@ impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
     pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
-        let (rest, res) = alt((
+        alt((
             value(Self::GitHub, tag("github")),
             value(Self::GitLab, tag("gitlab")),
             value(Self::SourceHut, tag("sourcehut")),
-        ))(input)?;
-        let (rest, _) = char(':')(rest)?;
-        Ok((rest, res))
+        ))(input)
+    }
+    pub fn parse_terminated(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+        terminated(Self::parse, char(':'))(input)
     }
 }
 
@@ -72,7 +73,7 @@ impl GitForge {
         Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
     pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
-        let (rest, platform) = GitForgePlatform::parse(input)?;
+        let (rest, platform) = terminated(GitForgePlatform::parse, char(':'))(input)?;
         let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
         let res = Self {
             platform,
@@ -104,24 +105,28 @@ mod inc_parse_platform {
 
     #[test]
     fn platform() {
-        let stripped = "nixos/nixpkgs";
+        let remain = ":nixos/nixpkgs";
 
         let uri = "github:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
+        assert_eq!(platform, GitForgePlatform::GitHub);
+
+        let (rest, platform) = GitForgePlatform::parse_terminated(uri).unwrap();
+        assert_eq!(rest, &remain[1..]);
         assert_eq!(platform, GitForgePlatform::GitHub);
 
         let uri = "gitlab:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
         assert_eq!(platform, GitForgePlatform::GitLab);
 
         let uri = "sourcehut:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
         assert_eq!(platform, GitForgePlatform::SourceHut);
         // TODO?: fuzz test where `:` is preceded by bad string
     }

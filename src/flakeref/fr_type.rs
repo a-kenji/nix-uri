@@ -6,7 +6,7 @@ use nom::{
     character::complete::char,
     combinator::{map, opt, peek, rest, verify},
     error::context,
-    sequence::{preceded, separated_pair},
+    sequence::{preceded, separated_pair, terminated},
     Finish, IResult,
 };
 use nom_supreme::{error::ErrorTree, tag::complete::tag};
@@ -83,22 +83,23 @@ impl FlakeRefType {
         Ok((rest, Path::new(path_str)))
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str, ErrorTree<&str>> {
+        preceded(peek(alt((char('.'), char('/')))), Self::path_verifier)(input)
+    }
+    pub fn path_verifier(input: &str) -> IResult<&str, &str, ErrorTree<&str>> {
         context(
             "path validation",
             verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
-                Path::new(c).is_absolute() && !c.contains('[') && !c.contains(']')
+                !c.contains('[') && !c.contains(']')
             }),
         )(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path, ErrorTree<&str>> {
         let (rest, _) = context(
             "file resource",
-            alt((
-                tag("file://"),
-                tag("file+file://"),
-                tag("file:"),
-                tag("file+file:"),
-            )),
+            preceded(
+                tag("file"),
+                preceded(opt(tag("+file")), terminated(char(':'), opt(tag("//")))),
+            ),
         )(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
@@ -106,7 +107,7 @@ impl FlakeRefType {
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path, ErrorTree<&str>> {
         let (_rest, _) = context(
             "networked file",
-            alt((tag("file+http://"), tag("file+https://"))),
+            preceded(tag("file+http"), alt((tag("://"), tag("s://")))),
         )(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
         Err(nom::Err::Failure(ErrorTree::Base {

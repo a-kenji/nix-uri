@@ -1,5 +1,5 @@
-use nix_uri::{FlakeRef, NixUriError};
-use nom::{error::convert_error, Finish};
+use nix_uri::FlakeRef;
+use nom::Finish;
 
 fn main() {
     let maybe_input = std::env::args().nth(1);

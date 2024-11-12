@@ -1044,7 +1044,6 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
-        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         let parsed = parsed.unwrap_err();
         assert_matches!(parsed, NixUriError::UnknownTransportLayer(x) => assert_eq!("(", x));
@@ -1057,26 +1056,25 @@ mod tests {
     #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
-        let expected = NixUriError::MissingTypeParameter("github".into(), "owner".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_matches!(parsed, Err(NixUriError::MissingTypeParameter(gh,owner)) => {assert_eq!((gh, owner),("github".to_string(), "owner".to_string()) );});
         let _e = FlakeRef::parse(uri).unwrap_err();
         // assert_eq!(expected, e);
     }
 
-    // #[test]
+    #[test]
     // #[ignore = "the nom-parser needs to implement the error now"]
-    // fn parse_github_missing_parameter_repo() {
-    //     let uri = "github:nixos/";
-    //     let expected = Err(NixUriError::MissingTypeParameter(
-    //         "github".into(),
-    //         "repo".into(),
-    //     ));
-    //     assert_eq!(uri.parse::<FlakeRef>(), expected);
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
-    // }
-    //
+    fn parse_github_missing_parameter_repo() {
+        let uri = "github:nixos/";
+        // let expected = Err(NixUriError::MissingTypeParameter(
+        //     "github".into(),
+        //     "repo".into(),
+        // ));
+        let e = FlakeRef::parse(uri).unwrap_err();
+        panic!("{:#?}", e);
+        // assert_eq!(expected, e);
+    }
+
     // #[test]
     // fn parse_github_starts_with_whitespace() {
     //     let uri = " github:nixos/nixpkgs";

@@ -95,7 +95,7 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
             panic!();
         };
-        // assert_eq!(e.errors.first().unwrap().0, "://");
+        //todo: verify the error structure
     }
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It

@@ -6,7 +6,7 @@ use nom::{
     error::context,
     multi::many_m_n,
     sequence::{preceded, separated_pair},
-    Finish, IResult,
+    Finish, IResult, Parser,
 };
 use nom_supreme::error::ErrorTree;
 
@@ -116,10 +116,10 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, char, ErrorTree<&str>> {
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, (char, (char, char)), ErrorTree<&str>> {
     context(
         "location separator",
-        preceded(n_char(':'), preceded(n_char('/'), n_char('/'))),
+        n_char(':').and(n_char('/').and(n_char('/'))),
     )(input)
 }
 
