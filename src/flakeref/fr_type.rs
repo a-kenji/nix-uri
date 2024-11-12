@@ -2,6 +2,7 @@ use std::{fmt::Display, path::Path};
 
 use nom::{
     branch::alt,
+    character::complete::char,
     bytes::complete::{tag, take_till, take_until},
     combinator::{map, opt, peek, rest, verify},
     sequence::preceded,
@@ -72,7 +73,7 @@ impl FlakeRefType {
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((tag("."), tag("/"))))(input)?;
+        let (is_path, _) = peek(alt((char('.'), char('/'))))(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
@@ -123,7 +124,7 @@ impl FlakeRefType {
         use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
             take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
-            tag(":"),
+            char(':'),
             rest,
         ))(input)?;
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {

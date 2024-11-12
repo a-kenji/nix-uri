@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{branch::alt, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
+use nom::{branch::alt, character::complete::char, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -27,7 +27,7 @@ impl TransportLayer {
         ))(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self> {
-        preceded(tag("+"), Self::parse)(input)
+        preceded(char('+'), Self::parse)(input)
     }
 }
 

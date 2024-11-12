@@ -1,7 +1,8 @@
 use std::fmt::Display;
 
 use nom::{
-    bytes::complete::{tag, take_till, take_until},
+    bytes::complete::{take_till, take_until},
+    character::complete::char,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
@@ -90,7 +91,7 @@ impl LocationParameters {
             11,
             separated_pair(
                 take_until("="),
-                tag("="),
+                char('='),
                 take_till(|c| c == '&' || c == '#'),
             ),
         )(input)?;

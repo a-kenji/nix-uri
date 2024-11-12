@@ -1,9 +1,12 @@
 use nom::{
+    character::complete::char as n_char,
     branch::alt,
-    bytes::complete::{tag, take_until},
+    bytes::complete::take_until,
     character::complete::anychar,
     combinator::{opt, rest},
+    error::context,
     multi::many_m_n,
+    sequence::preceded,
     IResult,
 };
 
@@ -28,7 +31,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         let (_input, param_values) = many_m_n(
             0,
             11,
-            separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
+            separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
         )(input)?;
 
         let mut params = LocationParameters::default();
@@ -110,8 +113,11 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
-    tag("://")(input)
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, char> {
+    context(
+        "location separator",
+        preceded(n_char(':'), preceded(n_char('/'), n_char('/'))),
+    )(input)
 }
 
 #[cfg(test)]
