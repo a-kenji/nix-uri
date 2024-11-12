@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use nom::{branch::alt, character::complete::char, bytes::complete::tag, combinator::value, sequence::preceded, IResult};
+use nom::{
+    branch::alt, bytes::complete::tag, character::complete::char, combinator::value,
+    sequence::preceded, IResult,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;

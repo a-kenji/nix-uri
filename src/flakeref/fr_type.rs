@@ -2,11 +2,11 @@ use std::{fmt::Display, path::Path};
 
 use nom::{
     branch::alt,
-    character::complete::char,
     bytes::complete::{tag, take_till, take_until},
+    character::complete::char,
     combinator::{map, opt, peek, rest, verify},
     sequence::preceded,
-    IResult,
+    Finish, IResult,
 };
 use serde::{Deserialize, Serialize};
 
@@ -126,11 +126,13 @@ impl FlakeRefType {
             take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
             char(':'),
             rest,
-        ))(input)?;
+        ))(input)
+        .finish()?;
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-                    let (_input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+                    let (_input, owner_and_repo_or_ref) =
+                        GitForge::parse_owner_repo_ref(input).finish()?;
                     // TODO: #158
                     let _er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
@@ -170,7 +172,8 @@ impl FlakeRefType {
                     if flake_ref_type_str.starts_with("git+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
+                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)
+                                .finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
@@ -180,7 +183,8 @@ impl FlakeRefType {
                     } else if flake_ref_type_str.starts_with("hg+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
+                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)
+                                .finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),
@@ -211,7 +215,7 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
 
-            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input).finish()?;
             // Comments left in for reference. We are in the process of moving error context
             // generation into the parser itself, as opposed to up here. The GitForge parser used
             // here will have to take on responsibility of contextualising failures;

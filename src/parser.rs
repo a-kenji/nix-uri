@@ -1,13 +1,12 @@
 use nom::{
-    character::complete::char as n_char,
     branch::alt,
     bytes::complete::take_until,
-    character::complete::anychar,
+    character::complete::{anychar, char as n_char},
     combinator::{opt, rest},
     error::context,
     multi::many_m_n,
     sequence::preceded,
-    IResult,
+    Finish, IResult,
 };
 
 use crate::{
@@ -77,7 +76,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         return Err(NixUriError::InvalidUrl(input.into()));
     }
 
-    let (input, params) = parse_params(input)?;
+    let (input, params) = parse_params(input).finish()?;
     let mut flake_ref = FlakeRef::default();
     let flake_ref_type = FlakeRefType::parse_type(input)?;
     flake_ref.r#type(flake_ref_type);
@@ -109,7 +108,7 @@ pub(crate) fn is_file(input: &str) -> bool {
 
 // Parse the transport type itself
 pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
-    let (_, input) = parse_from_transport_type(input)?;
+    let (_, input) = parse_from_transport_type(input).finish()?;
     TryInto::<TransportLayer>::try_into(input)
 }
 
