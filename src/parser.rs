@@ -5,7 +5,7 @@ use nom::{
     combinator::{opt, rest},
     error::context,
     multi::many_m_n,
-    sequence::preceded,
+    sequence::{preceded, separated_pair},
     Finish, IResult,
 };
 
@@ -18,8 +18,6 @@ use crate::{
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
-    use nom::sequence::separated_pair;
-
     // This is the inverse of the general control flow
     let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
 

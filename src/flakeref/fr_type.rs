@@ -5,13 +5,13 @@ use nom::{
     bytes::complete::{tag, take_till, take_until},
     character::complete::char,
     combinator::{map, opt, peek, rest, verify},
-    sequence::preceded,
+    sequence::{preceded, separated_pair},
     Finish, IResult,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::{NixUriError, NixUriResult},
+    error::{NixUriError, NixUriResult, NomError, NomErrorKind},
     flakeref::forge::GitForge,
     parser::parse_transport_type,
 };
@@ -95,9 +95,9 @@ impl FlakeRefType {
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
-        Err(nom::Err::Failure(nom::error::Error {
+        Err(nom::Err::Failure(NomError {
             input,
-            code: nom::error::ErrorKind::Fail,
+            code: NomErrorKind::Fail,
         }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
@@ -121,9 +121,8 @@ impl FlakeRefType {
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
-        use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
+            take_until::<&str, &str, (&str, NomErrorKind)>(":"),
             char(':'),
             rest,
         ))(input)
@@ -172,8 +171,7 @@ impl FlakeRefType {
                     if flake_ref_type_str.starts_with("git+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)
-                                .finish()?;
+                            opt(tag::<&str, &str, (&str, NomErrorKind)>("//"))(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
@@ -183,8 +181,7 @@ impl FlakeRefType {
                     } else if flake_ref_type_str.starts_with("hg+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)
-                                .finish()?;
+                            tag::<&str, &str, (&str, NomErrorKind)>("//")(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),
