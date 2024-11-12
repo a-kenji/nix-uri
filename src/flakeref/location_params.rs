@@ -3,11 +3,12 @@ use std::fmt::Display;
 use nom::{
     bytes::complete::{take_till, take_until},
     character::complete::char,
-    error::{context, VerboseError},
+    error::context,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
 };
+use nom_supreme::error::ErrorTree;
 use serde::{Deserialize, Serialize};
 
 use crate::error::NixUriError;
@@ -86,7 +87,7 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
         let (rest, param_values) = context(
             "location parameters",
             many_m_n(

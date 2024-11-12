@@ -2,13 +2,14 @@ use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till1},
+    bytes::complete::take_till1,
     character::complete::char,
     combinator::{opt, value},
-    error::{context, VerboseError},
+    error::context,
     sequence::{preceded, separated_pair},
     IResult,
 };
+use nom_supreme::{error::ErrorTree, tag::complete::tag};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,7 +29,7 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
         let (rest, res) = alt((
             value(Self::GitHub, tag("github")),
             value(Self::GitLab, tag("gitlab")),
@@ -41,7 +42,7 @@ impl GitForgePlatform {
 
 impl GitForge {
     /// <owner>/<repo>[/?#]
-    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), VerboseError<&str>> {
+    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), ErrorTree<&str>> {
         context(
             "owner and repo",
             separated_pair(
@@ -53,7 +54,7 @@ impl GitForge {
     }
 
     /// `/[foobar]<?#>...` -> `(<?#>...), Option<foobar>)`
-    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, VerboseError<&str>> {
+    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, ErrorTree<&str>> {
         preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#')))(input)
     }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
@@ -62,7 +63,7 @@ impl GitForge {
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
     pub(crate) fn parse_owner_repo_ref(
         input: &str,
-    ) -> IResult<&str, (&str, &str, Option<&str>), VerboseError<&str>> {
+    ) -> IResult<&str, (&str, &str, Option<&str>), ErrorTree<&str>> {
         let (input, (owner, repo)) = Self::parse_owner_repo(input)?;
         // drop the `/` if it exists
         let (input, maybe_refrev) = opt(Self::parse_rev_ref)(input)?;
@@ -70,7 +71,7 @@ impl GitForge {
 
         Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
         let (rest, platform) = GitForgePlatform::parse(input)?;
         let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
         let res = Self {

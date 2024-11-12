@@ -2,11 +2,12 @@ use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till},
+    bytes::complete::take_till,
     combinator::{opt, value},
     error::{context, VerboseError},
     IResult,
 };
+use nom_supreme::{error::ErrorTree, tag::complete::tag};
 use serde::{Deserialize, Serialize};
 
 use crate::parser::parse_sep;
@@ -21,7 +22,7 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
         let (rest, res_type) = ResourceType::parse(input)?;
         let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
@@ -46,7 +47,7 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse(input: &str) -> IResult<&str, Self, VerboseError<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
         context(
             "resource selection",
             alt((

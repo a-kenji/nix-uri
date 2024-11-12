@@ -1,9 +1,9 @@
-use nom::error::{VerboseError, VerboseErrorKind};
+use nom_supreme::error::ErrorTree;
 use thiserror::Error;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
 
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NixUriError {
     /// Generic nix uri error
@@ -47,27 +47,22 @@ pub enum NixUriError {
     #[error("Nom Error: {0}")]
     Nom(String),
     #[error(transparent)]
-    NomParseError(#[from] VerboseError<String>),
-    #[error("{} {}", 0.0, 0.1)]
-    Parser((String, VerboseErrorKind)),
+    NomParseError(#[from] ErrorTree<String>),
+    // #[error("{} {}", 0.0, 0.1)]
+    // Parser((String, VerboseErrorKind)),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<VerboseError<&str>> for NixUriError {
-    fn from(value: VerboseError<&str>) -> Self {
-        let new_errs = value
-            .errors
-            .into_iter()
-            .map(|(st, ek)| (st.to_string(), ek))
-            .collect();
-        let new_err = VerboseError { errors: new_errs };
-        Self::NomParseError(new_err)
+impl From<ErrorTree<&str>> for NixUriError {
+    fn from(value: ErrorTree<&str>) -> Self {
+        let new_errs = value.map_locations(|i| i.to_string());
+        Self::NomParseError(new_errs)
     }
 }
 
-impl From<(&str, VerboseErrorKind)> for NixUriError {
-    fn from(value: (&str, VerboseErrorKind)) -> Self {
-        Self::Parser((value.0.to_string(), value.1))
-    }
-}
+// impl From<(&str, VerboseErrorKind)> for NixUriError {
+//     fn from(value: (&str, VerboseErrorKind)) -> Self {
+//         Self::Parser((value.0.to_string(), value.1))
+//     }
+// }
