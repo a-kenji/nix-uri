@@ -4,13 +4,15 @@ use nom::{
     branch::alt,
     bytes::complete::take_till1,
     character::complete::char,
-    combinator::{opt, value},
+    combinator::{cut, opt, value},
     error::context,
     sequence::{preceded, separated_pair, terminated},
     IResult,
 };
-use nom_supreme::{error::ErrorTree, tag::complete::tag};
+use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
+
+use crate::IErr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -29,33 +31,33 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         alt((
             value(Self::GitHub, tag("github")),
             value(Self::GitLab, tag("gitlab")),
             value(Self::SourceHut, tag("sourcehut")),
         ))(input)
     }
-    pub fn parse_terminated(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse_terminated(input: &str) -> IResult<&str, Self, IErr<&str>> {
         terminated(Self::parse, char(':'))(input)
     }
 }
 
 impl GitForge {
     /// <owner>/<repo>[/?#]
-    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), ErrorTree<&str>> {
+    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), IErr<&str>> {
         context(
             "owner and repo",
-            separated_pair(
-                take_till1(|c| c == '/'),
+            cut(separated_pair(
+                context("owner", take_till1(|c| c == '/')),
                 char('/'),
-                take_till1(|c| c == '/' || c == '?' || c == '#'),
-            ),
+                context("repo", take_till1(|c| c == '/' || c == '?' || c == '#')),
+            )),
         )(input)
     }
 
     /// `/[foobar]<?#>...` -> `(<?#>...), Option<foobar>)`
-    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, ErrorTree<&str>> {
+    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, IErr<&str>> {
         preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#')))(input)
     }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
@@ -64,7 +66,7 @@ impl GitForge {
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
     pub(crate) fn parse_owner_repo_ref(
         input: &str,
-    ) -> IResult<&str, (&str, &str, Option<&str>), ErrorTree<&str>> {
+    ) -> IResult<&str, (&str, &str, Option<&str>), IErr<&str>> {
         let (input, (owner, repo)) = Self::parse_owner_repo(input)?;
         // drop the `/` if it exists
         let (input, maybe_refrev) = opt(Self::parse_rev_ref)(input)?;
@@ -72,7 +74,7 @@ impl GitForge {
 
         Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, platform) = terminated(GitForgePlatform::parse, char(':'))(input)?;
         let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
         let res = Self {

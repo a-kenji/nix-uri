@@ -8,10 +8,9 @@ use nom::{
     sequence::separated_pair,
     IResult,
 };
-use nom_supreme::error::ErrorTree;
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::{error::NixUriError, IErr};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
@@ -87,7 +86,7 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, param_values) = context(
             "location parameters",
             many_m_n(

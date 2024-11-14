@@ -1,13 +1,17 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, character::complete::char, combinator::value, error::context, sequence::preceded,
+    branch::alt,
+    character::complete::char,
+    combinator::{cut, value},
+    error::context,
+    sequence::preceded,
     IResult,
 };
-use nom_supreme::{error::ErrorTree, tag::complete::tag};
+use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::{error::NixUriError, IErr};
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,7 +26,7 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         context(
             "transport type",
             alt((
@@ -33,8 +37,11 @@ impl TransportLayer {
             )),
         )(input)
     }
-    pub fn plus_parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
-        context("transport type separator", preceded(char('+'), Self::parse))(input)
+    pub fn plus_parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        context(
+            "transport type separator",
+            preceded(char('+'), cut(Self::parse)),
+        )(input)
     }
 }
 

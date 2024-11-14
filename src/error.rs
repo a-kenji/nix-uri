@@ -3,6 +3,8 @@ use thiserror::Error;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
 
+pub type IErr<E> = ErrorTree<E>;
+
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NixUriError {
@@ -47,15 +49,15 @@ pub enum NixUriError {
     #[error("Nom Error: {0}")]
     Nom(String),
     #[error(transparent)]
-    NomParseError(#[from] ErrorTree<String>),
+    NomParseError(#[from] IErr<String>),
     // #[error("{} {}", 0.0, 0.1)]
     // Parser((String, VerboseErrorKind)),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<ErrorTree<&str>> for NixUriError {
-    fn from(value: ErrorTree<&str>) -> Self {
+impl From<IErr<&str>> for NixUriError {
+    fn from(value: IErr<&str>) -> Self {
         let new_errs = value.map_locations(|i| i.to_string());
         Self::NomParseError(new_errs)
     }

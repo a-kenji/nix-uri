@@ -4,13 +4,13 @@ use nom::{
     branch::alt,
     bytes::complete::take_till,
     combinator::{opt, value},
-    error::{context, VerboseError},
+    error::context,
     IResult,
 };
-use nom_supreme::{error::ErrorTree, tag::complete::tag};
+use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::parser::parse_sep;
+use crate::{parser::parse_sep, IErr};
 
 use super::TransportLayer;
 
@@ -22,7 +22,7 @@ pub struct ResourceUrl {
 }
 
 impl ResourceUrl {
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, res_type) = ResourceType::parse(input)?;
         let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
@@ -47,7 +47,7 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         context(
             "resource selection",
             alt((

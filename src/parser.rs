@@ -5,22 +5,20 @@ use nom::{
     combinator::{opt, rest},
     error::context,
     multi::many_m_n,
-    sequence::{preceded, separated_pair},
+    sequence::separated_pair,
     Finish, IResult, Parser,
 };
-use nom_supreme::error::ErrorTree;
 
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
+    IErr,
 };
 
 // TODO: use a param-specific parser, handle the inversion specificially
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
-pub(crate) fn parse_params(
-    input: &str,
-) -> IResult<&str, Option<LocationParameters>, ErrorTree<&str>> {
+pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>, IErr<&str>> {
     // This is the inverse of the general control flow
     let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
 
@@ -92,7 +90,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
 }
 
 /// Parses the raw-string describing the transport type out of: `+type`
-pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str, ErrorTree<&str>> {
+pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str, IErr<&str>> {
     let (input, rest) = take_until("+")(input)?;
     let (input, _) = anychar(input)?;
     Ok((rest, input))
@@ -116,7 +114,7 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, (char, (char, char)), ErrorTree<&str>> {
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, (char, (char, char)), IErr<&str>> {
     context(
         "location separator",
         n_char(':').and(n_char('/').and(n_char('/'))),

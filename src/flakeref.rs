@@ -1,10 +1,9 @@
 use std::fmt::Display;
 
 use nom::{character::complete::char, combinator::opt, sequence::preceded, IResult};
-use nom_supreme::error::ErrorTree;
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::error::{IErr, NixUriError};
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
@@ -52,7 +51,7 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    pub fn parse(input: &str) -> IResult<&str, Self, ErrorTree<&str>> {
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
         Ok((
@@ -146,6 +145,7 @@ mod inc_parse {
 mod tests {
 
     use cool_asserts::assert_matches;
+    use nom::Finish;
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
@@ -1044,6 +1044,7 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
+        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         let parsed = parsed.unwrap_err();
         assert_matches!(parsed, NixUriError::UnknownTransportLayer(x) => assert_eq!("(", x));
@@ -1056,6 +1057,7 @@ mod tests {
     #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
+        let expected = NixUriError::MissingTypeParameter("github".into(), "owner".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         assert_matches!(parsed, Err(NixUriError::MissingTypeParameter(gh,owner)) => {assert_eq!((gh, owner),("github".to_string(), "owner".to_string()) );});
         let _e = FlakeRef::parse(uri).unwrap_err();
@@ -1063,15 +1065,14 @@ mod tests {
     }
 
     #[test]
-    // #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter_repo() {
         let uri = "github:nixos/";
         // let expected = Err(NixUriError::MissingTypeParameter(
         //     "github".into(),
         //     "repo".into(),
         // ));
-        let e = FlakeRef::parse(uri).unwrap_err();
-        panic!("{:#?}", e);
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+        panic!("{}", e);
         // assert_eq!(expected, e);
     }
 
