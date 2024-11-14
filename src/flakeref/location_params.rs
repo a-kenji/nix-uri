@@ -1,9 +1,8 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt,
-    bytes::complete::{tag, take_until},
-    combinator::rest,
+    bytes::complete::{take_till, take_until},
+    character::complete::char,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
@@ -92,8 +91,8 @@ impl LocationParameters {
             11,
             separated_pair(
                 take_until("="),
-                tag("="),
-                alt((take_until("&"), take_until("#"), rest)),
+                char('='),
+                take_till(|c| c == '&' || c == '#'),
             ),
         )(input)?;
 
@@ -120,6 +119,7 @@ impl LocationParameters {
         }
         Ok((rest, params))
     }
+
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
         self.dir = dir;
         self

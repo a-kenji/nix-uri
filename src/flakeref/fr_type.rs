@@ -3,14 +3,15 @@ use std::{fmt::Display, path::Path};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_until},
+    character::complete::char,
     combinator::{map, opt, peek, rest, verify},
-    sequence::preceded,
-    IResult,
+    sequence::{preceded, separated_pair},
+    Finish, IResult,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::{NixUriError, NixUriResult},
+    error::{NixUriError, NixUriResult, NomError, NomErrorKind},
     flakeref::forge::GitForge,
     parser::parse_transport_type,
 };
@@ -72,7 +73,7 @@ impl FlakeRefType {
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(alt((tag("."), tag("/"))))(input)?;
+        let (is_path, _) = peek(alt((char('.'), char('/'))))(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
@@ -94,9 +95,9 @@ impl FlakeRefType {
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path> {
         let (_rest, _) = alt((tag("file+http://"), tag("file+https://")))(input)?;
         eprintln!("`file+http[s]://` not pet implemented");
-        Err(nom::Err::Failure(nom::error::Error {
+        Err(nom::Err::Failure(NomError {
             input,
-            code: nom::error::ErrorKind::Fail,
+            code: NomErrorKind::Fail,
         }))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
@@ -120,16 +121,17 @@ impl FlakeRefType {
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
-        use nom::sequence::separated_pair;
         let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, (&str, nom::error::ErrorKind)>(":"),
-            tag(":"),
+            take_until::<&str, &str, (&str, NomErrorKind)>(":"),
+            char(':'),
             rest,
-        ))(input)?;
+        ))(input)
+        .finish()?;
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
                 "github" | "gitlab" | "sourcehut" => {
-                    let (_input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+                    let (_input, owner_and_repo_or_ref) =
+                        GitForge::parse_owner_repo_ref(input).finish()?;
                     // TODO: #158
                     let _er_fn = |st: &str| {
                         NixUriError::MissingTypeParameter(flake_ref_type_str.into(), st.to_string())
@@ -169,7 +171,7 @@ impl FlakeRefType {
                     if flake_ref_type_str.starts_with("git+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            opt(tag::<&str, &str, (&str, nom::error::ErrorKind)>("//"))(input)?;
+                            opt(tag::<&str, &str, (&str, NomErrorKind)>("//"))(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
@@ -179,7 +181,7 @@ impl FlakeRefType {
                     } else if flake_ref_type_str.starts_with("hg+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
                         let (input, _tag) =
-                            tag::<&str, &str, (&str, nom::error::ErrorKind)>("//")(input)?;
+                            tag::<&str, &str, (&str, NomErrorKind)>("//")(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),
@@ -210,7 +212,7 @@ impl FlakeRefType {
                 return Ok(flake_ref_type);
             }
 
-            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input)?;
+            let (input, owner_and_repo_or_ref) = GitForge::parse_owner_repo_ref(input).finish()?;
             // Comments left in for reference. We are in the process of moving error context
             // generation into the parser itself, as opposed to up here. The GitForge parser used
             // here will have to take on responsibility of contextualising failures;

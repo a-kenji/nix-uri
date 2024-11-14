@@ -2,8 +2,10 @@ use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_till1},
+    bytes::complete::{tag, take_till1},
+    character::complete::char,
     combinator::{opt, value},
+    sequence::{preceded, separated_pair},
     IResult,
 };
 use serde::{Deserialize, Serialize};
@@ -31,35 +33,36 @@ impl GitForgePlatform {
             value(Self::GitLab, tag("gitlab")),
             value(Self::SourceHut, tag("sourcehut")),
         ))(input)?;
-        let (rest, _) = tag(":")(rest)?;
+        let (rest, _) = char(':')(rest)?;
         Ok((rest, res))
     }
 }
 
 impl GitForge {
+    /// <owner>/<repo>[/?#]
+    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str)> {
+        separated_pair(
+            take_till1(|c| c == '/'),
+            char('/'),
+            take_till1(|c| c == '/' || c == '?' || c == '#'),
+        )(input)
+    }
+
+    /// `/[foobar]<?#>...` -> `(<?#>...), Option<foobar>)`
+    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>> {
+        preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#')))(input)
+    }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
     pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
-        // pull out the component we are parsing
-        let (tail, path0) = take_till(|c| c == '#' || c == '?')(input)?;
-        // pull out the owner
-        let (path1, owner) = take_till1(|c| c == '/')(path0)?;
-        // ...and discard the `/` separator
-        let (path1, _) = tag("/")(path1)?;
-        // get the rest, halting at the optional `/`
-        let (path2, repo) = take_till1(|c| c == '/')(path1)?;
+        let (input, (owner, repo)) = Self::parse_owner_repo(input)?;
         // drop the `/` if it exists
-        let (maybe_refrev, _) = opt(tag("/"))(path2)?;
+        let (input, maybe_refrev) = opt(Self::parse_rev_ref)(input)?;
         // if the remaining is empty, that's the ref/rev
-        let maybe_refrev = if maybe_refrev.is_empty() {
-            None
-        } else {
-            Some(maybe_refrev)
-        };
 
-        Ok((tail, (owner, repo, maybe_refrev)))
+        Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
     pub fn parse(input: &str) -> IResult<&str, Self> {
         let (rest, platform) = GitForgePlatform::parse(input)?;

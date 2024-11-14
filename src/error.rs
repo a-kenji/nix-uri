@@ -1,3 +1,4 @@
+pub(crate) use nom::error::{Error as NomError, ErrorKind as NomErrorKind};
 use thiserror::Error;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
@@ -46,21 +47,25 @@ pub enum NixUriError {
     #[error("Nom Error: {0}")]
     Nom(String),
     #[error(transparent)]
-    NomParseError(#[from] nom::Err<nom::error::Error<String>>),
-    #[error(transparent)]
-    Parser(#[from] nom::Err<(String, nom::error::ErrorKind)>),
+    NomParseError(#[from] NomError<String>),
+    #[error("{} {}", 0.0, 0.1)]
+    Parser((String, NomErrorKind)),
     #[error("Servo Url Parsing Error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<nom::Err<nom::error::Error<&str>>> for NixUriError {
-    fn from(value: nom::Err<nom::error::Error<&str>>) -> Self {
-        Self::NomParseError(value.to_owned())
+impl From<NomError<&str>> for NixUriError {
+    fn from(value: NomError<&str>) -> Self {
+        let new_err = NomError {
+            input: value.input.to_string(),
+            code: value.code,
+        };
+        Self::NomParseError(new_err)
     }
 }
 
-impl From<nom::Err<(&str, nom::error::ErrorKind)>> for NixUriError {
-    fn from(value: nom::Err<(&str, nom::error::ErrorKind)>) -> Self {
-        Self::Parser(value.to_owned())
+impl From<(&str, NomErrorKind)> for NixUriError {
+    fn from(value: (&str, NomErrorKind)) -> Self {
+        Self::Parser((value.0.to_string(), value.1))
     }
 }

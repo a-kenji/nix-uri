@@ -1,10 +1,12 @@
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until},
-    character::complete::anychar,
+    bytes::complete::take_until,
+    character::complete::{anychar, char as n_char},
     combinator::{opt, rest},
+    error::context,
     multi::many_m_n,
-    IResult,
+    sequence::{preceded, separated_pair},
+    Finish, IResult,
 };
 
 use crate::{
@@ -16,8 +18,6 @@ use crate::{
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
-    use nom::sequence::separated_pair;
-
     // This is the inverse of the general control flow
     let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
 
@@ -28,7 +28,7 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         let (_input, param_values) = many_m_n(
             0,
             11,
-            separated_pair(take_until("="), tag("="), alt((take_until("&"), rest))),
+            separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
         )(input)?;
 
         let mut params = LocationParameters::default();
@@ -74,7 +74,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
         return Err(NixUriError::InvalidUrl(input.into()));
     }
 
-    let (input, params) = parse_params(input)?;
+    let (input, params) = parse_params(input).finish()?;
     let mut flake_ref = FlakeRef::default();
     let flake_ref_type = FlakeRefType::parse_type(input)?;
     flake_ref.r#type(flake_ref_type);
@@ -106,12 +106,15 @@ pub(crate) fn is_file(input: &str) -> bool {
 
 // Parse the transport type itself
 pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
-    let (_, input) = parse_from_transport_type(input)?;
+    let (_, input) = parse_from_transport_type(input).finish()?;
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, &str> {
-    tag("://")(input)
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, char> {
+    context(
+        "location separator",
+        preceded(n_char(':'), preceded(n_char('/'), n_char('/'))),
+    )(input)
 }
 
 #[cfg(test)]
