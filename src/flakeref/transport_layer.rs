@@ -75,7 +75,6 @@ impl Display for TransportLayer {
 #[cfg(test)]
 mod inc_parse {
     use cool_asserts::assert_matches;
-    use nom::error::ErrorKind;
     use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
 
     use super::*;
@@ -145,21 +144,83 @@ mod inc_parse {
 
 #[cfg(test)]
 mod err_msg {
+    use cool_asserts::assert_matches;
+    use nom::Finish;
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     use super::*;
     #[test]
-    #[ignore = "need to impl good error handling"]
     fn fizzbuzz() {
         let url = "+fizzbuzz";
-        let _err = TransportLayer::plus_parse(url).unwrap_err();
-        todo!("Impl informative errors");
+        let err = TransportLayer::plus_parse(url).finish().unwrap_err();
+        // panic!("{:?}", err);
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base,
+                contexts
+            } => {
+                // TODO: use assert-matches idioms nicely
+                assert_matches!(*base, ErrorTree::Alt (alts) => {
+                    for alt in alts {
+                        assert_matches!(
+                            alt,
+                            ErrorTree::Base{
+                                location: "fizzbuzz",
+                                kind: BaseErrorKind::Expected(Expectation::Tag(
+                                    "https" |
+                                    "http" |
+                                    "ssh" |
+                                    "file"
+                                ))
+                            }
+                        )
+                    };
+                });
+                assert_eq!(
+                    contexts,
+                    [
+                        ("fizzbuzz", StackContext::Context("transport type")),
+                        ("+fizzbuzz", StackContext::Context("transport type separator"))
+                    ]
+                );
+            }
+        );
     }
 
     #[test]
-    #[ignore = "need to impl good error handling"]
     fn missing_plus() {
         let url = "+";
-        let _plus_err = TransportLayer::plus_parse(url).unwrap_err();
-        let _err = TransportLayer::parse("").unwrap_err();
-        todo!("Impl informative errors");
+        let _plus_err = TransportLayer::plus_parse(url).finish().unwrap_err();
+        let err = TransportLayer::parse("").finish().unwrap_err();
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base,
+                contexts
+            } => {
+                // TODO: use assert-matches idioms nicely
+                assert_matches!(*base, ErrorTree::Alt (alts) => {
+                    for alt in alts {
+                        assert_matches!(
+                            alt,
+                            ErrorTree::Base{
+                                location: "",
+                                kind: BaseErrorKind::Expected(Expectation::Tag(
+                                    "https" |
+                                    "http" |
+                                    "ssh" |
+                                    "file"
+                                ))
+                            }
+                        )
+                    };
+                });
+                assert_eq!(
+                    contexts,
+                    [("", StackContext::Context("transport type"))]
+                );
+            }
+        );
     }
 }

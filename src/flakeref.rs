@@ -51,6 +51,7 @@ impl FlakeRef {
         self.params = params;
         self
     }
+    // TODO: "+(:..."
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
@@ -145,7 +146,8 @@ mod inc_parse {
 mod tests {
 
     use cool_asserts::assert_matches;
-    use nom::Finish;
+    use nom::{error::ErrorKind, Finish};
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, StackContext};
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
@@ -1044,36 +1046,90 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
-        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
         let parsed = parsed.unwrap_err();
         assert_matches!(parsed, NixUriError::UnknownTransportLayer(x) => assert_eq!("(", x));
-        let _e = FlakeRef::parse(uri).unwrap_err();
-        // todo: map to good error
-        // assert_eq!(expected, e);
+
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+
+        // panic!("{:#?}", e);
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Alt (
+                    alts
+                    // location: "://",
+                    // kind: BaseErrorKind::Expected(Expectation::Char('+'))
+                ) => {
+                        // panic!("{:#?}", alts);
+                        assert_matches!(alts, [ErrorTree::Base{location:"(:z", kind: _kind }, ..])
+                    });
+                assert_eq!(contexts, [
+                    ("(:z", StackContext::Context("transport type")),
+                    ("+(:z", StackContext::Context("transport type separator")),
+                    ("git+(:z", StackContext::Context("resource"))
+                ]);
+            }
+        );
     }
 
     #[test]
-    #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
         let expected = NixUriError::MissingTypeParameter("github".into(), "owner".into());
-        let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_matches!(parsed, Err(NixUriError::MissingTypeParameter(gh,owner)) => {assert_eq!((gh, owner),("github".to_string(), "owner".to_string()) );});
-        let _e = FlakeRef::parse(uri).unwrap_err();
+
+        assert_matches!(
+            expected,
+            NixUriError::MissingTypeParameter(gh,owner) => {
+                assert_eq!((gh, owner),("github".to_string(), "owner".to_string()) );
+            }
+        );
+
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("owner")),
+                    ("", StackContext::Context("owner and repo")),
+                    ("github:", StackContext::Context("git forge")),
+                ]);
+            }
+        );
         // assert_eq!(expected, e);
     }
 
     #[test]
     fn parse_github_missing_parameter_repo() {
         let uri = "github:nixos/";
-        // let expected = Err(NixUriError::MissingTypeParameter(
-        //     "github".into(),
-        //     "repo".into(),
-        // ));
         let e = FlakeRef::parse(uri).finish().unwrap_err();
-        panic!("{}", e);
-        // assert_eq!(expected, e);
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("repo")),
+                    ("nixos/", StackContext::Context("owner and repo")),
+                    ("github:nixos/", StackContext::Context("git forge")),
+                ]);
+            }
+        );
     }
 
     // #[test]

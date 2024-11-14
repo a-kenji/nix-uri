@@ -45,6 +45,7 @@ impl GitForgePlatform {
 
 impl GitForge {
     /// <owner>/<repo>[/?#]
+    // TODO: return up a `NixUIError::MissingTypeParameter
     fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), IErr<&str>> {
         context(
             "owner and repo",
@@ -135,15 +136,52 @@ mod inc_parse_platform {
 }
 #[cfg(test)]
 mod err_msgs {
+    use cool_asserts::assert_matches;
+    use nom::{error::ErrorKind, Finish};
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     use super::*;
     #[test]
-    #[ignore = "partial owner-repo parsing not yet implemented"]
     fn just_owner() {
         let input = "owner";
         let input_slash = "owner/";
 
-        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let err = GitForge::parse_owner_repo_ref(input).finish().unwrap_err();
+        // panic!("{:?}", err);
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Expected(Expectation::Char('/'))
+                });
+                assert_eq!(contexts, [
+                    ("owner", StackContext::Context("owner and repo")),
+                ]);
+            }
+        );
+        let err_slash = GitForge::parse_owner_repo_ref(input_slash)
+            .finish()
+            .unwrap_err();
+        assert_matches!(
+            err_slash,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("repo")),
+                    ("owner/", StackContext::Context("owner and repo")),
+                ]);
+            }
+        );
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);

@@ -74,6 +74,10 @@ impl Display for ResourceType {
 
 #[cfg(test)]
 mod res_url {
+    use cool_asserts::assert_matches;
+    use nom::Finish;
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
+
     use super::*;
 
     #[test]
@@ -106,10 +110,34 @@ mod res_url {
     }
 
     #[test]
-    #[ignore = "need to impl good error handling"]
     fn gat() {
         let url = "gat";
-        let _err = ResourceType::parse(url).unwrap_err();
-        todo!("Imple informative errors");
+        let err = ResourceType::parse(url).finish().unwrap_err();
+        // panic!("{:?}", err);
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base,
+                ..
+            } => {
+                // TODO: use assert-matches idioms nicely
+                assert_matches!(*base, ErrorTree::Alt (alts) => {
+                    for alt in alts {
+                        assert_matches!(
+                            alt,
+                            ErrorTree::Base{
+                                location: "gat",
+                                kind: BaseErrorKind::Expected(Expectation::Tag(
+                                    "git" |
+                                    "hg" |
+                                    "file" |
+                                    "tarball"
+                                ))
+                            }
+                        )
+                    };
+                });
+            }
+        );
     }
 }
