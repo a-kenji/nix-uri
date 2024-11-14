@@ -74,6 +74,10 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
+    use cool_asserts::assert_matches;
+    use nom::error::ErrorKind;
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
+
     use super::*;
     #[test]
     fn basic() {
@@ -102,6 +106,22 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
             panic!();
         };
+
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "://",
+                    kind: BaseErrorKind::Expected(Expectation::Char('+'))
+                });
+                assert_eq!(contexts, [("://", nom_supreme::error::StackContext::Context("transport type separator"))]);
+            }
+        );
+        // panic!("{:#?}", e);
+        // panic!("{:#?}", e);
         //todo: verify the error structure
     }
 
