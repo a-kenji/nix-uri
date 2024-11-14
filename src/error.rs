@@ -62,9 +62,3 @@ impl From<IErr<&str>> for NixUriError {
         Self::NomParseError(new_errs)
     }
 }
-
-// impl From<(&str, VerboseErrorKind)> for NixUriError {
-//     fn from(value: (&str, VerboseErrorKind)) -> Self {
-//         Self::Parser((value.0.to_string(), value.1))
-//     }
-// }

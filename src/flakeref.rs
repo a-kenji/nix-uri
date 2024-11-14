@@ -51,7 +51,7 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    // TODO: "+(:..."
+
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
@@ -1132,96 +1132,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_github_starts_with_whitespace() {
+        let uri = " github:nixos/nixpkgs";
+        assert_matches!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
+        );
+    }
+
+    #[test]
+    fn parse_github_ends_with_whitespace() {
+        let uri = "github:nixos/nixpkgs ";
+        FlakeRef::parse(uri).finish().unwrap();
+        assert_matches!(
+            uri.parse::<FlakeRef>(),
+            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
+        );
+    }
+
+    #[test]
+    fn parse_empty_invalid_url() {
+        let uri = "";
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri) => assert_eq!("", uri)
+        );
+    }
+
+    #[test]
+    fn parse_empty_trim_invalid_url() {
+        let uri = "  ";
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+        );
+    }
+
+    #[test]
+    fn parse_slash_trim_invalid_url() {
+        let uri = "   /   ";
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+        );
+    }
+
+    #[test]
+    fn parse_double_trim_invalid_url() {
+        let uri = "   :   ";
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+        );
+    }
+
+    // TODO: indirect uris
     // #[test]
-    // fn parse_github_starts_with_whitespace() {
-    //     let uri = " github:nixos/nixpkgs";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
+    // fn parse_simple_indirect() {
+    //     let uri = "nixos/nixpkgs";
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Indirect {
+    //             id: "nixos/nixpkgs".to_owned(),
+    //             ref_or_rev: None,
+    //         })
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
     // }
-    //
+
     // #[test]
-    // fn parse_github_ends_with_whitespace() {
-    //     let uri = "github:nixos/nixpkgs ";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
+    // fn parse_simple_tarball() {
+    //     let uri = "https://hackage.haskell.org/package/lsp-test-0.14.0.3/lsp-test-0.14.0.3.tar.gz";
+    //     let mut params = LocationParameters::default();
+    //     let expected = FlakeRef::default()
+    //         .r#type(FlakeRefType::Tarball {
+    //             id: "nixpkgs".to_owned(),
+    //             ref_or_rev: Some("nixos-23.05".to_owned()),
+    //         })
+    //         .params(params)
+    //         .clone();
+    //     let parsed: FlakeRef = uri.try_into().unwrap();
+    //     assert_eq!(expected, parsed);
     // }
-    //
-    // #[test]
-    // fn parse_empty_invalid_url() {
-    //     let uri = "";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
-    // }
-    //
-    // #[test]
-    // fn parse_empty_trim_invalid_url() {
-    //     let uri = "  ";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
-    // }
-    //
-    // #[test]
-    // fn parse_slash_trim_invalid_url() {
-    //     let uri = "   /   ";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
-    // }
-    //
-    // #[test]
-    // fn parse_double_trim_invalid_url() {
-    //     let uri = "   :   ";
-    //     assert_eq!(
-    //         uri.parse::<FlakeRef>(),
-    //         Err(NixUriError::InvalidUrl(uri.into()))
-    //     );
-    //     // let e = FlakeRef::parse(uri).unwrap_err();
-    //     // assert_eq!(expected, e);
-    // }
-    //
-    // // #[test]
-    // // fn parse_simple_indirect() {
-    // //     let uri = "nixos/nixpkgs";
-    // //     let expected = FlakeRef::default()
-    // //         .r#type(FlakeRefType::Indirect {
-    // //             id: "nixos/nixpkgs".to_owned(),
-    // //             ref_or_rev: None,
-    // //         })
-    // //         .clone();
-    // //     let parsed: FlakeRef = uri.try_into().unwrap();
-    // //     assert_eq!(expected, parsed);
-    // // }
-    //
-    // // TODO: indirect uris
-    // // #[test]
-    // // fn parse_simple_tarball() {
-    // //     let uri = "https://hackage.haskell.org/package/lsp-test-0.14.0.3/lsp-test-0.14.0.3.tar.gz";
-    // //     let mut params = LocationParameters::default();
-    // //     let expected = FlakeRef::default()
-    // //         .r#type(FlakeRefType::Tarball {
-    // //             id: "nixpkgs".to_owned(),
-    // //             ref_or_rev: Some("nixos-23.05".to_owned()),
-    // //         })
-    // //         .params(params)
-    // //         .clone();
-    // //     let parsed: FlakeRef = uri.try_into().unwrap();
-    // //     assert_eq!(expected, parsed);
-    // // }
 }
