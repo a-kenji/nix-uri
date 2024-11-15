@@ -2,13 +2,17 @@ use std::fmt::Display;
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till1},
+    bytes::complete::take_till1,
     character::complete::char,
-    combinator::{opt, value},
-    sequence::{preceded, separated_pair},
+    combinator::{cut, opt, value},
+    error::context,
+    sequence::{preceded, separated_pair, terminated},
     IResult,
 };
+use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
+
+use crate::IErr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -27,36 +31,43 @@ pub struct GitForge {
 impl GitForgePlatform {
     /// `nom`s the gitforge + `:`
     /// `"<github|gitlab|sourceforge>:foobar..."` -> `(foobar..., GitForge)`
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, res) = alt((
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        alt((
             value(Self::GitHub, tag("github")),
             value(Self::GitLab, tag("gitlab")),
             value(Self::SourceHut, tag("sourcehut")),
-        ))(input)?;
-        let (rest, _) = char(':')(rest)?;
-        Ok((rest, res))
+        ))(input)
+    }
+    pub fn parse_terminated(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        terminated(Self::parse, char(':'))(input)
     }
 }
 
 impl GitForge {
     /// <owner>/<repo>[/?#]
-    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str)> {
-        separated_pair(
-            take_till1(|c| c == '/'),
-            char('/'),
-            take_till1(|c| c == '/' || c == '?' || c == '#'),
+    // TODO: return up a `NixUIError::MissingTypeParameter
+    fn parse_owner_repo(input: &str) -> IResult<&str, (&str, &str), IErr<&str>> {
+        context(
+            "owner and repo",
+            cut(separated_pair(
+                context("owner", take_till1(|c| c == '/')),
+                char('/'),
+                context("repo", take_till1(|c| c == '/' || c == '?' || c == '#')),
+            )),
         )(input)
     }
 
     /// `/[foobar]<?#>...` -> `(<?#>...), Option<foobar>)`
-    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>> {
+    fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, IErr<&str>> {
         preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#')))(input)
     }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     // TODO: #158
     // TODO: #163
     /// <owner>/<repo>[/[ref-or-rev]] -> (owner: &str, repo: &str, ref_or_rev: Option<&str>)
-    pub(crate) fn parse_owner_repo_ref(input: &str) -> IResult<&str, (&str, &str, Option<&str>)> {
+    pub(crate) fn parse_owner_repo_ref(
+        input: &str,
+    ) -> IResult<&str, (&str, &str, Option<&str>), IErr<&str>> {
         let (input, (owner, repo)) = Self::parse_owner_repo(input)?;
         // drop the `/` if it exists
         let (input, maybe_refrev) = opt(Self::parse_rev_ref)(input)?;
@@ -64,8 +75,8 @@ impl GitForge {
 
         Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, platform) = GitForgePlatform::parse(input)?;
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        let (rest, platform) = terminated(GitForgePlatform::parse, char(':'))(input)?;
         let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
         let res = Self {
             platform,
@@ -97,39 +108,80 @@ mod inc_parse_platform {
 
     #[test]
     fn platform() {
-        let stripped = "nixos/nixpkgs";
+        let remain = ":nixos/nixpkgs";
 
         let uri = "github:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
+        assert_eq!(platform, GitForgePlatform::GitHub);
+
+        let (rest, platform) = GitForgePlatform::parse_terminated(uri).unwrap();
+        assert_eq!(rest, &remain[1..]);
         assert_eq!(platform, GitForgePlatform::GitHub);
 
         let uri = "gitlab:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
         assert_eq!(platform, GitForgePlatform::GitLab);
 
         let uri = "sourcehut:nixos/nixpkgs";
 
         let (rest, platform) = GitForgePlatform::parse(uri).unwrap();
-        assert_eq!(rest, stripped);
+        assert_eq!(rest, remain);
         assert_eq!(platform, GitForgePlatform::SourceHut);
         // TODO?: fuzz test where `:` is preceded by bad string
     }
 }
 #[cfg(test)]
 mod err_msgs {
+    use cool_asserts::assert_matches;
+    use nom::{error::ErrorKind, Finish};
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     use super::*;
     #[test]
-    #[ignore = "partial owner-repo parsing not yet implemented"]
     fn just_owner() {
         let input = "owner";
         let input_slash = "owner/";
 
-        let _err = GitForge::parse_owner_repo_ref(input).unwrap_err();
-        let _err_slash = GitForge::parse_owner_repo_ref(input_slash).unwrap_err();
+        let err = GitForge::parse_owner_repo_ref(input).finish().unwrap_err();
+        // panic!("{:?}", err);
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Expected(Expectation::Char('/'))
+                });
+                assert_eq!(contexts, [
+                    ("owner", StackContext::Context("owner and repo")),
+                ]);
+            }
+        );
+        let err_slash = GitForge::parse_owner_repo_ref(input_slash)
+            .finish()
+            .unwrap_err();
+        assert_matches!(
+            err_slash,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("repo")),
+                    ("owner/", StackContext::Context("owner and repo")),
+                ]);
+            }
+        );
 
         // assert_eq!(input, expected  `/` is missing);
         // assert_eq!(input, expected repo-string is missing);

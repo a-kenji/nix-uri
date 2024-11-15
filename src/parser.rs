@@ -5,19 +5,20 @@ use nom::{
     combinator::{opt, rest},
     error::context,
     multi::many_m_n,
-    sequence::{preceded, separated_pair},
-    Finish, IResult,
+    sequence::separated_pair,
+    Finish, IResult, Parser,
 };
 
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
+    IErr,
 };
 
 // TODO: use a param-specific parser, handle the inversion specificially
 /// Take all that is behind the "?" tag
 /// Return everything prior as not parsed
-pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>> {
+pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>, IErr<&str>> {
     // This is the inverse of the general control flow
     let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
 
@@ -25,10 +26,13 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
         // discard leading "?"
         let (input, _) = anychar(input)?;
         // TODO: is this input really not needed?
-        let (_input, param_values) = many_m_n(
-            0,
-            11,
-            separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
+        let (_input, param_values) = context(
+            "param_fetch",
+            many_m_n(
+                0,
+                11,
+                separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
+            ),
         )(input)?;
 
         let mut params = LocationParameters::default();
@@ -86,7 +90,7 @@ pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
 }
 
 /// Parses the raw-string describing the transport type out of: `+type`
-pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str> {
+pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str, IErr<&str>> {
     let (input, rest) = take_until("+")(input)?;
     let (input, _) = anychar(input)?;
     Ok((rest, input))
@@ -110,10 +114,10 @@ pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUri
     TryInto::<TransportLayer>::try_into(input)
 }
 
-pub(crate) fn parse_sep(input: &str) -> IResult<&str, char> {
+pub(crate) fn parse_sep(input: &str) -> IResult<&str, (char, (char, char)), IErr<&str>> {
     context(
         "location separator",
-        preceded(n_char(':'), preceded(n_char('/'), n_char('/'))),
+        n_char(':').and(n_char('/').and(n_char('/'))),
     )(input)
 }
 

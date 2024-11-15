@@ -3,13 +3,14 @@ use std::fmt::Display;
 use nom::{
     bytes::complete::{take_till, take_until},
     character::complete::char,
+    error::context,
     multi::many_m_n,
     sequence::separated_pair,
     IResult,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::{error::NixUriError, IErr};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
@@ -85,14 +86,17 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        let (rest, param_values) = many_m_n(
-            0,
-            11,
-            separated_pair(
-                take_until("="),
-                char('='),
-                take_till(|c| c == '&' || c == '#'),
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        let (rest, param_values) = context(
+            "location parameters",
+            many_m_n(
+                0,
+                11,
+                separated_pair(
+                    take_until("="),
+                    char('='),
+                    take_till(|c| c == '&' || c == '#'),
+                ),
             ),
         )(input)?;
 

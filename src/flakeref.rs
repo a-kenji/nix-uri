@@ -3,7 +3,7 @@ use std::fmt::Display;
 use nom::{character::complete::char, combinator::opt, sequence::preceded, IResult};
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::error::{IErr, NixUriError};
 
 mod fr_type;
 pub use fr_type::FlakeRefType;
@@ -51,7 +51,8 @@ impl FlakeRef {
         self.params = params;
         self
     }
-    pub fn parse(input: &str) -> IResult<&str, Self> {
+
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
         Ok((
@@ -144,6 +145,9 @@ mod inc_parse {
 #[cfg(test)]
 mod tests {
 
+    use cool_asserts::assert_matches;
+    use nom::{error::ErrorKind, Finish};
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, StackContext};
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
@@ -1042,102 +1046,148 @@ mod tests {
     #[test]
     fn parse_wrong_git_uri_extension_type() {
         let uri = "git+(:z";
-        let expected = NixUriError::UnknownTransportLayer("(".into());
         let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_eq!(expected, parsed.unwrap_err());
-        let _e = FlakeRef::parse(uri).unwrap_err();
-        // todo: map to good error
-        // assert_eq!(expected, e);
+        let parsed = parsed.unwrap_err();
+        assert_matches!(parsed, NixUriError::UnknownTransportLayer(x) => assert_eq!("(", x));
+
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+
+        // panic!("{:#?}", e);
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Alt (
+                    alts
+                    // location: "://",
+                    // kind: BaseErrorKind::Expected(Expectation::Char('+'))
+                ) => {
+                        // panic!("{:#?}", alts);
+                        assert_matches!(alts, [ErrorTree::Base{location:"(:z", kind: _kind }, ..])
+                    });
+                assert_eq!(contexts, [
+                    ("(:z", StackContext::Context("transport type")),
+                    ("+(:z", StackContext::Context("transport type separator")),
+                    ("git+(:z", StackContext::Context("resource"))
+                ]);
+            }
+        );
     }
 
     #[test]
-    #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter() {
         let uri = "github:";
         let expected = NixUriError::MissingTypeParameter("github".into(), "owner".into());
-        let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        assert_eq!(expected, parsed.unwrap_err());
-        let _e = FlakeRef::parse(uri).unwrap_err();
+
+        assert_matches!(
+            expected,
+            NixUriError::MissingTypeParameter(gh,owner) => {
+                assert_eq!((gh, owner),("github".to_string(), "owner".to_string()) );
+            }
+        );
+
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("owner")),
+                    ("", StackContext::Context("owner and repo")),
+                    ("github:", StackContext::Context("git forge")),
+                ]);
+            }
+        );
         // assert_eq!(expected, e);
     }
 
     #[test]
-    #[ignore = "the nom-parser needs to implement the error now"]
     fn parse_github_missing_parameter_repo() {
         let uri = "github:nixos/";
-        let expected = Err(NixUriError::MissingTypeParameter(
-            "github".into(),
-            "repo".into(),
-        ));
-        assert_eq!(uri.parse::<FlakeRef>(), expected);
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
+        let e = FlakeRef::parse(uri).finish().unwrap_err();
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "",
+                    kind: BaseErrorKind::Kind(ErrorKind::TakeTill1)
+                });
+                assert_eq!(contexts, [
+                    ("", StackContext::Context("repo")),
+                    ("nixos/", StackContext::Context("owner and repo")),
+                    ("github:nixos/", StackContext::Context("git forge")),
+                ]);
+            }
+        );
     }
 
     #[test]
     fn parse_github_starts_with_whitespace() {
         let uri = " github:nixos/nixpkgs";
-        assert_eq!(
+        assert_matches!(
             uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
         );
     }
 
     #[test]
     fn parse_github_ends_with_whitespace() {
         let uri = "github:nixos/nixpkgs ";
-        assert_eq!(
+        FlakeRef::parse(uri).finish().unwrap();
+        assert_matches!(
             uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
         );
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
     }
 
     #[test]
     fn parse_empty_invalid_url() {
         let uri = "";
-        assert_eq!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri) => assert_eq!("", uri)
         );
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
     }
 
     #[test]
     fn parse_empty_trim_invalid_url() {
         let uri = "  ";
-        assert_eq!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
         );
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
     }
 
     #[test]
     fn parse_slash_trim_invalid_url() {
         let uri = "   /   ";
-        assert_eq!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
         );
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
     }
 
     #[test]
     fn parse_double_trim_invalid_url() {
         let uri = "   :   ";
-        assert_eq!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri.into()))
+        assert_matches!(
+            uri.parse::<FlakeRef>().unwrap_err(),
+            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
         );
-        // let e = FlakeRef::parse(uri).unwrap_err();
-        // assert_eq!(expected, e);
     }
 
+    // TODO: indirect uris
     // #[test]
     // fn parse_simple_indirect() {
     //     let uri = "nixos/nixpkgs";
@@ -1151,7 +1201,6 @@ mod tests {
     //     assert_eq!(expected, parsed);
     // }
 
-    // TODO: indirect uris
     // #[test]
     // fn parse_simple_tarball() {
     //     let uri = "https://hackage.haskell.org/package/lsp-test-0.14.0.3/lsp-test-0.14.0.3.tar.gz";

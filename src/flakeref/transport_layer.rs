@@ -1,12 +1,17 @@
 use std::fmt::Display;
 
 use nom::{
-    branch::alt, bytes::complete::tag, character::complete::char, combinator::value,
-    sequence::preceded, IResult,
+    branch::alt,
+    character::complete::char,
+    combinator::{cut, value},
+    error::context,
+    sequence::preceded,
+    IResult,
 };
+use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::error::NixUriError;
+use crate::{error::NixUriError, IErr};
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,16 +26,22 @@ pub enum TransportLayer {
 
 impl TransportLayer {
     /// TODO: refactor so None is not in `TransportLayer`. Use Option to encapsulate this
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        alt((
-            value(Self::Https, tag("https")),
-            value(Self::Http, tag("http")),
-            value(Self::Ssh, tag("ssh")),
-            value(Self::File, tag("file")),
-        ))(input)
+    pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        context(
+            "transport type",
+            alt((
+                value(Self::Https, tag("https")),
+                value(Self::Http, tag("http")),
+                value(Self::Ssh, tag("ssh")),
+                value(Self::File, tag("file")),
+            )),
+        )(input)
     }
-    pub fn plus_parse(input: &str) -> IResult<&str, Self> {
-        preceded(char('+'), Self::parse)(input)
+    pub fn plus_parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        context(
+            "transport type separator",
+            preceded(char('+'), cut(Self::parse)),
+        )(input)
     }
 }
 
@@ -63,6 +74,9 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
+    use cool_asserts::assert_matches;
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
+
     use super::*;
     #[test]
     fn basic() {
@@ -91,7 +105,23 @@ mod inc_parse {
         let nom::Err::Error(e) = TransportLayer::plus_parse(uri).unwrap_err() else {
             panic!();
         };
-        assert_eq!(e.input, "://");
+
+        assert_matches!(
+            e,
+            ErrorTree::Stack {
+                base, //: Box(ErrorTree::Base {location, kind}),
+                contexts,
+            } => {
+                assert_matches!(*base, ErrorTree::Base {
+                    location: "://",
+                    kind: BaseErrorKind::Expected(Expectation::Char('+'))
+                });
+                assert_eq!(contexts, [("://", nom_supreme::error::StackContext::Context("transport type separator"))]);
+            }
+        );
+        // panic!("{:#?}", e);
+        // panic!("{:#?}", e);
+        //todo: verify the error structure
     }
 
     // NOTE: at time of writing this comment, we use `nom`s `alt` combinator to parse `+....`. It
@@ -114,21 +144,83 @@ mod inc_parse {
 
 #[cfg(test)]
 mod err_msg {
+    use cool_asserts::assert_matches;
+    use nom::Finish;
+    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     use super::*;
     #[test]
-    #[ignore = "need to impl good error handling"]
     fn fizzbuzz() {
         let url = "+fizzbuzz";
-        let _err = TransportLayer::plus_parse(url).unwrap_err();
-        todo!("Impl informative errors");
+        let err = TransportLayer::plus_parse(url).finish().unwrap_err();
+        // panic!("{:?}", err);
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base,
+                contexts
+            } => {
+                // TODO: use assert-matches idioms nicely
+                assert_matches!(*base, ErrorTree::Alt (alts) => {
+                    for alt in alts {
+                        assert_matches!(
+                            alt,
+                            ErrorTree::Base{
+                                location: "fizzbuzz",
+                                kind: BaseErrorKind::Expected(Expectation::Tag(
+                                    "https" |
+                                    "http" |
+                                    "ssh" |
+                                    "file"
+                                ))
+                            }
+                        )
+                    };
+                });
+                assert_eq!(
+                    contexts,
+                    [
+                        ("fizzbuzz", StackContext::Context("transport type")),
+                        ("+fizzbuzz", StackContext::Context("transport type separator"))
+                    ]
+                );
+            }
+        );
     }
 
     #[test]
-    #[ignore = "need to impl good error handling"]
     fn missing_plus() {
         let url = "+";
-        let _plus_err = TransportLayer::plus_parse(url).unwrap_err();
-        let _err = TransportLayer::parse("").unwrap_err();
-        todo!("Impl informative errors");
+        let _plus_err = TransportLayer::plus_parse(url).finish().unwrap_err();
+        let err = TransportLayer::parse("").finish().unwrap_err();
+        assert_matches!(
+            err,
+            ErrorTree::Stack {
+                base,
+                contexts
+            } => {
+                // TODO: use assert-matches idioms nicely
+                assert_matches!(*base, ErrorTree::Alt (alts) => {
+                    for alt in alts {
+                        assert_matches!(
+                            alt,
+                            ErrorTree::Base{
+                                location: "",
+                                kind: BaseErrorKind::Expected(Expectation::Tag(
+                                    "https" |
+                                    "http" |
+                                    "ssh" |
+                                    "file"
+                                ))
+                            }
+                        )
+                    };
+                });
+                assert_eq!(
+                    contexts,
+                    [("", StackContext::Context("transport type"))]
+                );
+            }
+        );
     }
 }
