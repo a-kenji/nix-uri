@@ -13,14 +13,16 @@ mod transport_layer;
 pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
+mod attr_path;
 mod resource_url;
+pub use attr_path::AttributePath;
 
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
 pub struct FlakeRef {
     pub r#type: FlakeRefType,
-    flake: Option<bool>,
+    attr_path: Option<AttributePath>,
     pub params: LocationParameters,
 }
 
@@ -55,11 +57,12 @@ impl FlakeRef {
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
         let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
+        let (rest, attr_path) = AttributePath::try_parse_preceded(rest)?;
         Ok((
             rest,
             Self {
                 r#type,
-                flake: None,
+                attr_path,
                 params: params.unwrap_or_default(),
             },
         ))
@@ -115,11 +118,14 @@ mod inc_parse {
         let mut exp_params = LocationParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;
+        expected.attr_path = Some(AttributePath {
+            split: vec!["fizz".to_string(), "buzz".to_string()],
+        });
 
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
 
         // TODO: when attrs are implemented, this should assert `""`
-        assert_eq!("#fizz.buzz", rest);
+        assert_eq!("", rest);
         assert_eq!(expected, parse_out);
     }
     #[test]
@@ -134,10 +140,13 @@ mod inc_parse {
         let mut exp_params = LocationParameters::default();
         exp_params.dir(Some("foo".to_string()));
         expected.params = exp_params;
+        expected.attr_path = Some(AttributePath {
+            split: vec!["fizz".to_string(), "buzz".to_string()],
+        });
 
         let (rest, parse_out) = FlakeRef::parse(uri).unwrap();
         // TODO: when attrs are implemented, this should assert `""`
-        assert_eq!("#fizz.buzz", rest);
+        assert_eq!("", rest);
         assert_eq!(expected, parse_out);
     }
 }
