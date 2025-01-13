@@ -32,7 +32,7 @@ tracing = ["dep:tracing"]
 nom = "7.1.3"
 nom-supreme = "0.8.0"
 serde = { version = "1.0.215", features = ["derive"] }
-thiserror = "2.0.9"
+thiserror = "2.0.11"
 tracing = { version = "0.1.41", optional = true }
 url = { version = "2.5.4" }
 
