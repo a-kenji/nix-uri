@@ -98,7 +98,7 @@ pub(crate) fn parse_from_transport_type(input: &str) -> IResult<&str, &str, IErr
 
 pub(crate) fn is_tarball(input: &str) -> bool {
     let valid_extensions = &[
-        ".tar", ".gz", ".bz2", ".xz", ".zip", ".tar.bz2", ".tar.zst", ".tgz", ".tar.gz", ".tar.xz",
+        ".zip", ".tar", ".tgz", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst",
     ];
     valid_extensions.iter().any(|&ext| input.ends_with(ext))
 }
