@@ -55,12 +55,12 @@ impl FlakeRefType {
         context(
             "path resource",
             alt((
+                // Handle file+http[s]:// as Resource with proper transport
+                Self::parse_file_with_http_transport,
                 map(
                     alt((
                         // file+file
                         Self::parse_explicit_file_scheme,
-                        // file+http(s)
-                        Self::parse_http_file_scheme,
                     )),
                     // file
                     |path| {
@@ -105,16 +105,44 @@ impl FlakeRefType {
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
+    pub fn parse_file_with_http_transport(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        use nom::bytes::complete::take_till;
+
+        let (rest, scheme) = alt((tag("file+https"), tag("file+http")))(input)?;
+        let (rest, _) = tag("://")(rest)?;
+        let (rest, location) = take_till(|c| c == '#' || c == '?')(rest)?;
+
+        let transport_type = match scheme {
+            "file+https" => Some(TransportLayer::Https),
+            "file+http" => Some(TransportLayer::Http),
+            _ => unreachable!(),
+        };
+
+        Ok((
+            rest,
+            Self::Resource(ResourceUrl {
+                res_type: ResourceType::File,
+                location: location.to_string(),
+                transport_type,
+            }),
+        ))
+    }
+
     pub fn parse_http_file_scheme(input: &str) -> IResult<&str, &Path, IErr<&str>> {
-        let (_rest, _) = context(
+        use nom::bytes::complete::take_till;
+
+        let (rest, _) = context(
             "networked file",
             preceded(tag("file+http"), alt((tag("://"), tag("s://")))),
         )(input)?;
-        eprintln!("`file+http[s]://` not pet implemented");
-        Err(nom::Err::Failure(IErr::Base {
-            location: input,
-            kind: nom_supreme::error::BaseErrorKind::Kind(nom::error::ErrorKind::Fail),
-        }))
+
+        // Take everything until # or ? (parameters/fragments)
+        let (rest, location) = take_till(|c| c == '#' || c == '?')(rest)?;
+
+        // For file+http[s], we don't return a Path but need to be handled differently
+        // This method signature is wrong for this use case, but we need to work with existing code
+        // Return a fake path that will be handled properly by the parent
+        Ok((rest, Path::new(location)))
     }
     /// TODO: different platforms have different rules about the owner/repo/ref/ref strings. These
     /// rules are not checked for in the current form of the parser
@@ -155,6 +183,62 @@ impl FlakeRefType {
             }),
         ))
     }
+    /// Parse indirect flake references (flake:id[/ref] or bare id[/ref])
+    pub fn parse_indirect(input: &str) -> IResult<&str, Self, IErr<&str>> {
+        use nom::bytes::complete::{tag, take_till, take_while1};
+        use nom::combinator::{opt, verify};
+        use nom::sequence::preceded;
+
+        // Try explicit flake: scheme first
+        if let Ok((rest, _)) = tag::<&str, &str, IErr<&str>>("flake:")(input) {
+            let (rest, id) = verify(
+                take_while1(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                |s: &str| !s.is_empty() && s.chars().next().unwrap().is_ascii_alphabetic(),
+            )(rest)?;
+
+            let (rest, ref_or_rev) =
+                opt(preceded(char('/'), take_till(|c| c == '#' || c == '?')))(rest)?;
+
+            return Ok((
+                rest,
+                Self::Indirect {
+                    id: id.to_string(),
+                    ref_or_rev: ref_or_rev.map(str::to_string),
+                },
+            ));
+        }
+
+        // Try bare flake ID (id[/ref])
+        // Must be alphanumeric with hyphens/underscores, can't contain protocols or paths
+        if !input.contains("://") && !input.starts_with('/') && !input.starts_with('.') {
+            let slash_count = input.matches('/').count();
+
+            // Only allow simple patterns: "id" or "id/ref"
+            if slash_count <= 1 {
+                let (rest, id) = verify(
+                    take_while1(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                    |s: &str| !s.is_empty() && s.chars().next().unwrap().is_ascii_alphabetic(),
+                )(input)?;
+
+                let (rest, ref_or_rev) =
+                    opt(preceded(char('/'), take_till(|c| c == '#' || c == '?')))(rest)?;
+
+                return Ok((
+                    rest,
+                    Self::Indirect {
+                        id: id.to_string(),
+                        ref_or_rev: ref_or_rev.map(str::to_string),
+                    },
+                ));
+            }
+        }
+
+        Err(nom::Err::Error(IErr::Base {
+            location: input,
+            kind: nom_supreme::error::BaseErrorKind::Kind(nom::error::ErrorKind::Fail),
+        }))
+    }
+
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         alt((
             context("raw path", Self::parse_path),
@@ -162,6 +246,7 @@ impl FlakeRefType {
             context("file", Self::parse_file),
             context("plain url", Self::parse_plain_url),
             context("resource", Self::parse_resource),
+            context("indirect", Self::parse_indirect),
         ))(input)
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
@@ -896,6 +981,235 @@ mod inc_parse_indirect {
     }
 
     #[test]
+    fn bare_flake_id_with_numbers() {
+        let uri = "nixpkgs23";
+        let expected = FlakeRefType::Indirect {
+            id: "nixpkgs23".to_string(),
+            ref_or_rev: None,
+        };
+
+        let result = FlakeRefType::parse_type(uri).unwrap();
+        assert_eq!(expected, result);
+
+        // Test via parse() method too
+        let (rest, result) = FlakeRefType::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn bare_flake_id_edge_cases() {
+        // Test with too many slashes - should fail as indirect, no fallback should work
+        let uri = "my-flake/branch/deep/reference";
+        // This should fail because it has too many slashes - only id/ref is allowed for bare IDs
+        let result = FlakeRefType::parse(uri);
+        assert!(
+            result.is_err(),
+            "Multi-slash URIs should fail when not matching any scheme"
+        );
+
+        // Test single character ID
+        let uri = "a";
+        let expected = FlakeRefType::Indirect {
+            id: "a".to_string(),
+            ref_or_rev: None,
+        };
+        let (rest, result) = FlakeRefType::parse(uri).unwrap();
+        assert_eq!("", rest);
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn flake_scheme_validation_edge_cases() {
+        // Empty ID after flake:
+        let uri = "flake:";
+        let result = FlakeRefType::parse_type(uri);
+        assert!(result.is_err());
+
+        // ID starting with number
+        let uri = "flake:123invalid";
+        let result = FlakeRefType::parse_type(uri);
+        assert!(result.is_err());
+
+        // ID with invalid characters
+        let uri = "flake:invalid!";
+        let result = FlakeRefType::parse_type(uri);
+        assert!(result.is_err());
+
+        // Very long but valid ID
+        let uri = "flake:very-long-flake-name-with-many-dashes-and_underscores_123";
+        let expected = FlakeRefType::Indirect {
+            id: "very-long-flake-name-with-many-dashes-and_underscores_123".to_string(),
+            ref_or_rev: None,
+        };
+        let result = FlakeRefType::parse_type(uri).unwrap();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn protocol_collision_edge_cases() {
+        // Ensure git:// doesn't collide with github:
+        let git_uri = "git://example.com/repo.git";
+        let github_uri = "github:user/repo";
+
+        let (_, git_result) = FlakeRefType::parse(git_uri).unwrap();
+        let (_, github_result) = FlakeRefType::parse(github_uri).unwrap();
+
+        match git_result {
+            FlakeRefType::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
+                ..
+            }) => {
+                // Expected
+            }
+            _ => panic!("Expected git resource for git:// URL"),
+        }
+
+        match github_result {
+            FlakeRefType::GitForge(_) => {
+                // Expected
+            }
+            _ => panic!("Expected git forge for github: URL"),
+        }
+    }
+
+    #[test]
+    fn http_https_autodetection_edge_cases() {
+        let test_cases = vec![
+            // Valid tarball extensions
+            ("https://example.com/file.tar.gz", ResourceType::Tarball),
+            ("https://example.com/file.tar.bz2", ResourceType::Tarball),
+            ("https://example.com/file.tar.xz", ResourceType::Tarball),
+            ("https://example.com/file.tar.zst", ResourceType::Tarball),
+            ("https://example.com/file.tgz", ResourceType::Tarball),
+            ("https://example.com/file.zip", ResourceType::Tarball),
+            ("https://example.com/file.tar", ResourceType::Tarball),
+            // Extensions that are NOT tarball (bare compression formats)
+            ("https://example.com/file.gz", ResourceType::File),
+            ("https://example.com/file.bz2", ResourceType::File),
+            ("https://example.com/file.xz", ResourceType::File),
+            // Other file types
+            ("https://example.com/file.txt", ResourceType::File),
+            ("https://example.com/README.md", ResourceType::File),
+            ("https://example.com/file", ResourceType::File), // No extension
+        ];
+
+        for (uri, expected_type) in test_cases {
+            let (_, result) = FlakeRefType::parse(uri).unwrap();
+            match result {
+                FlakeRefType::Resource(ResourceUrl { res_type, .. }) => {
+                    assert_eq!(expected_type, res_type, "Failed for URI: {}", uri);
+                }
+                _ => panic!("Expected resource for URI: {}", uri),
+            }
+        }
+    }
+
+    #[test]
+    fn transport_scheme_combinations() {
+        // Test all transport combinations work
+        let test_cases = vec![
+            (
+                "git+https://example.com/repo.git",
+                ResourceType::Git,
+                Some(TransportLayer::Https),
+            ),
+            (
+                "git+http://example.com/repo.git",
+                ResourceType::Git,
+                Some(TransportLayer::Http),
+            ),
+            (
+                "git+file://path/to/repo",
+                ResourceType::Git,
+                Some(TransportLayer::File),
+            ),
+            (
+                "hg+https://example.com/repo",
+                ResourceType::Mercurial,
+                Some(TransportLayer::Https),
+            ),
+            (
+                "hg+http://example.com/repo",
+                ResourceType::Mercurial,
+                Some(TransportLayer::Http),
+            ),
+            (
+                "hg+file://path/to/repo",
+                ResourceType::Mercurial,
+                Some(TransportLayer::File),
+            ),
+            (
+                "tarball+https://example.com/file.tar.gz",
+                ResourceType::Tarball,
+                Some(TransportLayer::Https),
+            ),
+            (
+                "tarball+http://example.com/file.zip",
+                ResourceType::Tarball,
+                Some(TransportLayer::Http),
+            ),
+            (
+                "file+https://example.com/file.txt",
+                ResourceType::File,
+                Some(TransportLayer::Https),
+            ),
+            (
+                "file+http://example.com/file.txt",
+                ResourceType::File,
+                Some(TransportLayer::Http),
+            ),
+        ];
+
+        for (uri, expected_res_type, expected_transport) in test_cases {
+            let (_, result) = FlakeRefType::parse(uri).unwrap();
+            match result {
+                FlakeRefType::Resource(ResourceUrl {
+                    res_type,
+                    transport_type,
+                    ..
+                }) => {
+                    assert_eq!(
+                        expected_res_type, res_type,
+                        "Resource type mismatch for: {}",
+                        uri
+                    );
+                    assert_eq!(
+                        expected_transport, transport_type,
+                        "Transport type mismatch for: {}",
+                        uri
+                    );
+                }
+                _ => panic!("Expected resource for URI: {}", uri),
+            }
+        }
+    }
+
+    #[test]
+    fn relative_path_edge_cases() {
+        let test_cases = vec![
+            "./",
+            "../",
+            "./path",
+            "../path",
+            "./path/to/flake",
+            "../path/to/flake",
+            "../../deeply/nested/path",
+        ];
+
+        for uri in test_cases {
+            let (rest, result) = FlakeRefType::parse(uri).unwrap();
+            assert_eq!("", rest, "Parse should consume entire input for: {}", uri);
+            match result {
+                FlakeRefType::Path { path } => {
+                    assert_eq!(uri, path, "Path should match input for: {}", uri);
+                }
+                _ => panic!("Expected path for URI: {}", uri),
+            }
+        }
+    }
+
+    #[test]
     fn flake_id_complex_names() {
         let uri = "complex-flake/feature-branch";
         let expected = FlakeRefType::Indirect {
@@ -1159,13 +1473,12 @@ mod inc_parse_file {
     }
 
     #[test]
-    #[ignore = "need to implement http location parsing"]
     fn http_layer() {
-        let uri = "file+http://???";
+        let uri = "file+http://example.com/file.txt";
         let expected_refpath = FlakeRefType::Resource(ResourceUrl {
             res_type: ResourceType::File,
-            location: "/foo/bar".to_string(),
-            transport_type: None,
+            location: "example.com/file.txt".to_string(),
+            transport_type: Some(TransportLayer::Http),
         });
 
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
@@ -1175,13 +1488,12 @@ mod inc_parse_file {
     }
 
     #[test]
-    #[ignore = "need to implement https location parsing"]
     fn https_layer() {
-        let uri = "file+https://???";
+        let uri = "file+https://example.com/file.txt";
         let expected_refpath = FlakeRefType::Resource(ResourceUrl {
             res_type: ResourceType::File,
-            location: "/foo/bar".to_string(),
-            transport_type: None,
+            location: "example.com/file.txt".to_string(),
+            transport_type: Some(TransportLayer::Https),
         });
 
         let (rest, parsed_refpath) = FlakeRefType::parse_file(uri).unwrap();
