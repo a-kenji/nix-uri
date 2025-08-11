@@ -1,8 +1,11 @@
 # Releases
 
+
+NOTE: git-cliff is behind the `cliff` devshell: `nix develop .#cliff`
+
 ## Creating a Release
 
 1. Bump the version in `Cargo.toml`.
-1. Update the changelog.
-1. Commit and push the changes.
-1. Create and push the new version tag.
+2. Update the changelog.
+3. Commit and push the changes.
+4. Create and push the new version tag.

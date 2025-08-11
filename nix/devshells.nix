@@ -23,6 +23,12 @@
           ];
           inherit env;
         };
+        cliff = pkgs.mkShellNoCC {
+          name = "changelog";
+          packages = [
+            pkgs.git-cliff
+          ];
+        };
         full = pkgs.mkShellNoCC {
           name = "nix-uri-full";
           inputsFrom = [ self'.devShells.default ];
