@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - name: update rust toolchain
         id: urt
         uses: a-kenji/update-rust-toolchain@54561fd7b447ae643e72594536e3b49b40d34255 # v1
