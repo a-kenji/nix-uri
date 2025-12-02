@@ -37,7 +37,7 @@ tracing = { version = "0.1.41", optional = true }
 url = { version = "2.5.7" }
 
 [dev-dependencies]
-cool_asserts = "2.0.3"
+cool_asserts = "2.0.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }
 
 [[bench]]

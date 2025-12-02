@@ -134,9 +134,9 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cool_asserts"
-version = "2.0.3"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee9f254e53f61e2688d3677fa2cbe4e9b950afd56f48819c98817417cf6b28ec"
+checksum = "aefc127fad829eb36edd748660d3ee55490889bc54005cef71d2cd6e25ca2bb2"
 dependencies = [
  "indent_write",
 ]
