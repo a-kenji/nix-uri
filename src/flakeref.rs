@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{character::complete::char, combinator::opt, sequence::preceded, IResult};
+use nom::{IResult, character::complete::char, combinator::opt, sequence::preceded};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{IErr, NixUriError};
@@ -146,14 +146,14 @@ mod inc_parse {
 mod tests {
 
     use cool_asserts::assert_matches;
-    use nom::{error::ErrorKind, Finish};
+    use nom::{Finish, error::ErrorKind};
     use nom_supreme::error::{BaseErrorKind, ErrorTree, StackContext};
     use resource_url::{ResourceType, ResourceUrl};
 
     use super::*;
     use crate::{
-        parser::{parse_nix_uri, parse_params},
         NixUriResult,
+        parser::{parse_nix_uri, parse_params},
     };
 
     #[test]

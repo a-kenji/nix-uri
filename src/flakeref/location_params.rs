@@ -1,16 +1,16 @@
 use std::fmt::Display;
 
 use nom::{
+    IResult,
     bytes::complete::{take_till, take_until},
     character::complete::char,
     error::context,
     multi::many_m_n,
     sequence::separated_pair,
-    IResult,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{error::NixUriError, IErr};
+use crate::{IErr, error::NixUriError};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]

@@ -1,27 +1,27 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
+    Finish, IResult,
     branch::alt,
     bytes::complete::{take_till, take_until},
     character::complete::char,
     combinator::{map, opt, peek, rest, verify},
     error::context,
     sequence::{preceded, separated_pair, terminated},
-    Finish, IResult,
 };
 use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::{NixUriError, NixUriResult},
-    flakeref::{forge::GitForge, TransportLayer},
-    parser::parse_transport_type,
     IErr,
+    error::{NixUriError, NixUriResult},
+    flakeref::{TransportLayer, forge::GitForge},
+    parser::parse_transport_type,
 };
 
 use super::{
-    resource_url::{ResourceType, ResourceUrl},
     GitForgePlatform,
+    resource_url::{ResourceType, ResourceUrl},
 };
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
@@ -515,7 +515,7 @@ impl FlakeRefType {
                 return Err(NixUriError::UnsupportedByType(
                     "ref_or_rev".to_string(),
                     "git-forge types && indirect types".to_string(),
-                ))
+                ));
             }
         }
         Ok(())

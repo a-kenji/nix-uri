@@ -1,17 +1,17 @@
 use std::fmt::Display;
 
 use nom::{
+    IResult,
     branch::alt,
     character::complete::char,
     combinator::{cut, value},
     error::context,
     sequence::preceded,
-    IResult,
 };
 use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::NixUriError, IErr};
+use crate::{IErr, error::NixUriError};
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]

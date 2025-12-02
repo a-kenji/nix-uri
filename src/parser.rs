@@ -1,4 +1,5 @@
 use nom::{
+    Finish, IResult, Parser,
     branch::alt,
     bytes::complete::take_until,
     character::complete::{anychar, char as n_char},
@@ -6,13 +7,12 @@ use nom::{
     error::context,
     multi::many_m_n,
     sequence::separated_pair,
-    Finish, IResult, Parser,
 };
 
 use crate::{
+    IErr,
     error::{NixUriError, NixUriResult},
     flakeref::{FlakeRef, FlakeRefType, LocationParamKeys, LocationParameters, TransportLayer},
-    IErr,
 };
 
 // TODO: use a param-specific parser, handle the inversion specificially
