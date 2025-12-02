@@ -1,16 +1,16 @@
 use std::fmt::Display;
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::take_till,
     combinator::{opt, value},
     error::context,
-    IResult,
 };
 use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::{parser::parse_sep, IErr};
+use crate::{IErr, parser::parse_sep};
 
 use super::TransportLayer;
 

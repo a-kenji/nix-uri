@@ -1,13 +1,13 @@
 use std::fmt::Display;
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::take_till1,
     character::complete::char,
     combinator::{cut, opt, value},
     error::context,
     sequence::{preceded, separated_pair, terminated},
-    IResult,
 };
 use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
@@ -137,7 +137,7 @@ mod inc_parse_platform {
 #[cfg(test)]
 mod err_msgs {
     use cool_asserts::assert_matches;
-    use nom::{error::ErrorKind, Finish};
+    use nom::{Finish, error::ErrorKind};
     use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
 
     use super::*;

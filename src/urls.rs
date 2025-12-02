@@ -1,6 +1,6 @@
 use url::Url;
 
-use crate::{parser::is_tarball, FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult};
+use crate::{FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult, parser::is_tarball};
 
 pub struct UrlWrapper {
     url: Url,
