@@ -48,40 +48,44 @@ pub struct LocationParameters {
 // or have params in a vec of tuples? with param and option<string>
 impl Display for LocationParameters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut res = String::new();
+        let mut first = true;
+        let mut write_param = |key: &str, value: &str| {
+            if !first {
+                write!(f, "&")?;
+            }
+            first = false;
+            write!(f, "{key}={value}")
+        };
+
         if let Some(dir) = &self.dir {
-            res.push_str("dir=");
-            res.push_str(dir);
+            write_param("dir", dir)?;
         }
         if let Some(branch) = &self.branch {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("branch=");
-            res.push_str(branch);
+            write_param("branch", branch)?;
         }
         if let Some(host) = &self.host {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("host=");
-            res.push_str(host);
+            write_param("host", host)?;
         }
         if let Some(r#ref) = &self.r#ref {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("ref=");
-            res.push_str(r#ref);
+            write_param("ref", r#ref)?;
         }
         if let Some(rev) = &self.rev {
-            if !res.is_empty() {
-                res.push('?');
-            }
-            res.push_str("rev=");
-            res.push_str(rev);
+            write_param("rev", rev)?;
         }
-        write!(f, "{res}")
+        if let Some(nar_hash) = &self.nar_hash {
+            write_param("nar_hash", nar_hash)?;
+        }
+        if let Some(submodules) = &self.submodules {
+            write_param("submodules", submodules)?;
+        }
+        if let Some(shallow) = &self.shallow {
+            write_param("shallow", shallow)?;
+        }
+        for (key, value) in &self.arbitrary {
+            write_param(key, value)?;
+        }
+
+        Ok(())
     }
 }
 

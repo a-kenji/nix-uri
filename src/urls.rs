@@ -1,6 +1,10 @@
+use nom::Finish;
 use url::Url;
 
-use crate::{FlakeRef, FlakeRefType, GitForge, NixUriError, NixUriResult, parser::is_tarball};
+use crate::{
+    FlakeRef, FlakeRefType, GitForge, LocationParameters, NixUriError, NixUriResult,
+    parser::is_tarball,
+};
 
 pub struct UrlWrapper {
     url: Url,
@@ -55,6 +59,14 @@ impl UrlWrapper {
                     let flake_ref_type = url.type_from_host(&host.to_string())?;
                     let mut flake_ref = FlakeRef::default();
                     flake_ref.r#type(flake_ref_type);
+                    if let Some(query) = url.url.query() {
+                        let (_, params) = LocationParameters::parse(query)
+                            .finish()
+                            .map_err(NixUriError::from)?;
+                        if params != LocationParameters::default() {
+                            flake_ref.params(params);
+                        }
+                    }
                     Ok(flake_ref.clone())
                 }
                 None => input.parse(),
@@ -117,6 +129,8 @@ mod tests {
     #[test]
     fn simple_url_conversion_with_param() {
         let url = "https://github.com/nixos/nixpkgs?dir=foo";
+        let mut params = LocationParameters::default();
+        params.dir(Some("foo".into()));
         let expected = FlakeRef::default()
             .r#type(FlakeRefType::GitForge(GitForge {
                 platform: crate::flakeref::GitForgePlatform::GitHub,
@@ -124,6 +138,7 @@ mod tests {
                 repo: "nixpkgs".into(),
                 ref_or_rev: None,
             }))
+            .params(params)
             .clone();
         assert_eq!(UrlWrapper::convert_or_parse(url).unwrap(), expected);
     }

@@ -64,7 +64,7 @@ impl Display for ResourceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let out_str = match self {
             Self::Git => "git",
-            Self::Mercurial => "mercurial",
+            Self::Mercurial => "hg",
             Self::File => "file",
             Self::Tarball => "tarball",
         };
