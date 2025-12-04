@@ -557,7 +557,7 @@ impl Display for FlakeRefType {
                 }
             }
             Self::Path { path } => write!(f, "{}", path),
-            Self::None => todo!(),
+            Self::None => write!(f, "none"),
         }
     }
 }

@@ -1,9 +1,9 @@
 use nom::{
     Finish, IResult, Parser,
     branch::alt,
-    bytes::complete::take_until,
+    bytes::complete::{take_till, take_until},
     character::complete::{anychar, char as n_char},
-    combinator::{opt, rest},
+    combinator::opt,
     error::context,
     multi::many_m_n,
     sequence::separated_pair,
@@ -31,7 +31,11 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
             many_m_n(
                 0,
                 11,
-                separated_pair(take_until("="), n_char('='), alt((take_until("&"), rest))),
+                separated_pair(
+                    take_until("="),
+                    n_char('='),
+                    alt((take_until("&"), take_till(|c| c == '#'))),
+                ),
             ),
         )(input)?;
 
