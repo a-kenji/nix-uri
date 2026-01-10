@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use nom::{IResult, character::complete::char, combinator::opt, sequence::preceded};
+use nom::{IResult, Parser, character::complete::char, combinator::opt, sequence::preceded};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{IErr, NixUriError};
@@ -166,7 +166,7 @@ impl FlakeRef {
 
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, r#type) = FlakeRefType::parse(input)?;
-        let (rest, params) = opt(preceded(char('?'), LocationParameters::parse))(rest)?;
+        let (rest, params) = opt(preceded(char('?'), LocationParameters::parse)).parse(rest)?;
         Ok((
             rest,
             Self {
@@ -259,8 +259,9 @@ mod tests {
 
     use cool_asserts::assert_matches;
     use nom::{Finish, error::ErrorKind};
-    use nom_supreme::error::{BaseErrorKind, ErrorTree, StackContext};
     use resource_url::{ResourceType, ResourceUrl};
+
+    use crate::error::{BaseErrorKind, ErrorTree, StackContext};
 
     use super::*;
     use crate::{
@@ -1180,6 +1181,7 @@ mod tests {
                         assert_matches!(alts, [ErrorTree::Base{location:"(:z", kind: _kind }, ..])
                     });
                 assert_eq!(contexts, [
+                    ("(:z", StackContext::Kind(nom::error::ErrorKind::Alt)),
                     ("(:z", StackContext::Context("transport type")),
                     ("+(:z", StackContext::Context("transport type separator")),
                     ("git+(:z", StackContext::Context("resource"))

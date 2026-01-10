@@ -1,7 +1,7 @@
 use std::{fmt::Display, path::Path};
 
 use nom::{
-    Finish, IResult,
+    Finish, IResult, Parser,
     branch::alt,
     bytes::complete::{take_till, take_until},
     character::complete::char,
@@ -9,7 +9,8 @@ use nom::{
     error::context,
     sequence::{preceded, separated_pair, terminated},
 };
-use nom_supreme::tag::complete::tag;
+
+use crate::error::tag;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -47,7 +48,7 @@ impl FlakeRefType {
         let path_map = map(Self::path_parser, |path_str| Self::Path {
             path: path_str.to_string(),
         });
-        preceded(opt(alt((tag("path://"), tag("path:")))), path_map)(input)
+        preceded(opt(alt((tag("path://"), tag("path:")))), path_map).parse(input)
     }
 
     // TODO: #158
@@ -75,16 +76,18 @@ impl FlakeRefType {
                     path: format!("{}", path.display()),
                 }),
             )),
-        )(input)
+        )
+        .parse(input)
     }
     pub fn parse_naked(input: &str) -> IResult<&str, &Path, IErr<&str>> {
         // Check if input starts with `.` or `/`
-        let (is_path, _) = peek(context("path location", alt((char('.'), char('/')))))(input)?;
+        let (is_path, _) =
+            peek(context("path location", alt((char('.'), char('/'))))).parse(input)?;
         let (rest, path_str) = Self::path_parser(is_path)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn path_parser(input: &str) -> IResult<&str, &str, IErr<&str>> {
-        preceded(peek(alt((char('.'), char('/')))), Self::path_verifier)(input)
+        preceded(peek(alt((char('.'), char('/')))), Self::path_verifier).parse(input)
     }
     pub fn path_verifier(input: &str) -> IResult<&str, &str, IErr<&str>> {
         context(
@@ -92,7 +95,8 @@ impl FlakeRefType {
             verify(take_till(|c| c == '#' || c == '?'), |c: &str| {
                 !c.contains('[') && !c.contains(']')
             }),
-        )(input)
+        )
+        .parse(input)
     }
     pub fn parse_explicit_file_scheme(input: &str) -> IResult<&str, &Path, IErr<&str>> {
         let (rest, _) = context(
@@ -101,14 +105,15 @@ impl FlakeRefType {
                 tag("file"),
                 preceded(opt(tag("+file")), terminated(char(':'), opt(tag("//")))),
             ),
-        )(input)?;
+        )
+        .parse(input)?;
         let (rest, path_str) = Self::path_parser(rest)?;
         Ok((rest, Path::new(path_str)))
     }
     pub fn parse_file_with_http_transport(input: &str) -> IResult<&str, Self, IErr<&str>> {
         use nom::bytes::complete::take_till;
 
-        let (rest, scheme) = alt((tag("file+https"), tag("file+http")))(input)?;
+        let (rest, scheme) = alt((tag("file+https"), tag("file+http"))).parse(input)?;
         let (rest, _) = tag("://")(rest)?;
         let (rest, location) = take_till(|c| c == '#' || c == '?')(rest)?;
 
@@ -134,7 +139,8 @@ impl FlakeRefType {
         let (rest, _) = context(
             "networked file",
             preceded(tag("file+http"), alt((tag("://"), tag("s://")))),
-        )(input)?;
+        )
+        .parse(input)?;
 
         // Take everything until # or ? (parameters/fragments)
         let (rest, location) = take_till(|c| c == '#' || c == '?')(rest)?;
@@ -148,19 +154,20 @@ impl FlakeRefType {
     /// rules are not checked for in the current form of the parser
     /// <github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...
     pub fn parse_git_forge(input: &str) -> IResult<&str, Self, IErr<&str>> {
-        map(GitForge::parse, Self::GitForge)(input)
+        map(GitForge::parse, Self::GitForge).parse(input)
     }
     /// <git | hg>[+<transport-type]://
     pub fn parse_resource(input: &str) -> IResult<&str, Self, IErr<&str>> {
-        map(ResourceUrl::parse, Self::Resource)(input)
+        map(ResourceUrl::parse, Self::Resource).parse(input)
     }
     /// Parse plain HTTP/HTTPS URLs with auto-detection
     pub fn parse_plain_url(input: &str) -> IResult<&str, Self, IErr<&str>> {
         use crate::parser::is_tarball;
 
-        let (rest, scheme) = alt((tag("https"), tag("http")))(input)?;
-        let (rest, _) = tag("://")(rest)?;
-        let (rest, location) = context("url location", take_till(|c| c == '#' || c == '?'))(rest)?;
+        let (rest, scheme) = alt((tag("https"), tag("http"))).parse(input)?;
+        let (rest, _) = tag("://").parse(rest)?;
+        let (rest, location) =
+            context("url location", take_till(|c| c == '#' || c == '?')).parse(rest)?;
 
         let res_type = if is_tarball(location) {
             ResourceType::Tarball
@@ -185,19 +192,20 @@ impl FlakeRefType {
     }
     /// Parse indirect flake references (flake:id[/ref] or bare id[/ref])
     pub fn parse_indirect(input: &str) -> IResult<&str, Self, IErr<&str>> {
-        use nom::bytes::complete::{tag, take_till, take_while1};
+        use nom::bytes::complete::{take_till, take_while1};
         use nom::combinator::{opt, verify};
         use nom::sequence::preceded;
 
         // Try explicit flake: scheme first
-        if let Ok((rest, _)) = tag::<&str, &str, IErr<&str>>("flake:")(input) {
+        if let Ok((rest, _)) = tag("flake:").parse(input) {
             let (rest, id) = verify(
                 take_while1(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
                 |s: &str| !s.is_empty() && s.chars().next().unwrap().is_ascii_alphabetic(),
-            )(rest)?;
+            )
+            .parse(rest)?;
 
             let (rest, ref_or_rev) =
-                opt(preceded(char('/'), take_till(|c| c == '#' || c == '?')))(rest)?;
+                opt(preceded(char('/'), take_till(|c| c == '#' || c == '?'))).parse(rest)?;
 
             return Ok((
                 rest,
@@ -218,10 +226,11 @@ impl FlakeRefType {
                 let (rest, id) = verify(
                     take_while1(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
                     |s: &str| !s.is_empty() && s.chars().next().unwrap().is_ascii_alphabetic(),
-                )(input)?;
+                )
+                .parse(input)?;
 
                 let (rest, ref_or_rev) =
-                    opt(preceded(char('/'), take_till(|c| c == '#' || c == '?')))(rest)?;
+                    opt(preceded(char('/'), take_till(|c| c == '#' || c == '?'))).parse(rest)?;
 
                 return Ok((
                     rest,
@@ -235,7 +244,7 @@ impl FlakeRefType {
 
         Err(nom::Err::Error(IErr::Base {
             location: input,
-            kind: nom_supreme::error::BaseErrorKind::Kind(nom::error::ErrorKind::Fail),
+            kind: crate::error::BaseErrorKind::Kind(nom::error::ErrorKind::Fail),
         }))
     }
 
@@ -247,16 +256,18 @@ impl FlakeRefType {
             context("plain url", Self::parse_plain_url),
             context("resource", Self::parse_resource),
             context("indirect", Self::parse_indirect),
-        ))(input)
+        ))
+        .parse(input)
     }
     /// Parse type specific information, returns the [`FlakeRefType`]
     /// and the unparsed input
     pub fn parse_type(input: &str) -> NixUriResult<Self> {
         let (_, maybe_explicit_type) = opt(separated_pair(
-            take_until::<&str, &str, IErr<&str>>(":"),
+            take_until::<_, _, IErr<&str>>(":"),
             char(':'),
             rest,
-        ))(input)
+        ))
+        .parse(input)
         .finish()?;
         if let Some((flake_ref_type_str, input)) = maybe_explicit_type {
             match flake_ref_type_str {
@@ -328,8 +339,7 @@ impl FlakeRefType {
                 _ => {
                     if flake_ref_type_str.starts_with("git+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            opt(tag::<&str, &str, IErr<&str>>("//"))(input).finish()?;
+                        let (input, _tag) = opt(tag("//")).parse(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),
@@ -338,7 +348,7 @@ impl FlakeRefType {
                         Ok(flake_ref_type)
                     } else if flake_ref_type_str.starts_with("hg+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) = tag::<&str, &str, IErr<&str>>("//")(input).finish()?;
+                        let (input, _tag) = tag("//").parse(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Mercurial,
                             location: input.into(),
@@ -347,8 +357,7 @@ impl FlakeRefType {
                         Ok(flake_ref_type)
                     } else if flake_ref_type_str.starts_with("tarball+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            opt(tag::<&str, &str, IErr<&str>>("//"))(input).finish()?;
+                        let (input, _tag) = opt(tag("//")).parse(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Tarball,
                             location: input.into(),
@@ -357,8 +366,7 @@ impl FlakeRefType {
                         Ok(flake_ref_type)
                     } else if flake_ref_type_str.starts_with("file+") {
                         let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (input, _tag) =
-                            opt(tag::<&str, &str, IErr<&str>>("//"))(input).finish()?;
+                        let (input, _tag) = opt(tag("//")).parse(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::File,
                             location: input.into(),
@@ -369,7 +377,7 @@ impl FlakeRefType {
                         // Plain HTTP/HTTPS URL - auto-detect type based on extension
                         use crate::parser::is_tarball;
 
-                        let (input, _tag) = tag::<&str, &str, IErr<&str>>("//")(input).finish()?;
+                        let (input, _tag) = tag("//").parse(input).finish()?;
                         let res_type = if is_tarball(input) {
                             ResourceType::Tarball
                         } else {
@@ -389,7 +397,7 @@ impl FlakeRefType {
                         Ok(flake_ref_type)
                     } else if flake_ref_type_str == "git" {
                         // Bare git:// protocol
-                        let (input, _tag) = tag::<&str, &str, IErr<&str>>("//")(input).finish()?;
+                        let (input, _tag) = tag("//").parse(input).finish()?;
                         let flake_ref_type = Self::Resource(ResourceUrl {
                             res_type: ResourceType::Git,
                             location: input.into(),

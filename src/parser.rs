@@ -20,7 +20,7 @@ use crate::{
 /// Return everything prior as not parsed
 pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParameters>, IErr<&str>> {
     // This is the inverse of the general control flow
-    let (input, maybe_flake_type) = opt(take_until("?"))(input)?;
+    let (input, maybe_flake_type) = opt(take_until("?")).parse(input)?;
 
     if let Some(flake_type) = maybe_flake_type {
         // discard leading "?"
@@ -37,7 +37,8 @@ pub(crate) fn parse_params(input: &str) -> IResult<&str, Option<LocationParamete
                     alt((take_until("&"), take_till(|c| c == '#'))),
                 ),
             ),
-        )(input)?;
+        )
+        .parse(input)?;
 
         let mut params = LocationParameters::default();
         for (param, value) in param_values {
@@ -122,7 +123,8 @@ pub(crate) fn parse_sep(input: &str) -> IResult<&str, (char, (char, char)), IErr
     context(
         "location separator",
         n_char(':').and(n_char('/').and(n_char('/'))),
-    )(input)
+    )
+    .parse(input)
 }
 
 #[cfg(test)]

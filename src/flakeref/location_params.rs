@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use nom::{
-    IResult,
+    IResult, Parser,
     bytes::complete::{take_till, take_until},
     character::complete::char,
     error::context,
@@ -102,7 +102,8 @@ impl LocationParameters {
                     take_till(|c| c == '&' || c == '#'),
                 ),
             ),
-        )(input)?;
+        )
+        .parse(input)?;
 
         let mut params = Self::default();
         for (param, value) in param_values {
