@@ -15,6 +15,17 @@ mod forge;
 pub use forge::{GitForge, GitForgePlatform};
 mod resource_url;
 
+/// Indicates where a ref or rev is stored in a FlakeRef
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefLocation {
+    /// Ref/rev is stored in the path component (e.g., github:owner/repo/ref-or-rev)
+    PathComponent,
+    /// Ref/rev is stored in query parameters (e.g., ?ref=xyz or ?rev=abc)
+    QueryParameter,
+    /// No ref or rev is present
+    None,
+}
+
 /// The General Flake Ref Schema
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, serde(deny_unknown_fields))]
@@ -50,6 +61,107 @@ impl FlakeRef {
     pub fn params(&mut self, params: LocationParameters) -> &mut Self {
         self.params = params;
         self
+    }
+
+    /// Get the ref or rev value, checking both path-based and parameter-based locations.
+    /// Returns the first one found, preferring path-based over parameters.
+    pub fn get_ref_or_rev(&self) -> Option<String> {
+        // Check type-specific location first (path-based)
+        match &self.r#type {
+            FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
+            | FlakeRefType::Indirect { ref_or_rev, .. } => {
+                if ref_or_rev.is_some() {
+                    return ref_or_rev.clone();
+                }
+            }
+            _ => {}
+        }
+
+        // Fall back to params (query parameters)
+        self.params
+            .get_ref()
+            .map(|s| s.to_string())
+            .or_else(|| self.params.get_rev().map(|s| s.to_string()))
+    }
+
+    /// Determine where the ref or rev is stored in this FlakeRef
+    pub fn ref_source_location(&self) -> RefLocation {
+        // Check path-based location first
+        match &self.r#type {
+            FlakeRefType::GitForge(GitForge {
+                ref_or_rev: Some(_),
+                ..
+            })
+            | FlakeRefType::Indirect {
+                ref_or_rev: Some(_),
+                ..
+            } => {
+                return RefLocation::PathComponent;
+            }
+            _ => {}
+        }
+
+        if self.params.get_ref().is_some() || self.params.get_rev().is_some() {
+            return RefLocation::QueryParameter;
+        }
+
+        RefLocation::None
+    }
+
+    /// Set the ref value, preserving the existing storage location.
+    /// If no ref/rev exists, uses query parameters for Resource types
+    /// and path component for GitForge/Indirect types.
+    pub fn set_ref(&mut self, new_ref: Option<String>) -> Result<(), NixUriError> {
+        // Strategy: Preserve the existing location
+        match &mut self.r#type {
+            FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
+            | FlakeRefType::Indirect { ref_or_rev, .. } => {
+                if ref_or_rev.is_some() {
+                    *ref_or_rev = new_ref;
+                    return Ok(());
+                }
+                if self.params.get_ref().is_some() || self.params.get_rev().is_some() {
+                    self.params.r#ref(new_ref);
+                    return Ok(());
+                }
+                // Default for GitForge/Indirect: use path-based
+                *ref_or_rev = new_ref;
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // For all other types, use query parameters
+        self.params.r#ref(new_ref);
+        Ok(())
+    }
+
+    /// Set the rev value, preserving the existing storage location.
+    /// If no ref/rev exists, uses query parameters for Resource types
+    /// and path component for GitForge/Indirect types.
+    pub fn set_rev(&mut self, new_rev: Option<String>) -> Result<(), NixUriError> {
+        // Strategy: Preserve the existing location
+        match &mut self.r#type {
+            FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
+            | FlakeRefType::Indirect { ref_or_rev, .. } => {
+                if ref_or_rev.is_some() {
+                    *ref_or_rev = new_rev;
+                    return Ok(());
+                }
+                if self.params.get_ref().is_some() || self.params.get_rev().is_some() {
+                    self.params.rev(new_rev);
+                    return Ok(());
+                }
+                // Default for GitForge/Indirect: use path-based
+                *ref_or_rev = new_rev;
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // For all other types, use query parameters
+        self.params.rev(new_rev);
+        Ok(())
     }
 
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
@@ -1215,4 +1327,217 @@ mod tests {
     //     let parsed: FlakeRef = uri.try_into().unwrap();
     //     assert_eq!(expected, parsed);
     // }
+}
+
+#[cfg(test)]
+mod ref_rev_methods {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("github:nixos/nixpkgs/release-23.05", Some("release-23.05".to_string()), RefLocation::PathComponent)]
+    #[case("github:nixos/nixpkgs?ref=release-23.05", Some("release-23.05".to_string()), RefLocation::QueryParameter)]
+    #[case("github:nixos/nixpkgs?rev=abc123", Some("abc123".to_string()), RefLocation::QueryParameter)]
+    #[case("git+https://github.com/owner/repo?ref=v1.0.0", Some("v1.0.0".to_string()), RefLocation::QueryParameter)]
+    #[case("flake:nixpkgs/unstable", Some("unstable".to_string()), RefLocation::PathComponent)]
+    #[case("github:nixos/nixpkgs", None, RefLocation::None)]
+    #[case("git+https://github.com/owner/repo", None, RefLocation::None)]
+    fn test_get_ref_or_rev(
+        #[case] url: &str,
+        #[case] expected_ref: Option<String>,
+        #[case] expected_location: RefLocation,
+    ) {
+        let parsed: FlakeRef = url.parse().unwrap();
+        assert_eq!(
+            parsed.get_ref_or_rev(),
+            expected_ref,
+            "get_ref_or_rev mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.ref_source_location(),
+            expected_location,
+            "ref_source_location mismatch for {}",
+            url
+        );
+    }
+
+    #[rstest]
+    #[case("github:nixos/nixpkgs/release-23.05", RefLocation::PathComponent)]
+    #[case("github:nixos/nixpkgs?ref=release-23.05", RefLocation::QueryParameter)]
+    #[case(
+        "git+https://github.com/owner/repo?ref=v1.0.0",
+        RefLocation::QueryParameter
+    )]
+    #[case("flake:nixpkgs/unstable", RefLocation::PathComponent)]
+    #[case("github:nixos/nixpkgs", RefLocation::None)]
+    fn test_ref_source_location(#[case] url: &str, #[case] expected: RefLocation) {
+        let parsed: FlakeRef = url.parse().unwrap();
+        assert_eq!(parsed.ref_source_location(), expected);
+    }
+
+    #[test]
+    fn test_set_ref_preserves_path_component() {
+        // Start with path-based ref
+        let url = "github:nixos/nixpkgs/release-23.05";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+        assert_eq!(parsed.get_ref_or_rev(), Some("release-23.05".to_string()));
+
+        // Update ref - should preserve path-based location
+        parsed.set_ref(Some("release-24.05".to_string())).unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+        assert_eq!(parsed.get_ref_or_rev(), Some("release-24.05".to_string()));
+        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs/release-24.05");
+    }
+
+    #[test]
+    fn test_set_ref_preserves_query_parameter() {
+        // Start with param-based ref
+        let url = "github:nixos/nixpkgs?ref=release-23.05";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
+        assert_eq!(parsed.get_ref_or_rev(), Some("release-23.05".to_string()));
+
+        // Update ref - should preserve param-based location
+        parsed.set_ref(Some("release-24.05".to_string())).unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
+        assert_eq!(parsed.get_ref_or_rev(), Some("release-24.05".to_string()));
+        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs?ref=release-24.05");
+    }
+
+    #[test]
+    fn test_set_ref_on_git_url() {
+        // Git URLs should use query parameters
+        let url = "git+https://github.com/nixos/nixpkgs";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::None);
+
+        // Set ref - should use params
+        parsed.set_ref(Some("v1.0.0".to_string())).unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
+        assert_eq!(parsed.get_ref_or_rev(), Some("v1.0.0".to_string()));
+        assert!(parsed.to_string().contains("?ref=v1.0.0"));
+    }
+
+    #[test]
+    fn test_set_ref_on_github_without_ref_defaults_to_path() {
+        // GitHub URLs without ref should default to path-based
+        let url = "github:nixos/nixpkgs";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::None);
+
+        // Set ref - should use path-based for GitHub
+        parsed.set_ref(Some("release-23.05".to_string())).unwrap();
+
+        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs/release-23.05");
+    }
+
+    #[test]
+    fn test_set_rev_preserves_location() {
+        // Test with path-based
+        let url = "github:nixos/nixpkgs/abc123";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        parsed.set_rev(Some("def456".to_string())).unwrap();
+        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs/def456");
+
+        // Test with param-based
+        let url2 = "github:nixos/nixpkgs?rev=abc123";
+        let mut parsed2: FlakeRef = url2.parse().unwrap();
+
+        parsed2.set_rev(Some("def456".to_string())).unwrap();
+        assert_eq!(parsed2.ref_source_location(), RefLocation::QueryParameter);
+        assert_eq!(parsed2.to_string(), "github:nixos/nixpkgs?rev=def456");
+    }
+
+    #[test]
+    fn test_remove_ref() {
+        // Remove path-based ref
+        let url = "github:nixos/nixpkgs/release-23.05";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        parsed.set_ref(None).unwrap();
+        assert_eq!(parsed.ref_source_location(), RefLocation::None);
+        assert_eq!(parsed.get_ref_or_rev(), None);
+        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs");
+
+        // Remove param-based ref
+        let url2 = "github:nixos/nixpkgs?ref=release-23.05";
+        let mut parsed2: FlakeRef = url2.parse().unwrap();
+
+        parsed2.set_ref(None).unwrap();
+        assert_eq!(parsed2.ref_source_location(), RefLocation::None);
+        assert_eq!(parsed2.get_ref_or_rev(), None);
+        assert_eq!(parsed2.to_string(), "github:nixos/nixpkgs");
+    }
+
+    #[test]
+    fn test_indirect_type_uses_path_component() {
+        let url = "flake:nixpkgs";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        parsed.set_ref(Some("unstable".to_string())).unwrap();
+        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+        // Note: Indirect types display without "flake:" prefix
+        assert_eq!(parsed.to_string(), "nixpkgs/unstable");
+    }
+
+    #[test]
+    fn test_roundtrip_path_based() {
+        let original = "github:nixos/nixpkgs/release-23.05";
+        let mut parsed: FlakeRef = original.parse().unwrap();
+
+        // Get the ref
+        let ref_value = parsed.get_ref_or_rev().unwrap();
+        assert_eq!(ref_value, "release-23.05");
+
+        // Set it to the same value
+        parsed.set_ref(Some(ref_value)).unwrap();
+
+        // Should still be identical
+        assert_eq!(parsed.to_string(), original);
+    }
+
+    #[test]
+    fn test_roundtrip_param_based() {
+        let original = "git+https://github.com/nixos/nixpkgs?ref=v1.0.0";
+        let mut parsed: FlakeRef = original.parse().unwrap();
+
+        // Get the ref
+        let ref_value = parsed.get_ref_or_rev().unwrap();
+        assert_eq!(ref_value, "v1.0.0");
+
+        // Set it to the same value
+        parsed.set_ref(Some(ref_value)).unwrap();
+
+        // Should still be identical
+        assert_eq!(parsed.to_string(), original);
+    }
+
+    #[test]
+    fn test_set_ref_and_rev_independently() {
+        // Start with no ref/rev
+        let url = "git+https://github.com/owner/repo";
+        let mut parsed: FlakeRef = url.parse().unwrap();
+
+        // Set ref
+        parsed.set_ref(Some("main".to_string())).unwrap();
+        assert_eq!(parsed.params.get_ref(), Some(&"main".to_string()));
+        assert_eq!(parsed.params.get_rev(), None);
+
+        // Setting rev should not clear ref (they're independent in params)
+        parsed.set_rev(Some("abc123".to_string())).unwrap();
+        assert_eq!(parsed.params.get_ref(), Some(&"main".to_string()));
+        assert_eq!(parsed.params.get_rev(), Some(&"abc123".to_string()));
+    }
 }
