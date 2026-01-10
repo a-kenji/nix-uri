@@ -488,20 +488,66 @@ impl FlakeRefType {
     pub(crate) fn get_id(&self) -> Option<String> {
         match self {
             Self::GitForge(GitForge { repo, .. }) => Some(repo.to_string()),
+            Self::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
+                location,
+                ..
+            }) => {
+                // Extract repo from "domain.com/owner/repo" or "domain.com/owner/repo.git"
+                location
+                    .split('/')
+                    .nth(2)
+                    .map(|s| s.strip_suffix(".git").unwrap_or(s).to_string())
+            }
             _ => None,
         }
     }
     pub fn get_repo(&self) -> Option<String> {
         match self {
             Self::GitForge(GitForge { repo, .. }) => Some(repo.into()),
-            // TODO: #158
+            Self::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
+                location,
+                ..
+            }) => {
+                // Parse "domain.com/owner/repo" or "domain.com/owner/repo.git"
+                location
+                    .split('/')
+                    .nth(2)
+                    .map(|s| s.strip_suffix(".git").unwrap_or(s).to_string())
+            }
             _ => None,
         }
     }
     pub fn get_owner(&self) -> Option<String> {
         match self {
             Self::GitForge(GitForge { owner, .. }) => Some(owner.into()),
-            // TODO: #158
+            Self::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
+                location,
+                ..
+            }) => {
+                // Parse "domain.com/owner/repo" -> "owner"
+                location.split('/').nth(1).map(String::from)
+            }
+            _ => None,
+        }
+    }
+    pub fn get_domain(&self) -> Option<String> {
+        match self {
+            Self::GitForge(GitForge { platform, .. }) => match platform {
+                GitForgePlatform::GitHub => Some("github.com".to_string()),
+                GitForgePlatform::GitLab => Some("gitlab.com".to_string()),
+                GitForgePlatform::SourceHut => Some("sr.ht".to_string()),
+            },
+            Self::Resource(ResourceUrl {
+                res_type: ResourceType::Git,
+                location,
+                ..
+            }) => {
+                // Extract domain from "domain.com/owner/repo"
+                location.split('/').next().map(String::from)
+            }
             _ => None,
         }
     }
@@ -1631,5 +1677,176 @@ mod inc_parse_file {
         expected_ref.location = "/wheres/wally/".to_string();
         assert_eq!(FlakeRefType::Resource(expected_ref), parsed_file2);
         assert_eq!(rest, "#");
+    }
+}
+
+#[cfg(test)]
+mod resource_type_methods {
+    use super::*;
+    use crate::FlakeRef;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("git+https://github.com/owner/repo", "github.com", "owner", "repo")]
+    #[case(
+        "git+https://git.clan.lol/kenji/test-release",
+        "git.clan.lol",
+        "kenji",
+        "test-release"
+    )]
+    #[case(
+        "git+https://codeberg.org/forgejo/forgejo",
+        "codeberg.org",
+        "forgejo",
+        "forgejo"
+    )]
+    #[case("git+https://gitlab.com/user/project", "gitlab.com", "user", "project")]
+    #[case("git+http://example.com/org/myrepo", "example.com", "org", "myrepo")]
+    fn test_resource_git_url_extraction(
+        #[case] url: &str,
+        #[case] expected_domain: &str,
+        #[case] expected_owner: &str,
+        #[case] expected_repo: &str,
+    ) {
+        let parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(
+            parsed.r#type.get_domain(),
+            Some(expected_domain.to_string()),
+            "Domain mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.r#type.get_owner(),
+            Some(expected_owner.to_string()),
+            "Owner mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.r#type.get_repo(),
+            Some(expected_repo.to_string()),
+            "Repo mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.r#type.get_id(),
+            Some(expected_repo.to_string()),
+            "ID mismatch for {}",
+            url
+        );
+    }
+
+    #[rstest]
+    #[case("git+https://github.com/owner/repo.git", "repo")]
+    #[case("git+https://git.clan.lol/kenji/test-release.git", "test-release")]
+    fn test_resource_git_url_with_git_suffix(#[case] url: &str, #[case] expected_repo: &str) {
+        let parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(
+            parsed.r#type.get_repo(),
+            Some(expected_repo.to_string()),
+            ".git suffix should be stripped"
+        );
+        assert_eq!(
+            parsed.r#type.get_id(),
+            Some(expected_repo.to_string()),
+            ".git suffix should be stripped from ID"
+        );
+    }
+
+    #[rstest]
+    #[case("github:nixos/nixpkgs", "github.com", "nixos", "nixpkgs")]
+    #[case("gitlab:owner/repo", "gitlab.com", "owner", "repo")]
+    #[case("sourcehut:user/project", "sr.ht", "user", "project")]
+    fn test_gitforge_domain_extraction(
+        #[case] url: &str,
+        #[case] expected_domain: &str,
+        #[case] expected_owner: &str,
+        #[case] expected_repo: &str,
+    ) {
+        let parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(
+            parsed.r#type.get_domain(),
+            Some(expected_domain.to_string()),
+            "Domain mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.r#type.get_owner(),
+            Some(expected_owner.to_string()),
+            "Owner mismatch for {}",
+            url
+        );
+        assert_eq!(
+            parsed.r#type.get_repo(),
+            Some(expected_repo.to_string()),
+            "Repo mismatch for {}",
+            url
+        );
+    }
+
+    #[rstest]
+    #[case("path:/foo/bar")]
+    #[case("/foo/bar")]
+    #[case("./relative/path")]
+    #[case("flake:nixpkgs")]
+    #[case("https://example.com/file.tar.gz")]
+    fn test_non_git_resource_returns_none(#[case] url: &str) {
+        let parsed: FlakeRef = url.parse().unwrap();
+
+        assert_eq!(
+            parsed.r#type.get_domain(),
+            None,
+            "Non-git resources should return None for domain"
+        );
+        assert_eq!(
+            parsed.r#type.get_owner(),
+            None,
+            "Non-git resources should return None for owner"
+        );
+        assert_eq!(
+            parsed.r#type.get_repo(),
+            None,
+            "Non-git resources should return None for repo"
+        );
+    }
+
+    #[test]
+    fn test_flaketype_none_display() {
+        let none_type = FlakeRefType::None;
+        assert_eq!(
+            none_type.to_string(),
+            "none",
+            "FlakeRefType::None should display as 'none'"
+        );
+    }
+
+    #[rstest]
+    #[case("git+https://example.com/a/b", Some("example.com".to_string()), Some("a".to_string()), Some("b".to_string()))]
+    #[case("git+https://x.y.z/org/repo", Some("x.y.z".to_string()), Some("org".to_string()), Some("repo".to_string()))]
+    #[case("git+https://host/o/r.git", Some("host".to_string()), Some("o".to_string()), Some("r".to_string()))]
+    fn test_resource_url_minimal_parsing(
+        #[case] url: &str,
+        #[case] expected_domain: Option<String>,
+        #[case] expected_owner: Option<String>,
+        #[case] expected_repo: Option<String>,
+    ) {
+        let parsed: FlakeRef = url.parse().unwrap();
+        assert_eq!(parsed.r#type.get_domain(), expected_domain);
+        assert_eq!(parsed.r#type.get_owner(), expected_owner);
+        assert_eq!(parsed.r#type.get_repo(), expected_repo);
+    }
+
+    #[rstest]
+    #[case("git+https://domain.com/owner")] // Missing repo
+    #[case("git+https://domain.com")] // Missing owner and repo
+    fn test_resource_url_insufficient_components_returns_none(#[case] url: &str) {
+        let parsed: FlakeRef = url.parse().unwrap();
+        // With insufficient path components, should return None
+        assert!(
+            parsed.r#type.get_repo().is_none() || parsed.r#type.get_owner().is_none(),
+            "URLs with insufficient path components should return None for missing parts"
+        );
     }
 }

@@ -39,6 +39,7 @@ url = { version = "2.5.7" }
 [dev-dependencies]
 cool_asserts = "2.0.3"
 criterion = { version = "0.7.0", features = ["html_reports"] }
+rstest = "0.25.0"
 
 [[bench]]
 name = "bench"
