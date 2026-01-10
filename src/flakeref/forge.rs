@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::take_till1,
     character::complete::char,
@@ -9,10 +9,9 @@ use nom::{
     error::context,
     sequence::{preceded, separated_pair, terminated},
 };
-use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::IErr;
+use crate::{IErr, error::tag};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GitForgePlatform {
@@ -36,10 +35,11 @@ impl GitForgePlatform {
             value(Self::GitHub, tag("github")),
             value(Self::GitLab, tag("gitlab")),
             value(Self::SourceHut, tag("sourcehut")),
-        ))(input)
+        ))
+        .parse(input)
     }
     pub fn parse_terminated(input: &str) -> IResult<&str, Self, IErr<&str>> {
-        terminated(Self::parse, char(':'))(input)
+        terminated(Self::parse, char(':')).parse(input)
     }
 }
 
@@ -54,12 +54,13 @@ impl GitForge {
                 char('/'),
                 context("repo", take_till1(|c| c == '/' || c == '?' || c == '#')),
             )),
-        )(input)
+        )
+        .parse(input)
     }
 
     /// `/[foobar]<?#>...` -> `(<?#>...), Option<foobar>)`
     fn parse_rev_ref(input: &str) -> IResult<&str, Option<&str>, IErr<&str>> {
-        preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#')))(input)
+        preceded(char('/'), opt(take_till1(|c| c == '?' || c == '#'))).parse(input)
     }
     // TODO?: Apply gitlab/hub/sourcehut rule-checks
     // TODO: #158
@@ -70,13 +71,13 @@ impl GitForge {
     ) -> IResult<&str, (&str, &str, Option<&str>), IErr<&str>> {
         let (input, (owner, repo)) = Self::parse_owner_repo(input)?;
         // drop the `/` if it exists
-        let (input, maybe_refrev) = opt(Self::parse_rev_ref)(input)?;
+        let (input, maybe_refrev) = opt(Self::parse_rev_ref).parse(input)?;
         // if the remaining is empty, that's the ref/rev
 
         Ok((input, (owner, repo, maybe_refrev.flatten())))
     }
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
-        let (rest, platform) = terminated(GitForgePlatform::parse, char(':'))(input)?;
+        let (rest, platform) = terminated(GitForgePlatform::parse, char(':')).parse(input)?;
         let (rest, forge_path) = Self::parse_owner_repo_ref(rest)?;
         let res = Self {
             platform,
@@ -138,9 +139,10 @@ mod inc_parse_platform {
 mod err_msgs {
     use cool_asserts::assert_matches;
     use nom::{Finish, error::ErrorKind};
-    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
 
     use super::*;
+    use crate::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     #[test]
     fn just_owner() {
         let input = "owner";

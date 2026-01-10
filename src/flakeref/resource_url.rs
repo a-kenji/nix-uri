@@ -1,16 +1,15 @@
 use std::fmt::Display;
 
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::take_till,
     combinator::{opt, value},
     error::context,
 };
-use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::{IErr, parser::parse_sep};
+use crate::{IErr, error::tag, parser::parse_sep};
 
 use super::TransportLayer;
 
@@ -24,9 +23,10 @@ pub struct ResourceUrl {
 impl ResourceUrl {
     pub fn parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         let (rest, res_type) = ResourceType::parse(input)?;
-        let (rest, transport_type) = opt(TransportLayer::plus_parse)(rest)?;
+        let (rest, transport_type) = opt(TransportLayer::plus_parse).parse(rest)?;
         let (rest, _tag) = parse_sep(rest)?;
-        let (res, location) = context("url location", take_till(|c| c == '#' || c == '?'))(rest)?;
+        let (res, location) =
+            context("url location", take_till(|c| c == '#' || c == '?')).parse(rest)?;
 
         Ok((
             res,
@@ -56,7 +56,8 @@ impl ResourceType {
                 value(Self::File, tag("file")),
                 value(Self::Tarball, tag("tarball")),
             )),
-        )(input)
+        )
+        .parse(input)
     }
 }
 
@@ -76,9 +77,9 @@ impl Display for ResourceType {
 mod res_url {
     use cool_asserts::assert_matches;
     use nom::Finish;
-    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
 
     use super::*;
+    use crate::error::{BaseErrorKind, ErrorTree, Expectation};
 
     #[test]
     fn git() {

@@ -1,17 +1,19 @@
 use std::fmt::Display;
 
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     character::complete::char,
     combinator::{cut, value},
     error::context,
     sequence::preceded,
 };
-use nom_supreme::tag::complete::tag;
 use serde::{Deserialize, Serialize};
 
-use crate::{IErr, error::NixUriError};
+use crate::{
+    IErr,
+    error::{NixUriError, tag},
+};
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,13 +37,15 @@ impl TransportLayer {
                 value(Self::Ssh, tag("ssh")),
                 value(Self::File, tag("file")),
             )),
-        )(input)
+        )
+        .parse(input)
     }
     pub fn plus_parse(input: &str) -> IResult<&str, Self, IErr<&str>> {
         context(
             "transport type separator",
             preceded(char('+'), cut(Self::parse)),
-        )(input)
+        )
+        .parse(input)
     }
 }
 
@@ -75,9 +79,10 @@ impl Display for TransportLayer {
 #[cfg(test)]
 mod inc_parse {
     use cool_asserts::assert_matches;
-    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation};
 
     use super::*;
+    use crate::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     #[test]
     fn basic() {
         let uri = "+http://";
@@ -116,7 +121,7 @@ mod inc_parse {
                     location: "://",
                     kind: BaseErrorKind::Expected(Expectation::Char('+'))
                 });
-                assert_eq!(contexts, [("://", nom_supreme::error::StackContext::Context("transport type separator"))]);
+                assert_eq!(contexts, [("://", StackContext::Context("transport type separator"))]);
             }
         );
         // panic!("{:#?}", e);
@@ -146,9 +151,10 @@ mod inc_parse {
 mod err_msg {
     use cool_asserts::assert_matches;
     use nom::Finish;
-    use nom_supreme::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
 
     use super::*;
+    use crate::error::{BaseErrorKind, ErrorTree, Expectation, StackContext};
+
     #[test]
     fn fizzbuzz() {
         let url = "+fizzbuzz";
@@ -180,6 +186,7 @@ mod err_msg {
                 assert_eq!(
                     contexts,
                     [
+                        ("fizzbuzz", StackContext::Kind(nom::error::ErrorKind::Alt)),
                         ("fizzbuzz", StackContext::Context("transport type")),
                         ("+fizzbuzz", StackContext::Context("transport type separator"))
                     ]
@@ -218,7 +225,10 @@ mod err_msg {
                 });
                 assert_eq!(
                     contexts,
-                    [("", StackContext::Context("transport type"))]
+                    [
+                        ("", StackContext::Kind(nom::error::ErrorKind::Alt)),
+                        ("", StackContext::Context("transport type"))
+                    ]
                 );
             }
         );
