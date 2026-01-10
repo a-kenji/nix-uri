@@ -34,7 +34,7 @@ nom-supreme = "0.8.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.17"
 tracing = { version = "0.1.44", optional = true }
-url = { version = "2.5.7" }
+url = { version = "2.5.8" }
 
 [dev-dependencies]
 cool_asserts = "2.0.3"
