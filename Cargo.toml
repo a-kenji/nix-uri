@@ -31,7 +31,7 @@ tracing = ["dep:tracing"]
 [dependencies]
 nom = "8.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 tracing = { version = "0.1.44", optional = true }
 url = { version = "2.5.8" }
 
