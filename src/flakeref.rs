@@ -69,10 +69,10 @@ impl FlakeRef {
         // Check type-specific location first (path-based)
         match &self.r#type {
             FlakeRefType::GitForge(GitForge { ref_or_rev, .. })
-            | FlakeRefType::Indirect { ref_or_rev, .. } => {
-                if ref_or_rev.is_some() {
-                    return ref_or_rev.clone();
-                }
+            | FlakeRefType::Indirect { ref_or_rev, .. }
+                if ref_or_rev.is_some() =>
+            {
+                return ref_or_rev.clone();
             }
             _ => {}
         }
