@@ -1,262 +1,426 @@
-use nom::error::{ContextError, ErrorKind, FromExternalError, ParseError};
 use std::fmt;
+
 use thiserror::Error;
+use winnow::Parser;
+use winnow::error::{ContextError, ErrMode, ParseError, StrContext, StrContextValue};
+use winnow::stream::{Offset, Stream};
+use winnow::token::literal;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
 
-/// Custom error tree type compatible with nom 8.0
-/// This provides similar functionality to nom-supreme's ErrorTree
-#[derive(Debug, Clone, PartialEq)]
-pub enum ErrorTree<I> {
-    /// A base error - a leaf node in the error tree
-    Base {
-        /// The location in the input where the error occurred
-        location: I,
-        /// The kind of error that occurred
-        kind: BaseErrorKind,
-    },
-    /// A stack of errors with context
-    Stack {
-        /// The base error
-        base: Box<ErrorTree<I>>,
-        /// The context stack
-        contexts: Vec<(I, StackContext)>,
-    },
-    /// A collection of alternative errors from `alt`
-    Alt(Vec<ErrorTree<I>>),
-}
-
-/// The kind of base error
-#[derive(Debug, Clone, PartialEq)]
-pub enum BaseErrorKind {
-    /// A nom ErrorKind
-    Kind(ErrorKind),
-    /// An expected value
-    Expected(Expectation),
-    /// An external error
-    External(String),
-}
-
-/// What was expected when parsing
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expectation {
-    /// Expected a specific tag
-    Tag(&'static str),
-    /// Expected a specific character
-    Char(char),
-    /// Expected end of input
-    Eof,
-    /// Expected alpha character
-    Alpha,
-    /// Expected digit
-    Digit,
-    /// Expected hex digit
-    HexDigit,
-    /// Expected alphanumeric
-    AlphaNumeric,
-    /// Expected space
-    Space,
-    /// Expected multispace
-    Multispace,
-    /// Expected something else
-    Something,
-}
-
-/// Context added to a stack
-#[derive(Debug, Clone, PartialEq)]
-pub enum StackContext {
-    /// A static context string
-    Context(&'static str),
-    /// A nom ErrorKind
-    Kind(ErrorKind),
-}
-
-impl<I> ErrorTree<I> {
-    /// Map the locations in this error tree
-    pub fn map_locations<O>(self, f: impl Fn(I) -> O + Copy) -> ErrorTree<O> {
-        match self {
-            ErrorTree::Base { location, kind } => ErrorTree::Base {
-                location: f(location),
-                kind,
-            },
-            ErrorTree::Stack { base, contexts } => ErrorTree::Stack {
-                base: Box::new(base.map_locations(f)),
-                contexts: contexts.into_iter().map(|(i, c)| (f(i), c)).collect(),
-            },
-            ErrorTree::Alt(alts) => {
-                ErrorTree::Alt(alts.into_iter().map(|e| e.map_locations(f)).collect())
-            }
-        }
-    }
-}
-
-impl<I: Clone> ParseError<I> for ErrorTree<I> {
-    fn from_error_kind(input: I, kind: ErrorKind) -> Self {
-        ErrorTree::Base {
-            location: input,
-            kind: BaseErrorKind::Kind(kind),
-        }
-    }
-
-    fn append(input: I, kind: ErrorKind, other: Self) -> Self {
-        let context = (input, StackContext::Kind(kind));
-        match other {
-            ErrorTree::Stack { base, mut contexts } => {
-                contexts.push(context);
-                ErrorTree::Stack { base, contexts }
-            }
-            base => ErrorTree::Stack {
-                base: Box::new(base),
-                contexts: vec![context],
-            },
-        }
-    }
-
-    fn from_char(input: I, c: char) -> Self {
-        ErrorTree::Base {
-            location: input,
-            kind: BaseErrorKind::Expected(Expectation::Char(c)),
-        }
-    }
-
-    fn or(self, other: Self) -> Self {
-        // Combine alternatives
-        let mut alts = match self {
-            ErrorTree::Alt(v) => v,
-            e => vec![e],
-        };
-        match other {
-            ErrorTree::Alt(v) => alts.extend(v),
-            e => alts.push(e),
-        }
-        ErrorTree::Alt(alts)
-    }
-}
-
-impl<I: Clone> ContextError<I> for ErrorTree<I> {
-    fn add_context(input: I, ctx: &'static str, other: Self) -> Self {
-        let context = (input, StackContext::Context(ctx));
-        match other {
-            ErrorTree::Stack { base, mut contexts } => {
-                contexts.push(context);
-                ErrorTree::Stack { base, contexts }
-            }
-            base => ErrorTree::Stack {
-                base: Box::new(base),
-                contexts: vec![context],
-            },
-        }
-    }
-}
-
-impl<I: Clone, E: std::fmt::Display> FromExternalError<I, E> for ErrorTree<I> {
-    fn from_external_error(input: I, _kind: ErrorKind, e: E) -> Self {
-        ErrorTree::Base {
-            location: input,
-            kind: BaseErrorKind::External(e.to_string()),
-        }
-    }
-}
-
-impl<I: fmt::Display> fmt::Display for ErrorTree<I> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ErrorTree::Base { location, kind } => {
-                write!(f, "error {:?} at: {}", kind, location)
-            }
-            ErrorTree::Stack { base, contexts } => {
-                write!(f, "{}", base)?;
-                for (input, context) in contexts {
-                    write!(f, "\n  in {:?} at: {}", context, input)?;
-                }
-                Ok(())
-            }
-            ErrorTree::Alt(alts) => {
-                writeln!(f, "one of:")?;
-                for alt in alts {
-                    writeln!(f, "  {}", alt)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl<I: fmt::Debug + fmt::Display> std::error::Error for ErrorTree<I> {}
-
-pub type IErr<E> = ErrorTree<E>;
-
+/// Failures the parser may produce.
+///
+/// Variants are stable categories: callers can match `Parse` for a syntactic
+/// failure with a byte position, `Unsupported` for a recognised input that
+/// asks for something the library does not implement, `InvalidUrl` for input
+/// that fails the high-level URL shape, and `InvalidValue` for a field that
+/// passed parsing but failed validation. Structural failures that involve a
+/// relationship between fields (rather than a single value's literal shape)
+/// surface as named variants such as `FieldConflict`, `MissingScheme`, or
+/// `TooManyIndirectSegments`. `ServoUrl` wraps the upstream
+/// `url::ParseError` for tarball- and HTTP-style URLs.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NixUriError {
-    /// Generic nix uri error
-    #[error("Error: {0}")]
-    Error(String),
-    /// Generic parsing fail
-    #[error("Error parsing: {0}")]
-    ParseError(String),
-    /// Invalid Url
-    #[error("Not a valid Url: {0}")]
+    /// Parser failed at the given byte offset, expecting `expected`.
+    #[error("parse error at byte {position}: expected {expected}")]
+    Parse {
+        position: usize,
+        expected: ParseExpected,
+    },
+    /// The input parsed but requests an unsupported operation, parameter,
+    /// type, or transport layer.
+    #[error("{0}")]
+    Unsupported(UnsupportedReason),
+    /// The input is malformed at a higher level than the byte parser:
+    /// an illegal path character, a non-absolute path where one was required,
+    /// or an otherwise unparseable URL shape.
+    #[error("not a valid URL: {0}")]
     InvalidUrl(String),
-    /// The path to directories must be absolute
-    #[error("The path is not absolute: {0}")]
-    NotAbsolute(String),
-    /// Contained an Illegal Path Character
-    #[error("Contains an illegal path character: {0}")]
-    PathCharacter(String),
-    /// The type doesn't have the required default parameter set
-    /// Example: Github needs to have an owner and a repo
-    // TODO collect multiple potentially missing parameters
-    #[error("FlakeRef Type: {0} is missing the following required parameter: {1}")]
-    MissingTypeParameter(String, String),
-    /// The type of the uri itself, for example `github`
-    #[error("The type is not known: {0}")]
-    UnknownUriType(String),
-    /// The type of the uri extensions for a uri type, for example `git+ssh`
-    /// the ssh part is the type here.
-    #[error("The type is not known: {0}")]
-    UnknownTransportLayer(String),
-    /// Invalid Type
-    #[error("Invalid FlakeRef Type: {0}")]
-    InvalidType(String),
-    #[error("The parameter: {0} is not supported by the flakeref type.")]
-    UnsupportedParam(String),
-    #[error("field: `{0}` only supported by: `{1}`.")]
-    UnsupportedByType(String, String),
-    #[error("The parameter: {0} invalid.")]
-    UnknownUriParameter(String),
-    /// Nom Error
-    /// TODO: Implement real conversion instead of this hack.
-    #[error("Nom Error: {0}")]
-    Nom(String),
-    #[error(transparent)]
-    NomParseError(#[from] IErr<String>),
-    // #[error("{} {}", 0.0, 0.1)]
-    // Parser((String, VerboseErrorKind)),
-    #[error("Servo Url Parsing Error: {0}")]
+    /// A field's value did not pass validation. Reserved for failures where
+    /// a single field's literal shape is wrong (e.g. a `?rev=` that is not
+    /// 40 hex chars). Failures that involve a relationship between two
+    /// fields surface as [`Self::FieldConflict`].
+    #[error("invalid value for `{field}`: {reason}")]
+    InvalidValue { field: &'static str, reason: String },
+    /// Two fields were populated that the grammar treats as mutually
+    /// exclusive. The canonical case is a `GitForge` input that supplies
+    /// both `ref` and `rev`; Nix rejects the same shape.
+    #[error("`{left}` and `{right}` are mutually exclusive")]
+    FieldConflict {
+        left: &'static str,
+        right: &'static str,
+    },
+    /// A bare (no-scheme) input had more than one path segment, so it
+    /// cannot be classified as an indirect flake id and the parser cannot
+    /// guess which forge scheme (`github:` / `gitlab:` / `sourcehut:`)
+    /// the user intended. Mirrors upstream's rejection of bare
+    /// `owner/repo` shorthand.
+    #[error("input `{input}` has no scheme; bare two-segment shorthand is not supported")]
+    MissingScheme { input: String },
+    /// A `flake:` indirect URI exceeded Nix's three-segment cap
+    /// (`id[/ref[/rev]]`). `count` is the number of `/`-separated
+    /// segments in the rejected tail, including the id segment.
+    #[error("indirect form accepts at most 3 segments, got {count}")]
+    TooManyIndirectSegments { count: usize },
+    /// Wraps `url::ParseError` for tarball- and HTTP-style URLs.
+    #[error("URL parsing error: {0}")]
     ServoUrl(#[from] url::ParseError),
 }
 
-impl From<IErr<&str>> for NixUriError {
-    fn from(value: IErr<&str>) -> Self {
-        let new_errs = value.map_locations(|i| i.to_string());
-        Self::NomParseError(new_errs)
+/// What the parser was looking for when it failed.
+///
+/// `Other` is retained in the public enum so downstream additions can land
+/// without churning every caller's match arms, but no internal call site
+/// constructs it: every reachable parser fall-through routes into one of
+/// the named variants below. A new winnow `StrContextValue` variant
+/// added upstream surfaces as `Unknown` rather than silently widening
+/// `Other`'s vocabulary at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParseExpected {
+    /// A specific literal token, e.g. `github:`.
+    Tag(&'static str),
+    /// A specific character.
+    Char(char),
+    /// End of input.
+    Eof,
+    /// An alphabetic character.
+    Alpha,
+    /// A decimal digit.
+    Digit,
+    /// A hexadecimal digit.
+    HexDigit,
+    /// An alphanumeric character.
+    AlphaNumeric,
+    /// A space character.
+    Space,
+    /// One or more whitespace characters.
+    Multispace,
+    /// A textual description from a winnow `StrContext::Expected`
+    /// (`StrContextValue::Description`) frame that the converter did not
+    /// fold into one of the typed character-class variants above.
+    Description(&'static str),
+    /// A `StrContext::Label` frame that survived to the boundary because
+    /// no `Expected(...)` frame was attached. The parser-internal
+    /// label name is forwarded verbatim.
+    Label(&'static str),
+    /// The parser ran a multi-branch alternative and none of the branches
+    /// pushed a more specific frame.
+    Alternatives,
+    /// A `StrContextValue` variant from a future winnow upgrade that this
+    /// crate has not yet learned to discriminate. Surfacing it as a typed
+    /// variant (rather than a runtime string) makes the upgrade an audited
+    /// event rather than silent vocabulary drift.
+    Unknown,
+    /// A free-form description. Reserved for ad-hoc additions; no internal
+    /// call site constructs this variant today.
+    Other(String),
+}
+
+impl fmt::Display for ParseExpected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tag(t) => write!(f, "tag `{t}`"),
+            Self::Char(c) => write!(f, "char `{c}`"),
+            Self::Eof => f.write_str("end of input"),
+            Self::Alpha => f.write_str("an alphabetic character"),
+            Self::Digit => f.write_str("a digit"),
+            Self::HexDigit => f.write_str("a hex digit"),
+            Self::AlphaNumeric => f.write_str("an alphanumeric character"),
+            Self::Space => f.write_str("a space"),
+            Self::Multispace => f.write_str("whitespace"),
+            Self::Description(d) => f.write_str(d),
+            Self::Label(s) => write!(f, "label `{s}`"),
+            Self::Alternatives => f.write_str("one of several alternatives"),
+            Self::Unknown => f.write_str("an unrecognised parser context"),
+            Self::Other(s) => f.write_str(s),
+        }
     }
 }
 
-/// A tag combinator that produces nice error messages with `Expected(Tag(...))`
-/// This is similar to nom-supreme's tag functionality
-pub fn tag<'a>(
+/// Categorised reason an `Unsupported` URI was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnsupportedReason {
+    /// A query parameter is not supported by the flakeref type.
+    Param { name: String },
+    /// A field is recognised but only valid on a different set of types.
+    Field {
+        field: String,
+        only_supported_by: String,
+    },
+    /// The URI scheme/type identifier is not known.
+    UriType { ty: String },
+    /// The transport layer (the part after `+`) is not known.
+    TransportLayer { ty: String },
+    /// A required parameter for the type is missing.
+    MissingParameter { ty: String, parameter: String },
+    /// The scheme does not accept a URL authority (`//host`). Nix rejects
+    /// the same shape; `path://host/...` is malformed even though it
+    /// superficially looks like a URL.
+    Authority { scheme: &'static str },
+}
+
+impl fmt::Display for UnsupportedReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Param { name } => {
+                write!(
+                    f,
+                    "the parameter `{name}` is not supported by the flakeref type"
+                )
+            }
+            Self::Field {
+                field,
+                only_supported_by,
+            } => write!(f, "field `{field}` only supported by `{only_supported_by}`"),
+            Self::UriType { ty } => write!(f, "unknown URI type `{ty}`"),
+            Self::TransportLayer { ty } => write!(f, "unknown transport layer `{ty}`"),
+            Self::MissingParameter { ty, parameter } => write!(
+                f,
+                "FlakeRef type `{ty}` is missing required parameter `{parameter}`"
+            ),
+            Self::Authority { scheme } => {
+                write!(f, "the `{scheme}:` scheme does not accept a URL authority")
+            }
+        }
+    }
+}
+
+/// A literal-token parser that attaches an `Expected(StringLiteral(...))`
+/// context so failures surface as `ParseExpected::Tag(literal)`.
+///
+/// Carries the crate's failure-shape contract: the `Expected` context is
+/// what the boundary converter folds into the `ParseExpected::Tag` variant.
+pub(crate) fn tag<'i>(
     expected: &'static str,
-) -> impl FnMut(&'a str) -> nom::IResult<&'a str, &'a str, ErrorTree<&'a str>> {
-    move |input: &'a str| {
-        if let Some(rest) = input.strip_prefix(expected) {
-            Ok((rest, &input[..expected.len()]))
-        } else {
-            Err(nom::Err::Error(ErrorTree::Base {
-                location: input,
-                kind: BaseErrorKind::Expected(Expectation::Tag(expected)),
-            }))
+) -> impl Parser<&'i str, &'i str, ErrMode<ContextError>> {
+    literal(expected).context(StrContext::Expected(StrContextValue::StringLiteral(
+        expected,
+    )))
+}
+
+/// Convert a winnow `ParseError` (the top-level `Parser::parse` failure type)
+/// into the public `NixUriError::Parse`.
+///
+/// `original` is the input slice the parser entry point received. The
+/// `ParseError` carries a checkpoint-based offset relative to its own input;
+/// the converter shifts that into the `original`'s coordinate space so
+/// callers always see byte offsets from the URI's first character.
+#[allow(dead_code)]
+pub(crate) fn parse_error_from_winnow(
+    original: &str,
+    pe: &ParseError<&str, ContextError>,
+) -> NixUriError {
+    let position = offset_within(original, pe.input()) + pe.offset();
+    NixUriError::Parse {
+        position,
+        expected: parse_expected_from_context(pe.inner()),
+    }
+}
+
+/// Run a parser that does NOT consume to end-of-input (the `parse_peek`
+/// shape) and surface failures through the public `Parse` variant.
+///
+/// `original` is the parser entry-point's input slice; `input` is the
+/// (possibly partial) slice this call should parse from. On error the byte
+/// position is reported in `original`'s coordinate space.
+pub(crate) fn run_partial<'i, P, O>(
+    original: &'i str,
+    input: &'i str,
+    mut parser: P,
+) -> Result<(&'i str, O), NixUriError>
+where
+    P: Parser<&'i str, O, ErrMode<ContextError>>,
+{
+    let mut current = input;
+    let start = current.checkpoint();
+    match parser.parse_next(&mut current) {
+        Ok(o) => Ok((current, o)),
+        Err(err_mode) => {
+            let inner = match err_mode {
+                ErrMode::Backtrack(e) | ErrMode::Cut(e) => e,
+                ErrMode::Incomplete(_) => {
+                    unreachable!("complete parsers do not return Incomplete")
+                }
+            };
+            let local_offset = current.offset_from(&start);
+            let position = offset_within(original, input) + local_offset;
+            Err(NixUriError::Parse {
+                position,
+                expected: parse_expected_from_context(&inner),
+            })
+        }
+    }
+}
+
+/// Walk a `ContextError`'s context list front-to-back (innermost first by
+/// winnow's push order) and pick the first `Expected(...)` frame, falling
+/// back to the first `Label(...)` frame.
+pub(crate) fn parse_expected_from_context(err: &ContextError) -> ParseExpected {
+    for ctx in err.context() {
+        if let StrContext::Expected(value) = ctx {
+            return match value {
+                StrContextValue::StringLiteral(s) => ParseExpected::Tag(s),
+                StrContextValue::CharLiteral(c) => ParseExpected::Char(*c),
+                StrContextValue::Description(d) => description_to_expected(d),
+                _ => ParseExpected::Unknown,
+            };
+        }
+    }
+    for ctx in err.context() {
+        if let StrContext::Label(s) = ctx {
+            return ParseExpected::Label(s);
+        }
+    }
+    ParseExpected::Alternatives
+}
+
+/// The finite vocabulary of `Description` strings the parser emits today.
+/// Anything not in this table folds to `ParseExpected::Description(d)`,
+/// which keeps the converter resilient to ad-hoc descriptions added by
+/// future parsers without breaking the typed-variant mapping.
+fn description_to_expected(d: &'static str) -> ParseExpected {
+    match d {
+        "end of input" => ParseExpected::Eof,
+        "an alphabetic character" => ParseExpected::Alpha,
+        "a digit" => ParseExpected::Digit,
+        "a hex digit" => ParseExpected::HexDigit,
+        "an alphanumeric character" => ParseExpected::AlphaNumeric,
+        "a space" => ParseExpected::Space,
+        "whitespace" => ParseExpected::Multispace,
+        other => ParseExpected::Description(other),
+    }
+}
+
+/// Returns the byte offset of `slice` within `original`, or 0 if `slice`
+/// is not a sub-slice of `original`.
+///
+/// Contract: `slice` must be a sub-slice of `original`. Every input the
+/// parser drives is borrowed from the entry point's input; if a future
+/// caller hands an unrelated slice this returns 0 in release and the
+/// `debug_assert!` catches the regression in dev builds.
+fn offset_within(original: &str, slice: &str) -> usize {
+    let orig_start = original.as_ptr() as usize;
+    let orig_end = orig_start.saturating_add(original.len());
+    let s_start = slice.as_ptr() as usize;
+    debug_assert!(
+        s_start >= orig_start && s_start <= orig_end,
+        "offset_within: slice is not a sub-slice of original",
+    );
+    if s_start >= orig_start && s_start <= orig_end {
+        s_start - orig_start
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_iter_returns_innermost_first() {
+        // Pins winnow's `ContextError::context()` iteration order. The
+        // converter scans front-to-back and returns the first
+        // `Expected(...)`; if winnow ever flips this, the public
+        // `ParseExpected` value would silently shift from the inner
+        // discriminator to whatever outer label the parse-stack pushed last.
+        let r: Result<&str, ParseError<&str, ContextError>> =
+            literal::<_, &str, ErrMode<ContextError>>("x")
+                .context(StrContext::Expected(StrContextValue::StringLiteral("x")))
+                .context(StrContext::Label("outer"))
+                .parse("abc");
+        let inner = r.unwrap_err().into_inner();
+        let labels: Vec<_> = inner.context().collect();
+        assert_eq!(labels.len(), 2);
+        match labels[0] {
+            StrContext::Expected(StrContextValue::StringLiteral(s)) => assert_eq!(*s, "x"),
+            other => panic!("expected innermost StringLiteral(\"x\"), got {other:?}"),
+        }
+        match labels[1] {
+            StrContext::Label(s) => assert_eq!(*s, "outer"),
+            other => panic!("expected outermost Label(\"outer\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_position_reports_owner_repo_separator() {
+        // `parse_owner_repo_ref` consumes `n` as the owner and then
+        // demands `/`; the failure must be reported at byte 8 (the
+        // `/`'s expected column in the original input), not at the
+        // `:` (byte 6) where the GitForge arm was selected, nor at
+        // byte 0. Pins both the offset translation through
+        // `run_partial` and the `Char('/')` projection of the
+        // `StrContextValue::CharLiteral` context.
+        let err = "github:n".parse::<crate::FlakeRef>().unwrap_err();
+        match err {
+            NixUriError::Parse { position, expected } => {
+                assert_eq!(position, 8, "expected offset 8, got {position}");
+                assert_eq!(
+                    expected,
+                    ParseExpected::Char('/'),
+                    "expected Char('/'), got {expected:?}",
+                );
+            }
+            other => panic!("expected NixUriError::Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn description_table_round_trips() {
+        // The static lookup table is the single source of truth for which
+        // `Description` strings fold into a typed variant. This pins the
+        // round-trip: every description known today maps to the expected
+        // typed variant, and an unknown description falls through to Other.
+        assert_eq!(description_to_expected("end of input"), ParseExpected::Eof);
+        assert_eq!(
+            description_to_expected("an alphabetic character"),
+            ParseExpected::Alpha
+        );
+        assert_eq!(description_to_expected("a digit"), ParseExpected::Digit);
+        assert_eq!(
+            description_to_expected("a hex digit"),
+            ParseExpected::HexDigit
+        );
+        assert_eq!(
+            description_to_expected("an alphanumeric character"),
+            ParseExpected::AlphaNumeric,
+        );
+        assert_eq!(description_to_expected("a space"), ParseExpected::Space);
+        assert_eq!(
+            description_to_expected("whitespace"),
+            ParseExpected::Multispace
+        );
+        assert_eq!(
+            description_to_expected("not in the table"),
+            ParseExpected::Description("not in the table"),
+        );
+    }
+
+    #[test]
+    fn parse_expected_does_not_collapse_to_other() {
+        // The four internal `parse_expected_from_context` /
+        // `description_to_expected` fall-throughs must each route into a
+        // typed variant. `Other(_)` stays in the public enum for ad-hoc
+        // future additions but is unreachable from production code,
+        // so downstream pattern-matchers can discriminate the failure
+        // category instead of string-comparing implementation-detail wording.
+        for input in [
+            "github:!",
+            "github:o/r?ref=invalid ref",
+            "garbage::scheme",
+            "github:",
+            "github:nixos/",
+        ] {
+            let err = input.parse::<crate::FlakeRef>().unwrap_err();
+            if let NixUriError::Parse { expected, .. } = err {
+                assert!(
+                    !matches!(expected, ParseExpected::Other(_)),
+                    "input {input:?} produced ParseExpected::Other({expected:?})",
+                );
+            }
         }
     }
 }
