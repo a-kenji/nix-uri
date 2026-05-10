@@ -24,7 +24,7 @@ fn check_ref(stream: &str) -> Result<(), ()> {
     let cmd = "nix";
     let mut args = vec!["flake", "check"];
     args.push(stream);
-    let mut child = std::process::Command::new(cmd)
+    let child = std::process::Command::new(cmd)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -34,8 +34,6 @@ fn check_ref(stream: &str) -> Result<(), ()> {
 
     // Discard IO Errors
     if let Some(pipe) = child {
-        let stdout = pipe.stdout;
-        let stdout = std::str::from_utf8(&stdout).unwrap();
         if !pipe.status.success() {
             let stderr = pipe.stderr;
             let stderr = std::str::from_utf8(&stderr).unwrap();

@@ -9,9 +9,9 @@
 
 [nix-uri](https://crates.io/crates/nix-uri) is a rust crate that parses
 the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
-into a [`FlakeRef`](flakeref::FlakeRef) struct.
+into a [`flakeref::FlakeRef`] struct.
 
-Also allows for building a `nix-uri` through the [`FlakeRef`](flakeref::FlakeRef)
+Also allows for building a `nix-uri` through the [`flakeref::FlakeRef`]
 struct.
 
 Convenience functionality for working with nix `flake.nix` references (flakerefs).
@@ -31,7 +31,7 @@ To use `nix-uri`, add it as a dependency in your `Cargo.toml` file:
 
 ```markdown
 [dependencies]
-nix-uri = "0.1.9"
+nix-uri = "0.1.10"
 ```
 
 or use `cargo add`:
@@ -53,29 +53,24 @@ The uri syntax representation is parsed by this library:
 
  ```rust
   let uri = "github:nixos/nixpkgs";
-  let expected = FlakeRef::new(
-                FlakeRefType::GitForge (GitForge{
-                platform: GitForgePlatform::GitHub,
-                owner: "nixos".into(),
-                repo: "nixpkgs".into(),
-                ref_or_rev: None,
-                }));
-     let parsed: FlakeRef = uri.parse().unwrap();
-     assert_eq!(expected, parsed);
+  let parsed: FlakeRef = uri.parse().unwrap();
+  match parsed.kind {
+      FlakeRefType::GitForge(forge) => {
+          assert_eq!(forge.platform, GitForgePlatform::GitHub);
+          assert_eq!(forge.owner, "nixos");
+          assert_eq!(forge.repo, "nixpkgs");
+          assert!(forge.ref_.is_none() && forge.rev.is_none());
+      }
+      _ => panic!("expected GitForge"),
+  }
   ```
 
-  It can also be generated from [`FlakeRef`](flakeref::Flakeref).
-  ### Example: Constructing the following uri `github:nixos/nixpkgs`:
+  The `Display` round-trip preserves the original form:
+  ### Example: Round-tripping `github:nixos/nixpkgs`:
   ```rust
-  let expected = "github:nixos/nixpkgs";
-  let uri = FlakeRef::new(
-                FlakeRefType::GitForge (GitForge{
-                platform: GitForgePlatform::GitHub,
-                owner: "nixos".into(),
-                repo: "nixpkgs".into(),
-                ref_or_rev: None,
-                })).to_string();
-     assert_eq!(expected, uri);
+  let uri = "github:nixos/nixpkgs";
+  let parsed: FlakeRef = uri.parse().unwrap();
+  assert_eq!(uri, parsed.to_string());
   ```
 
 <!-- cargo-rdme end -->

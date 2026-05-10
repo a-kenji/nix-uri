@@ -1,18 +1,9 @@
-// #![forbid(unsafe_code)]
-// #![warn(clippy::pedantic)]
-// #![warn(clippy::nursery)]
-// #![warn(clippy::cargo, unused)]
-// #![allow(clippy::module_name_repetitions)]
-// #![allow(clippy::uninlined_format_args)]
-// #![allow(clippy::missing_errors_doc)]
-// #![allow(clippy::must_use_candidate)]
-// #![allow(clippy::no_effect_underscore_binding)]
 //!
 //! [nix-uri](https://crates.io/crates/nix-uri) is a rust crate that parses
 //! the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
-//! into a [`FlakeRef`](flakeref::FlakeRef) struct.
+//! into a [`flakeref::FlakeRef`] struct.
 //!
-//! Also allows for building a `nix-uri` through the [`FlakeRef`](flakeref::FlakeRef)
+//! Also allows for building a `nix-uri` through the [`flakeref::FlakeRef`]
 //! struct.
 //!
 //! Convenience functionality for working with nix `flake.nix` references (flakerefs).
@@ -32,7 +23,7 @@
 //!
 //! ```markdown
 //! [dependencies]
-//! nix-uri = "0.1.9"
+//! nix-uri = "0.1.10"
 //! ```
 //!
 //! or use `cargo add`:
@@ -53,45 +44,35 @@
 //! ## Example: Parsing from `github:nixos/nixpkgs`:
 //!
 //!  ```
-//!   # use nix_uri::FlakeRef;
-//!   # use nix_uri::FlakeRefType;
-//!   # use nix_uri::GitForgePlatform;
-//!   # use nix_uri::GitForge;
+//!   # use nix_uri::{FlakeRef, FlakeRefType, GitForgePlatform};
 //!   let uri = "github:nixos/nixpkgs";
-//!   let expected = FlakeRef::new(
-//!                 FlakeRefType::GitForge (GitForge{
-//!                 platform: GitForgePlatform::GitHub,
-//!                 owner: "nixos".into(),
-//!                 repo: "nixpkgs".into(),
-//!                 ref_or_rev: None,
-//!                 }));
-//!      let parsed: FlakeRef = uri.parse().unwrap();
-//!      assert_eq!(expected, parsed);
+//!   let parsed: FlakeRef = uri.parse().unwrap();
+//!   match parsed.kind() {
+//!       FlakeRefType::GitForge(forge) => {
+//!           assert_eq!(forge.platform, GitForgePlatform::GitHub);
+//!           assert_eq!(forge.owner, "nixos");
+//!           assert_eq!(forge.repo, "nixpkgs");
+//!           assert!(forge.ref_.is_none() && forge.rev.is_none());
+//!       }
+//!       _ => panic!("expected GitForge"),
+//!   }
 //!   ```
 //!
-//!   It can also be generated from [`FlakeRef`](flakeref::Flakeref).
-//!   ## Example: Constructing the following uri `github:nixos/nixpkgs`:
+//!   The `Display` round-trip preserves the original form:
+//!   ## Example: Round-tripping `github:nixos/nixpkgs`:
 //!   ```
 //!   # use nix_uri::FlakeRef;
-//!   # use nix_uri::FlakeRefType;
-//!   # use nix_uri::GitForgePlatform;
-//!   # use nix_uri::GitForge;
-//!   let expected = "github:nixos/nixpkgs";
-//!   let uri = FlakeRef::new(
-//!                 FlakeRefType::GitForge (GitForge{
-//!                 platform: GitForgePlatform::GitHub,
-//!                 owner: "nixos".into(),
-//!                 repo: "nixpkgs".into(),
-//!                 ref_or_rev: None,
-//!                 })).to_string();
-//!      assert_eq!(expected, uri);
+//!   let uri = "github:nixos/nixpkgs";
+//!   let parsed: FlakeRef = uri.parse().unwrap();
+//!   assert_eq!(uri, parsed.to_string());
 //!   ```
 
-// TODO: remove from error
 mod error;
 mod flakeref;
 pub(crate) mod parser;
-pub mod urls;
 
-pub use error::*;
-pub use flakeref::*;
+pub use error::{NixUriError, NixUriResult, ParseExpected, UnsupportedReason};
+pub use flakeref::{
+    FlakeRef, FlakeRefType, ForgeIdentity, GitForge, GitForgePlatform, LocationParameters, RefKind,
+    RefLocation, ResourceType, ResourceUrl, TransportLayer,
+};

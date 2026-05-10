@@ -26,18 +26,18 @@ members = ["fuzz"]
 
 [features]
 default = []
-tracing = ["dep:tracing"]
 
 [dependencies]
-nom = "8.0.0"
+percent-encoding = "2.3.2"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
-tracing = { version = "0.1.44", optional = true }
 url = { version = "2.5.8" }
+winnow = "1.0.2"
 
 [dev-dependencies]
 cool_asserts = "2.0.3"
 criterion = { version = "0.8.2", features = ["html_reports"] }
+proptest = "1"
 rstest = "0.26.1"
 
 [[bench]]
@@ -47,3 +47,61 @@ harness = false
 [profile.fuzz]
 inherits = "release"
 debug = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+unused_extern_crates = "warn"
+missing_debug_implementations = "warn"
+single_use_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+mem_forget = "warn"
+clone_on_ref_ptr = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+if_then_some_else_none = "warn"
+tabs_in_doc_comments = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+checked_conversions = "warn"
+cloned_instead_of_copied = "warn"
+doc_markdown = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+ignored_unit_patterns = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+let_underscore_must_use = "warn"
+manual_strip = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+match_wildcard_for_single_variants = "warn"
+missing_panics_doc = "warn"
+needless_pass_by_value = "warn"
+option_option = "warn"
+ptr_as_ptr = "warn"
+range_plus_one = "warn"
+redundant_clone = "warn"
+redundant_else = "warn"
+ref_as_ptr = "warn"
+same_functions_in_if_condition = "warn"
+semicolon_if_nothing_returned = "warn"
+semicolon_outside_block = "warn"
+struct_excessive_bools = "warn"
+tests_outside_test_module = "warn"
+trivially_copy_pass_by_ref = "warn"
+unused_self = "warn"
+wildcard_imports = "warn"
+
+[lints.rustdoc]
+bare_urls = "warn"
+broken_intra_doc_links = "warn"
