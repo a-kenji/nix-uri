@@ -31,7 +31,7 @@ To use `nix-uri`, add it as a dependency in your `Cargo.toml` file:
 
 ```markdown
 [dependencies]
-nix-uri = "0.1.10"
+nix-uri = "0.2.0"
 ```
 
 or use `cargo add`:
