@@ -1,7 +1,7 @@
 [package]
 name = "nix-uri"
 version = "0.1.10"
-edition = "2021"
+edition = "2024"
 authors = ["Alexander Kenji Berthold"]
 description = "Parse and manipulate the nix-uri scheme to and from flakerefs."
 
@@ -14,14 +14,14 @@ homepage = "https://github.com/a-kenji/nix-uri"
 include = ["src/**/*", "LICENSE", "README.md", "benches/*"]
 
 autoexamples = true
-rust-version = "1.70.0"
+rust-version = "1.85.0"
 
 keywords = ["nix", "flakes", "uri", "url", "flakeref"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["fuzz"]
 
 [features]
