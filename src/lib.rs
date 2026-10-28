@@ -58,6 +58,26 @@
 //!   }
 //!   ```
 //!
+//!   ## Parse context
+//!
+//!   Which flake references are accepted depends on where they appear,
+//!   see [`FlakeRef::parse`] and [`Context`]. `FromStr` and `TryFrom`
+//!   parse as a flake input ([`Context::FlakeInput`]).
+//!
+//!   ```
+//!   # use nix_uri::{Context, FlakeRef, FlakeRefType};
+//!   // `inputs.<name>.url` keeps relative paths.
+//!   let input = FlakeRef::parse("./vendor/foo", Context::FlakeInput).unwrap();
+//!   assert!(matches!(input.kind(), FlakeRefType::Path { .. }));
+//!
+//!   // On its own, a flake reference takes only absolute paths and no fragment.
+//!   assert!(FlakeRef::parse("./vendor/foo", Context::Standalone).is_err());
+//!
+//!   // A command-line installable may name an attribute after `#`.
+//!   let installable = FlakeRef::parse("nixpkgs#hello", Context::Installable).unwrap();
+//!   assert_eq!(installable.fragment(), Some("hello"));
+//!   ```
+//!
 //!   The `Display` round-trip preserves the original form:
 //!   ## Example: Round-tripping `github:nixos/nixpkgs`:
 //!   ```
@@ -67,10 +87,12 @@
 //!   assert_eq!(uri, parsed.to_string());
 //!   ```
 
+mod context;
 mod error;
 mod flakeref;
 pub(crate) mod parser;
 
+pub use context::Context;
 pub use error::{NixUriError, NixUriResult, ParseExpected, UnsupportedReason};
 pub use flakeref::{
     FlakeRef, FlakeRefType, ForgeIdentity, GitForge, GitForgePlatform, LocationParameters, RefKind,

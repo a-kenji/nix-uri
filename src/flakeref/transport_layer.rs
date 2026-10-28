@@ -1,13 +1,8 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{
-    ModalResult, Parser,
-    combinator::{alt, cut_err, preceded},
-    error::{StrContext, StrContextValue},
-};
 
-use crate::error::{NixUriError, tag};
+use crate::error::NixUriError;
 
 /// Specifies the `+<layer>` component, e.g. `git+https://`.
 ///
@@ -22,29 +17,6 @@ pub enum TransportLayer {
     Https,
     Ssh,
     File,
-}
-
-impl TransportLayer {
-    #[allow(dead_code)]
-    pub(crate) fn parse(input: &mut &str) -> ModalResult<Self> {
-        alt((
-            tag("https").value(Self::Https),
-            tag("http").value(Self::Http),
-            tag("ssh").value(Self::Ssh),
-            tag("file").value(Self::File),
-        ))
-        .context(StrContext::Label("transport type"))
-        .parse_next(input)
-    }
-    #[allow(dead_code)]
-    pub(crate) fn plus_parse(input: &mut &str) -> ModalResult<Self> {
-        preceded(
-            '+'.context(StrContext::Expected(StrContextValue::CharLiteral('+'))),
-            cut_err(Self::parse),
-        )
-        .context(StrContext::Label("transport type separator"))
-        .parse_next(input)
-    }
 }
 
 impl TryFrom<&str> for TransportLayer {
@@ -91,23 +63,6 @@ mod inc_parse {
                 => assert_eq!(ty, "://")
         );
     }
-
-    // NOTE: at time of writing this comment, `alt` parses `+....` like a c-style
-    // switch-case rather than a rust `match`: longest prefix wins. This guards
-    // against regressions where we try to parse `http` before `https`.
-    #[test]
-    fn http_s() {
-        let http = "+httpfoobar";
-        let https = "+httpsfoobar";
-        let (rest, http_parsed) = TransportLayer::plus_parse.parse_peek(http).unwrap();
-        assert_eq!("foobar", rest);
-        let (rest, https_parsed) = TransportLayer::plus_parse.parse_peek(https).unwrap();
-        let http_expected = TransportLayer::Http;
-        let http_s_expected = TransportLayer::Https;
-        assert_eq!(http_expected, http_parsed);
-        assert_eq!(http_s_expected, https_parsed);
-        assert_eq!("foobar", rest);
-    }
 }
 
 #[cfg(test)]
@@ -131,10 +86,8 @@ mod err_msg {
 
     #[test]
     fn unknown_transport_after_plus_routes_to_transport_layer_unsupported() {
-        use crate::parser::parse_nix_uri;
-
         assert_matches!(
-            parse_nix_uri("git+fizzbuzz://x"),
+            crate::FlakeRef::parse("git+fizzbuzz://x", crate::Context::default()),
             Err(NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty }))
                 => assert_eq!(ty, "fizzbuzz")
         );

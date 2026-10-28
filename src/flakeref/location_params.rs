@@ -1,17 +1,8 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{
-    ModalResult, Parser,
-    combinator::{repeat, separated_pair},
-    error::{StrContext, StrContextValue},
-    token::{take_till, take_until},
-};
 
-use crate::{
-    error::NixUriError,
-    flakeref::{encoding, validators::parse_bool_param},
-};
+use crate::flakeref::encoding;
 
 /// Query-string parameters that decorate a `FlakeRef`.
 ///
@@ -111,66 +102,6 @@ impl Display for LocationParameters {
 }
 
 impl LocationParameters {
-    #[allow(dead_code)]
-    pub(crate) fn parse(input: &mut &str) -> ModalResult<(Self, ParamRefRev)> {
-        let param_values: Vec<(&str, &str)> = repeat(
-            0..,
-            separated_pair(
-                take_until(0.., "="),
-                '='.context(StrContext::Expected(StrContextValue::CharLiteral('='))),
-                take_till(0.., |c| c == '&' || c == '#'),
-            ),
-        )
-        .context(StrContext::Label("location parameters"))
-        .parse_next(input)?;
-
-        let mut params = Self::default();
-        let mut ref_rev = ParamRefRev::default();
-        for (param, value) in param_values {
-            // param can start with "&"
-            // TODO: actual error handling instead of unwrapping
-            // TODO: allow check of the parameters
-            if let Ok(param) = param.parse() {
-                match param {
-                    LocationParamKeys::Dir => params.set_dir(Some(value.into())),
-                    LocationParamKeys::NarHash => params.set_nar_hash(Some(value.into())),
-                    LocationParamKeys::LastModified => {
-                        params.set_last_modified(Some(value.into()));
-                    }
-                    LocationParamKeys::RevCount => params.set_rev_count(Some(value.into())),
-                    LocationParamKeys::Host => params.set_host(Some(value.into())),
-                    LocationParamKeys::Ref => ref_rev.r#ref = Some(value.into()),
-                    LocationParamKeys::Rev => ref_rev.rev = Some(value.into()),
-                    LocationParamKeys::Submodules => {
-                        params.set_submodules(parse_bool_param("submodules", value).ok());
-                    }
-                    LocationParamKeys::Shallow => {
-                        params.set_shallow(parse_bool_param("shallow", value).ok());
-                    }
-                    LocationParamKeys::Lfs => {
-                        params.set_lfs(parse_bool_param("lfs", value).ok());
-                    }
-                    LocationParamKeys::ExportIgnore => {
-                        params.set_export_ignore(parse_bool_param("exportIgnore", value).ok());
-                    }
-                    LocationParamKeys::AllRefs => {
-                        params.set_all_refs(parse_bool_param("allRefs", value).ok());
-                    }
-                    LocationParamKeys::VerifyCommit => {
-                        params.set_verify_commit(parse_bool_param("verifyCommit", value).ok());
-                    }
-                    LocationParamKeys::Keytype => params.set_keytype(Some(value.into())),
-                    LocationParamKeys::PublicKey => params.set_public_key(Some(value.into())),
-                    LocationParamKeys::PublicKeys => params.set_public_keys(Some(value.into())),
-                    LocationParamKeys::Arbitrary(param) => {
-                        params.add_arbitrary((param, value.into()));
-                    }
-                }
-            }
-        }
-        Ok((params, ref_rev))
-    }
-
     /// Chainable setter for the `dir` parameter; returns `&mut Self` so the
     /// builder form (`params.dir(Some(...)).host(Some(...))`) reads naturally.
     pub fn dir(&mut self, dir: Option<String>) -> &mut Self {
@@ -387,131 +318,91 @@ pub(crate) enum LocationParamKeys {
     Arbitrary(String),
 }
 
-impl std::str::FromStr for LocationParamKeys {
-    type Err = NixUriError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "dir" | "&dir" => Ok(Self::Dir),
-            "narHash" | "&narHash" => Ok(Self::NarHash),
-            "lastModified" | "&lastModified" => Ok(Self::LastModified),
-            "revCount" | "&revCount" => Ok(Self::RevCount),
-            "host" | "&host" => Ok(Self::Host),
-            "rev" | "&rev" => Ok(Self::Rev),
-            "ref" | "&ref" => Ok(Self::Ref),
-            "submodules" | "&submodules" => Ok(Self::Submodules),
-            "shallow" | "&shallow" => Ok(Self::Shallow),
-            "lfs" | "&lfs" => Ok(Self::Lfs),
-            "exportIgnore" | "&exportIgnore" => Ok(Self::ExportIgnore),
-            "allRefs" | "&allRefs" => Ok(Self::AllRefs),
-            "verifyCommit" | "&verifyCommit" => Ok(Self::VerifyCommit),
-            "keytype" | "&keytype" => Ok(Self::Keytype),
-            "publicKey" | "&publicKey" => Ok(Self::PublicKey),
-            "publicKeys" | "&publicKeys" => Ok(Self::PublicKeys),
-            // The typed arms above strip the leading `&` that the param
-            // parser leaves in place between adjacent k=v pairs; do the
-            // same for the arbitrary fallback so `?xA=&xB=` round-trips.
-            arbitrary => Ok(Self::Arbitrary(
-                arbitrary.strip_prefix('&').unwrap_or(arbitrary).into(),
-            )),
+impl From<&str> for LocationParamKeys {
+    fn from(key: &str) -> Self {
+        match key {
+            "dir" => Self::Dir,
+            "narHash" => Self::NarHash,
+            "lastModified" => Self::LastModified,
+            "revCount" => Self::RevCount,
+            "host" => Self::Host,
+            "rev" => Self::Rev,
+            "ref" => Self::Ref,
+            "submodules" => Self::Submodules,
+            "shallow" => Self::Shallow,
+            "lfs" => Self::Lfs,
+            "exportIgnore" => Self::ExportIgnore,
+            "allRefs" => Self::AllRefs,
+            "verifyCommit" => Self::VerifyCommit,
+            "keytype" => Self::Keytype,
+            "publicKey" => Self::PublicKey,
+            "publicKeys" => Self::PublicKeys,
+            arbitrary => Self::Arbitrary(arbitrary.into()),
         }
     }
 }
 
 #[cfg(test)]
-mod inc_parse {
+mod query_routing {
     use super::*;
-    #[test]
-    fn no_str() {
-        let expected = LocationParameters::default();
-        let in_str = "";
-        let (outstr, (parsed_param, ref_rev)) =
-            LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", outstr);
-        assert_eq!(expected, parsed_param);
-        assert_eq!(ref_rev, ParamRefRev::default());
+    use crate::parser::{parse_query, route_location_params};
+
+    fn route(query: &str) -> (LocationParameters, ParamRefRev) {
+        route_location_params(parse_query(query).unwrap())
     }
+
     #[test]
     fn empty() {
-        let expected = LocationParameters::default();
-        let in_str = "";
-        let (rest, (output, ref_rev)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
-        assert_eq!(ref_rev, ParamRefRev::default());
+        assert_eq!(
+            route(""),
+            (LocationParameters::default(), ParamRefRev::default())
+        );
     }
-    #[test]
-    fn empty_hash_terminated() {
-        let expected = LocationParameters::default();
-        let in_str = "#";
-        let (rest, (output, ref_rev)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("#", rest);
-        assert_eq!(output, expected);
-        assert_eq!(ref_rev, ParamRefRev::default());
-    }
+
     #[test]
     fn dir() {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
-
-        let in_str = "dir=foo";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
-
-        let in_str = "&dir=foo";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
+        assert_eq!(route("dir=foo").0, expected);
+        assert_eq!(route("&dir=foo").0, expected);
+        assert_eq!(route("dir=foo&dir=bar").0, expected);
 
         expected.dir(Some(String::new()));
-        let in_str = "dir=";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        assert_eq!(output, expected);
+        assert_eq!(route("dir=").0, expected);
     }
+
     #[test]
-    fn dir_hash_term() {
+    fn pair_without_equals_is_ignored() {
         let mut expected = LocationParameters::default();
         expected.dir(Some("foo".to_string()));
+        assert_eq!(route("shallow&dir=foo").0, expected);
+    }
 
-        let in_str = "dir=foo#fizz";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+    #[test]
+    fn keys_and_values_are_percent_decoded() {
+        let (params, ref_rev) = route("r%65f=a%2Fb&dir=x%20y");
+        assert_eq!(ref_rev.r#ref.as_deref(), Some("a/b"));
+        let mut expected = LocationParameters::default();
+        expected.dir(Some("x y".to_string()));
+        assert_eq!(params, expected);
+    }
 
-        let in_str = "&dir=foo#fizz";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
-        let in_str = "dir=&dir=foo#fizz";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
-
-        expected.dir(Some(String::new()));
-        let in_str = "dir=#fizz";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("#fizz", rest);
-        assert_eq!(output, expected);
+    #[test]
+    fn characters_outside_the_query_grammar_are_rejected() {
+        for query in ["ref=a^b", "ref=a{b", "ref=a\\b", "ref=é"] {
+            assert!(parse_query(query).is_err(), "{query:?}");
+        }
     }
 
     #[test]
     fn canonical_param_keys_round_trip() {
-        // Canonical Nix spells these in camelCase; only the camelCase
-        // form routes into the typed slots.
+        // Only the camelCase spelling routes into the typed slots.
         let mut expected = LocationParameters::default();
         expected.set_nar_hash(Some("sha256-abc".into()));
         expected.set_last_modified(Some("12345".into()));
         expected.set_rev_count(Some("42".into()));
 
-        let in_str = "narHash=sha256-abc&lastModified=12345&revCount=42";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
+        let (output, _) = route("narHash=sha256-abc&lastModified=12345&revCount=42");
         assert_eq!(output, expected);
 
         // Display emits the canonical (camelCase) spelling in alphabetical
@@ -524,15 +415,17 @@ mod inc_parse {
 
     #[test]
     fn snake_case_falls_through_to_arbitrary() {
-        // The snake_case spellings (`nar_hash`, `last_modified`, `rev_count`)
-        // do not match a typed slot; they fall through to `arbitrary`.
-        let in_str = "nar_hash=sha256-abc";
-        let (rest, (output, _)) = LocationParameters::parse.parse_peek(in_str).unwrap();
-        assert_eq!("", rest);
-        // The typed nar_hash slot is still empty; the value lives in arbitrary.
         let mut expected = LocationParameters::default();
         expected.add_arbitrary(("nar_hash".into(), "sha256-abc".into()));
-        assert_eq!(output, expected);
+        assert_eq!(route("nar_hash=sha256-abc").0, expected);
+    }
+
+    #[test]
+    fn bools_use_nix_coercion() {
+        let (params, _) = route("submodules=true&shallow=1&lfs=0");
+        assert_eq!(params.submodules, Some(false));
+        assert_eq!(params.shallow, Some(true));
+        assert_eq!(params.lfs, Some(false));
     }
 }
 
@@ -542,7 +435,7 @@ mod git_typed_params {
     //! to typed slots on `LocationParameters` so they route into the
     //! typed slots rather than the arbitrary bag.
 
-    use crate::{FlakeRef, NixUriError};
+    use crate::FlakeRef;
     use rstest::rstest;
 
     #[rstest]
@@ -581,28 +474,24 @@ mod git_typed_params {
         assert_eq!(parsed.params().verify_commit, Some(expected));
     }
 
+    /// Booleans coerce with `value == "1"`, so every other value, `"true"`
+    /// included, is accepted and reads as false.
     #[rstest]
     #[case("lfs", "yes")]
-    #[case("exportIgnore", "yes")]
-    #[case("allRefs", "yes")]
-    #[case("verifyCommit", "yes")]
-    // Nix's URL-time coercion is strictly `value == "1"`; `"true"` /
-    // `"false"` look right but Nix maps anything other than `"1"` to
-    // false. Reject them at parse time so the diagnostic surfaces
-    // instead of silently flipping the bool.
     #[case("lfs", "true")]
     #[case("exportIgnore", "false")]
     #[case("allRefs", "True")]
     #[case("verifyCommit", "TRUE")]
-    fn bool_keys_reject_non_bool_values(#[case] key: &str, #[case] value: &str) {
+    #[case("submodules", "garbage")]
+    #[case("submodules", "true")]
+    #[case("shallow", "false")]
+    fn bool_keys_coerce_other_values_to_false(#[case] key: &str, #[case] value: &str) {
         let url = format!("git+ssh://example.com/repo?{key}={value}");
-        let err = url.parse::<FlakeRef>().unwrap_err();
-        match err {
-            NixUriError::InvalidValue { field, .. } => {
-                assert_eq!(field, key, "expected error.field to name the rejected key");
-            }
-            other => panic!("expected InvalidValue, got {other:?}"),
-        }
+        let parsed: FlakeRef = url.parse().unwrap();
+        assert_eq!(
+            parsed.to_string(),
+            format!("git+ssh://example.com/repo?{key}=0")
+        );
     }
 
     #[test]
@@ -662,23 +551,6 @@ mod git_typed_params {
         let url = format!("git+ssh://example.com/repo?shallow={input}");
         let parsed: FlakeRef = url.parse().unwrap();
         assert_eq!(parsed.params().shallow, Some(expected));
-    }
-
-    #[rstest]
-    #[case("submodules", "garbage")]
-    #[case("submodules", "true")]
-    #[case("shallow", "garbage")]
-    #[case("shallow", "false")]
-    fn submodules_shallow_reject_non_bool_values(#[case] key: &str, #[case] value: &str) {
-        // submodules and shallow are bool-coerced by Nix; inputs that
-        // are not `"1"` / `"0"` surface as InvalidValue with a field
-        // tag.
-        let url = format!("git+ssh://example.com/repo?{key}={value}");
-        let err = url.parse::<FlakeRef>().unwrap_err();
-        match err {
-            NixUriError::InvalidValue { field, .. } => assert_eq!(field, key),
-            other => panic!("expected InvalidValue, got {other:?}"),
-        }
     }
 
     #[test]

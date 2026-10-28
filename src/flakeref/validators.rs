@@ -1,55 +1,66 @@
-//! Small classifiers for ref/rev strings.
+//! Small classifiers for ref/rev strings and query values.
 //!
 //! Path-component slots like `github:owner/repo/<x>` carry either a Git ref
-//! name or a 40-character commit hash. Nix discriminates on the 40-hex
-//! shape; everything else is treated as a ref name.
+//! name or a commit hash, told apart by the hex shape.
 
 use crate::error::NixUriError;
 
-/// Parse a boolean query-parameter value. Nix's URL-time coercion is
-/// strictly `value == "1"`: `"1"` -> `true`, `"0"` -> `false`. Anything
-/// else (including `"true"` / `"false"`, which look right but Nix maps to
-/// `false`) returns [`NixUriError::InvalidValue`] tagged with the field
-/// name so a downstream caller can pinpoint the offending key.
-///
-/// Rejecting `"true"` / `"false"` outright keeps the diagnostic visible:
-/// silently coercing them to `false` would match Nix's runtime behaviour
-/// but lose the parse-time signal that the caller wrote the wrong wire
-/// form.
-pub(crate) fn parse_bool_param(field: &'static str, value: &str) -> Result<bool, NixUriError> {
-    match value {
-        "1" => Ok(true),
-        "0" => Ok(false),
-        _ => Err(NixUriError::InvalidValue {
-            field,
-            reason:
-                "expected \"1\" or \"0\" (upstream URL-time coercion is strictly value == \"1\")"
-                    .to_string(),
-        }),
-    }
+/// Coerce a boolean query parameter (`submodules`, `shallow`,
+/// `lfs`, ...): `"1"` is true and every other value, `"true"` included,
+/// is false.
+pub(crate) fn query_bool(value: &str) -> bool {
+    value == "1"
 }
 
-/// Returns `true` if `s` matches a Nix-recognised revision shape:
-/// exactly 40 ASCII hex digits (SHA-1) or exactly 64 ASCII hex digits
-/// (SHA-256), case-insensitive. Both algorithms are supported for git
-/// inputs.
+/// Returns `true` if `s` matches a revision shape: exactly 40 ASCII hex
+/// digits (SHA-1) or exactly 64 ASCII hex digits (SHA-256),
+/// case-insensitive.
 ///
 /// Used by the parser to split a single path-component value into the
-/// typed `rev` slot or the typed `ref_` slot, and by
-/// [`crate::parser::apply_param_ref_rev`] to gate `?rev=` query values.
+/// typed `rev` slot or the typed `ref_` slot.
 pub(crate) fn looks_like_rev(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Returns `true` if `s` matches Nix's accepted ref-name shape: a non-empty
-/// string whose first character is alphanumeric or `@`, and whose remainder
-/// is drawn from `[a-zA-Z0-9_.\/@+-]`.
-///
-/// Matches Nix byte-for-byte so a value that nix-uri accepts as a ref is
-/// one a downstream Nix fetcher would also accept; values that fail here
-/// surface as [`NixUriError::InvalidValue`] at parse time, keeping the
-/// failure off the consumer's fetch path.
-pub(crate) fn validate_ref_name(s: &str) -> bool {
+/// Returns `true` if `s` is a 40-character hex SHA-1 commit hash.
+pub(crate) fn is_sha1_hex(s: &str) -> bool {
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Returns `true` if `s` parses as a SHA-1 hash in any accepted encoding
+/// for a git-forge `?rev=`: base16 (40 chars), nix32 (32 chars)
+/// or padded base64 (28 chars), optionally prefixed with `sha1:`, or an
+/// SRI `sha1-<base64>` hash.
+pub(crate) fn is_sha1_hash(s: &str) -> bool {
+    if let Some(base64) = s.strip_prefix("sha1-") {
+        return is_sha1_base64(base64);
+    }
+    let digest = s.strip_prefix("sha1:").unwrap_or(s);
+    match digest.len() {
+        40 => digest.chars().all(|c| c.is_ascii_hexdigit()),
+        32 => digest.chars().all(|c| NIX32_CHARS.contains(c)),
+        28 => is_sha1_base64(digest),
+        _ => false,
+    }
+}
+
+const NIX32_CHARS: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+
+/// 20 bytes of base64 are 27 significant characters and one `=` of
+/// padding.
+fn is_sha1_base64(s: &str) -> bool {
+    s.len() == 28
+        && s.ends_with('=')
+        && s[..27]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/')
+}
+
+/// Returns `true` if `s` matches the ref shape of the flake-id shorthand
+/// (`nixpkgs/<ref>`) and of Mercurial refs: a non-empty string whose first
+/// character is alphanumeric or `@`, and whose remainder is drawn from
+/// `[a-zA-Z0-9_.\/@+-]`.
+pub(crate) fn matches_ref_shape(s: &str) -> bool {
     let mut chars = s.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -60,17 +71,41 @@ pub(crate) fn validate_ref_name(s: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '@' | '+' | '-'))
 }
 
-/// Diagnostic text shared by every parser site that funnels a ref-name
-/// rejection through [`NixUriError::InvalidValue`]. Centralised so the
-/// error reads consistently regardless of which routing path produced it.
-pub(crate) const REF_NAME_REJECTION: &str = "expected a Git ref name (alphanumeric, '_', '.', '/', '@', '+', '-'; \
-     must start with an alphanumeric or '@')";
+/// Returns `true` if `s` is a legal Git branch or tag name, the check
+/// applied to every git, git-forge and indirect ref. It follows
+/// `git check-ref-format`: no `..`, `@{`, control characters, space or
+/// any of `~^:?*[\`, no empty component, no component starting with `.`
+/// or ending in `.lock`, and the whole name must not be `@`, start with
+/// `-` or end with `.`.
+pub(crate) fn is_legal_ref_name(s: &str) -> bool {
+    if s.is_empty()
+        || s == "@"
+        || s.starts_with('-')
+        || s.ends_with('.')
+        || s.contains("..")
+        || s.contains("@{")
+    {
+        return false;
+    }
+    if s.chars().any(|c| {
+        c.is_ascii_control() || matches!(c, ' ' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+    }) {
+        return false;
+    }
+    s.split('/').all(|component| {
+        !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
+    })
+}
 
-/// Validate a ref-name candidate at a routing site that surfaces failures
-/// as [`NixUriError::InvalidValue`]. Returns the value owned on success so
-/// the caller can hand it directly into a typed slot.
+/// Diagnostic text shared by every parser site that funnels a ref-name
+/// rejection through [`NixUriError::InvalidValue`].
+pub(crate) const REF_NAME_REJECTION: &str =
+    "expected a Git branch or tag name (see `git check-ref-format`)";
+
+/// Validate a ref name with [`is_legal_ref_name`]. Returns the value owned
+/// on success so the caller can hand it directly into a typed slot.
 pub(crate) fn validated_ref_name(value: &str) -> Result<String, NixUriError> {
-    if !validate_ref_name(value) {
+    if !is_legal_ref_name(value) {
         return Err(NixUriError::InvalidValue {
             field: "ref",
             reason: REF_NAME_REJECTION.to_string(),
@@ -79,10 +114,8 @@ pub(crate) fn validated_ref_name(value: &str) -> Result<String, NixUriError> {
     Ok(value.to_string())
 }
 
-/// Returns `true` if `s` matches Nix's accepted `?host=` value shape:
-/// ASCII alphanumerics, `.`, and `-`. The empty string is accepted
-/// (semantically equivalent to no override; the fetch layer handles the
-/// empty case).
+/// Returns `true` if `s` is a valid git-forge `?host=` value: ASCII alphanumerics, `.`, and `-`. The empty string is
+/// accepted (semantically equivalent to no override).
 pub(crate) fn validate_host_name(s: &str) -> bool {
     s.bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
@@ -92,9 +125,7 @@ pub(crate) fn validate_host_name(s: &str) -> bool {
 /// rejection through [`NixUriError::InvalidValue`].
 pub(crate) const HOST_NAME_REJECTION: &str = "expected a forge host (alphanumeric, '.', '-')";
 
-/// Validate a `?host=` candidate at the routing site. Returns the value
-/// owned on success so the caller can hand it directly into the typed
-/// slot.
+/// Validate a `?host=` candidate. Returns the value owned on success.
 pub(crate) fn validated_host_name(value: &str) -> Result<String, NixUriError> {
     if !validate_host_name(value) {
         return Err(NixUriError::InvalidValue {
@@ -193,100 +224,137 @@ mod tests {
 
     #[test]
     fn validate_ref_accepts_simple_branch() {
-        assert!(validate_ref_name("main"));
+        assert!(matches_ref_shape("main"));
     }
 
     #[test]
     fn validate_ref_accepts_release_branch() {
-        assert!(validate_ref_name("release-23.05"));
+        assert!(matches_ref_shape("release-23.05"));
     }
 
     #[test]
     fn validate_ref_accepts_namespaced_branch() {
-        assert!(validate_ref_name("feature/foo-bar"));
+        assert!(matches_ref_shape("feature/foo-bar"));
     }
 
     #[test]
     fn validate_ref_accepts_version_tag() {
-        assert!(validate_ref_name("v1.2.3"));
+        assert!(matches_ref_shape("v1.2.3"));
     }
 
     #[test]
     fn validate_ref_accepts_at_prefixed() {
-        assert!(validate_ref_name("@HEAD"));
+        assert!(matches_ref_shape("@HEAD"));
     }
 
     #[test]
     fn validate_ref_rejects_empty() {
-        assert!(!validate_ref_name(""));
+        assert!(!matches_ref_shape(""));
     }
 
     #[test]
     fn validate_ref_rejects_leading_dash() {
-        assert!(!validate_ref_name("-leading-dash"));
+        assert!(!matches_ref_shape("-leading-dash"));
     }
 
     #[test]
     fn validate_ref_rejects_leading_dot() {
-        assert!(!validate_ref_name(".hidden"));
+        assert!(!matches_ref_shape(".hidden"));
     }
 
     #[test]
     fn validate_ref_rejects_leading_slash() {
-        assert!(!validate_ref_name("/abs/branch"));
+        assert!(!matches_ref_shape("/abs/branch"));
     }
 
     #[test]
     fn validate_ref_rejects_whitespace() {
-        assert!(!validate_ref_name("invalid ref"));
-        assert!(!validate_ref_name("trailing\t"));
+        assert!(!matches_ref_shape("invalid ref"));
+        assert!(!matches_ref_shape("trailing\t"));
     }
 
     #[test]
     fn validate_ref_rejects_question_mark() {
         // Reserved in URL grammar; would terminate the path-component slot anyway.
-        assert!(!validate_ref_name("br?anch"));
+        assert!(!matches_ref_shape("br?anch"));
     }
 
     #[test]
-    fn parse_bool_param_accepts_one_as_true() {
-        assert!(parse_bool_param("lfs", "1").unwrap());
-    }
-
-    #[test]
-    fn parse_bool_param_accepts_zero_as_false() {
-        assert!(!parse_bool_param("lfs", "0").unwrap());
-    }
-
-    #[test]
-    fn parse_bool_param_rejects_true_string() {
-        // Nix's URL-time coercion is strictly `value == "1"`, so `"true"`
-        // is *not* an alias for true. Surface the divergence as
-        // InvalidValue rather than silently mapping it to false (which
-        // would lose the diagnostic).
-        let err = parse_bool_param("lfs", "true").expect_err("must reject");
-        match err {
-            NixUriError::InvalidValue { field, .. } => assert_eq!(field, "lfs"),
-            other => panic!("unexpected error: {other:?}"),
+    fn query_bool_is_true_only_for_one() {
+        assert!(query_bool("1"));
+        for value in ["0", "true", "false", "yes", ""] {
+            assert!(!query_bool(value), "{value:?}");
         }
     }
 
-    #[test]
-    fn parse_bool_param_rejects_false_string() {
-        let err = parse_bool_param("lfs", "false").expect_err("must reject");
-        assert!(matches!(
-            err,
-            NixUriError::InvalidValue { field: "lfs", .. }
-        ));
+    #[rstest::rstest]
+    #[case("main")]
+    #[case("release-23.05")]
+    #[case("feature/foo-bar")]
+    #[case("_under")]
+    #[case("x,y")]
+    #[case("a!b")]
+    #[case("a#b")]
+    #[case("@foo")]
+    #[case("HEAD")]
+    #[case("refs/heads/-x")]
+    #[case("a/-b")]
+    #[case("a./b")]
+    #[case("x.lock2")]
+    fn legal_ref_names(#[case] name: &str) {
+        assert!(is_legal_ref_name(name), "{name:?}");
     }
 
-    #[test]
-    fn parse_bool_param_rejects_garbage() {
-        let err = parse_bool_param("lfs", "yes").expect_err("must reject");
-        assert!(matches!(
-            err,
-            NixUriError::InvalidValue { field: "lfs", .. }
-        ));
+    #[rstest::rstest]
+    #[case("")]
+    #[case("@")]
+    #[case("a..b")]
+    #[case(".hidden")]
+    #[case("a/.b")]
+    #[case("-dash")]
+    #[case("a.lock")]
+    #[case("a/b.lock/c")]
+    #[case("end.")]
+    #[case("end/")]
+    #[case("/lead")]
+    #[case("a//b")]
+    #[case("a@{b")]
+    #[case("a b")]
+    #[case("a~b")]
+    #[case("a^b")]
+    #[case("a:b")]
+    #[case("a?b")]
+    #[case("a*b")]
+    #[case("a[b")]
+    #[case("a\\b")]
+    #[case("a\u{1}b")]
+    #[case("a\u{7f}b")]
+    fn illegal_ref_names(#[case] name: &str) {
+        assert!(!is_legal_ref_name(name), "{name:?}");
+    }
+
+    #[rstest::rstest]
+    #[case("0000000000000000000000000000000000000000")]
+    #[case("sha1:0000000000000000000000000000000000000000")]
+    #[case("00000000000000000000000000000000")]
+    #[case("AAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
+    #[case("AAAAAAAAAAAAAAAAAAAAAAAAAAB=")]
+    #[case("sha1:AAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
+    #[case("sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=")]
+    fn sha1_hashes(#[case] hash: &str) {
+        assert!(is_sha1_hash(hash), "{hash:?}");
+    }
+
+    #[rstest::rstest]
+    #[case("abc")]
+    #[case("0000000000000000000000000000000000000000000000000000000000000000")]
+    #[case("AAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    #[case("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")]
+    #[case("sha1-0000000000000000000000000000000000000000")]
+    #[case("SHA1:0000000000000000000000000000000000000000")]
+    #[case("sha256:0000000000000000000000000000000000000000")]
+    fn not_sha1_hashes(#[case] hash: &str) {
+        assert!(!is_sha1_hash(hash), "{hash:?}");
     }
 
     #[test]
@@ -295,7 +363,7 @@ mod tests {
         match err {
             NixUriError::InvalidValue { field, reason } => {
                 assert_eq!(field, "ref");
-                assert!(reason.contains("Git ref name"));
+                assert!(reason.contains("check-ref-format"));
             }
             other => panic!("unexpected error: {other:?}"),
         }

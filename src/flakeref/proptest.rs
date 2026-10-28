@@ -18,14 +18,18 @@ use super::{
     FlakeRef, FlakeRefType, GitForge, GitForgePlatform, LocationParameters, RefLocation,
     ResourceType, ResourceUrl, TransportLayer,
 };
+use crate::Context;
 
-/// A ref-name string. Bounded length, no `/` or other URL-special characters,
-/// and explicitly excludes 40-hex (SHA-1) and 64-hex (SHA-256) strings,
-/// which `looks_like_rev` would classify as `rev`.
+/// A ref-name string. Bounded length, no `/` or other URL-special
+/// characters, legal as a Git branch name (no `..`, no trailing `.`, no
+/// `.lock` suffix), and explicitly excludes 40-hex (SHA-1) and 64-hex
+/// (SHA-256) strings, which `looks_like_rev` would classify as `rev`.
 fn ref_string_strategy() -> impl Strategy<Value = String> {
     "[a-zA-Z][a-zA-Z0-9_.\\-]{0,15}".prop_filter(
-        "ref must not be 40- or 64-hex (would classify as rev)",
-        |s: &String| !super::validators::looks_like_rev(s),
+        "ref must be a legal ref name and not look like a rev",
+        |s: &String| {
+            super::validators::is_legal_ref_name(s) && !super::validators::looks_like_rev(s)
+        },
     )
 }
 
@@ -34,6 +38,12 @@ fn ref_string_strategy() -> impl Strategy<Value = String> {
 /// the generator covers each.
 fn rev_string_strategy() -> impl Strategy<Value = String> {
     prop_oneof!["[0-9a-f]{40}", "[0-9a-f]{64}"]
+}
+
+/// A 40-hex SHA-1 revision, the only revision git forges and indirect
+/// references take in every position.
+fn sha1_rev_strategy() -> impl Strategy<Value = String> {
+    "[0-9a-f]{40}"
 }
 
 fn ref_location_strategy() -> impl Strategy<Value = RefLocation> {
@@ -49,6 +59,10 @@ fn opt_ref_strategy() -> impl Strategy<Value = Option<String>> {
 
 fn opt_rev_strategy() -> impl Strategy<Value = Option<String>> {
     prop_oneof![Just(None), rev_string_strategy().prop_map(Some)]
+}
+
+fn opt_sha1_rev_strategy() -> impl Strategy<Value = Option<String>> {
+    prop_oneof![Just(None), sha1_rev_strategy().prop_map(Some)]
 }
 
 fn platform_strategy() -> impl Strategy<Value = GitForgePlatform> {
@@ -98,27 +112,22 @@ fn git_forge_strategy() -> impl Strategy<Value = GitForge> {
         gitlab_owner_strategy(),
         owner_or_repo_strategy(),
         opt_ref_strategy(),
-        opt_rev_strategy(),
+        opt_sha1_rev_strategy(),
         ref_location_strategy(),
     )
         .prop_map(
             |(platform, plain_owner, gitlab_owner, repo, ref_, rev, location)| {
-                // GitLab admits subgroup-form (`/`-bearing) owners; GitHub
-                // and SourceHut do not. Pick the platform-appropriate owner
-                // so the round-trip property exercises the GitLab encode-
-                // decode pair without producing strings the validator
-                // refuses for the other forges.
+                // Subgroup-form (`/`-bearing) owners are a GitLab
+                // concept. Generate them for GitLab only, which is enough
+                // to exercise the encode-decode pair.
                 let owner = match platform {
                     GitForgePlatform::GitLab => gitlab_owner,
                     _ => plain_owner,
                 };
-                // GitForge rejects `ref` and `rev` together post-parse
-                // (`parser::validate_gitforge_ref_rev_exclusion`), so a
-                // generated value with both populated would Display to a
-                // string the parser refuses, breaking the round-trip
-                // property. Collapse to ref-only in that case; the
-                // rev-only and ref-only branches exercise the surviving
-                // shapes.
+                // A git forge takes a ref or a rev, not both, so a value
+                // with both would Display to a string the parser refuses.
+                // Collapse to ref-only in that case. The rev-only and
+                // ref-only branches exercise the surviving shapes.
                 let (ref_, rev) = if ref_.is_some() && rev.is_some() {
                     (ref_, None)
                 } else {
@@ -141,7 +150,7 @@ fn indirect_strategy() -> impl Strategy<Value = FlakeRefType> {
     (
         id_strategy(),
         opt_ref_strategy(),
-        opt_rev_strategy(),
+        opt_sha1_rev_strategy(),
         ref_location_strategy(),
     )
         .prop_map(|(id, ref_, rev, location)| {
@@ -183,10 +192,7 @@ fn transport_strategy() -> impl Strategy<Value = TransportLayer> {
 }
 
 /// Resource location: a `host/path` shape. The host part avoids `?`/`#`/`@`/`:`
-/// which would either short-circuit the parser or trip the SCP-style detector
-/// at parser entry (see `crate::parser::parse_scp_style`); SCP form is a
-/// one-way input canonicalisation and so is excluded from the round-trip
-/// property by construction.
+/// which would either end the location early or read as a port.
 fn resource_location_strategy() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9.]{0,15}/[a-zA-Z0-9._\\-/]{1,32}"
 }
@@ -409,10 +415,8 @@ fn git_typed_params_strategy() -> impl Strategy<Value = GitTypedParams> {
     )
 }
 
-/// Param generator: every typed slot can be set on every scheme.
-/// `LocationParamKeys::FromStr` recognises the same key set regardless
-/// of scheme, so any `(key, value)` pair routes into its typed slot and
-/// `Display` re-emits it; the round-trip is scheme-independent.
+/// Param generator: every typed slot may be set. [`restrict_params`] then
+/// drops the ones the kind does not take.
 fn location_parameters_strategy() -> impl Strategy<Value = LocationParameters> {
     (
         // `dir` is plain string and the only reasonable target for
@@ -428,10 +432,8 @@ fn location_parameters_strategy() -> impl Strategy<Value = LocationParameters> {
         prop::option::of("sha256-[a-zA-Z0-9_-]{8,32}"),
         prop::option::of("[0-9]{1,12}"),
         prop::option::of("[0-9]{1,8}"),
-        // `submodules` and `shallow` are typed `Option<bool>`; the parser
-        // routes both through `parse_bool_param` (strict `"1"`/`"0"`), so
-        // the strategy emits bools and the call below maps them to the
-        // typed slot.
+        // `submodules` and `shallow` are typed `Option<bool>`. Display
+        // writes `1`/`0`, which parse back to the same bool.
         prop::option::of(any::<bool>()),
         prop::option::of(any::<bool>()),
         git_typed_params_strategy(),
@@ -474,6 +476,35 @@ fn location_parameters_strategy() -> impl Strategy<Value = LocationParameters> {
         )
 }
 
+/// Drop the query parameters that `kind` does not take. Git forges only
+/// take `dir`, `host` and `narHash` (besides ref and rev, which live on the
+/// kind). `path:` takes `dir`, `narHash`, `lastModified` and `revCount`.
+/// The other kinds take every parameter.
+fn restrict_params(kind: &FlakeRefType, mut params: LocationParameters) -> LocationParameters {
+    let (keep_host, keep_counts) = match kind {
+        FlakeRefType::GitForge(_) => (true, false),
+        FlakeRefType::Path { .. } => (false, true),
+        FlakeRefType::Indirect { .. } | FlakeRefType::Resource(_) => return params,
+    };
+    if !keep_host {
+        params.set_host(None);
+    }
+    if !keep_counts {
+        params.set_last_modified(None);
+        params.set_rev_count(None);
+    }
+    params.set_submodules(None);
+    params.set_shallow(None);
+    params.set_lfs(None);
+    params.set_export_ignore(None);
+    params.set_all_refs(None);
+    params.set_verify_commit(None);
+    params.set_keytype(None);
+    params.set_public_key(None);
+    params.set_public_keys(None);
+    params
+}
+
 fn flake_ref_strategy() -> impl Strategy<Value = FlakeRef> {
     (
         kind_strategy(),
@@ -481,21 +512,26 @@ fn flake_ref_strategy() -> impl Strategy<Value = FlakeRef> {
         location_parameters_strategy(),
     )
         .prop_map(|(kind, fragment, params)| {
+            let params = restrict_params(&kind, params);
             FlakeRef::new(kind)
                 .with_fragment(fragment)
                 .with_params(params)
         })
 }
 
+/// Installables take everything a flake input does, plus a fragment.
+fn parse(s: &str) -> FlakeRef {
+    FlakeRef::parse(s, Context::Installable).expect("Display output failed to parse")
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
-    /// `flake_ref.to_string().parse::<FlakeRef>() == Ok(flake_ref)`: every
-    /// arbitrary `FlakeRef` survives a `Display` -> `FromStr` round-trip.
+    /// Every arbitrary `FlakeRef` survives a `Display` -> parse
+    /// round-trip.
     #[test]
     fn roundtrip_via_string(flake_ref in flake_ref_strategy()) {
-        let s = flake_ref.to_string();
-        let parsed: FlakeRef = s.parse().expect("Display output failed to parse");
+        let parsed = parse(&flake_ref.to_string());
         prop_assert_eq!(flake_ref, parsed);
     }
 
@@ -504,8 +540,7 @@ proptest! {
     #[test]
     fn display_is_canonical(flake_ref in flake_ref_strategy()) {
         let s1 = flake_ref.to_string();
-        let parsed: FlakeRef = s1.parse().expect("Display output failed to parse");
-        let s2 = parsed.to_string();
+        let s2 = parse(&s1).to_string();
         prop_assert_eq!(s1, s2);
     }
 }

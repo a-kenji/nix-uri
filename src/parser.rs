@@ -1,178 +1,356 @@
-use winnow::{
-    ModalResult, Parser,
-    combinator::{alt, opt, repeat, separated_pair},
-    error::{StrContext, StrContextValue},
-    token::{any, rest, take_till, take_until},
-};
-
 use crate::{
-    error::{NixUriError, NixUriResult, run_partial},
+    Context,
+    error::{NixUriError, NixUriResult, UnsupportedReason},
     flakeref::{
         FlakeRef, FlakeRefType, GitForge, LocationParamKeys, LocationParameters, RefLocation,
-        TransportLayer, encoding,
+        ResourceType, encoding,
+        fr_type::{indirect_from_segments, is_flake_id},
         location_params::ParamRefRev,
-        validators::{looks_like_rev, parse_bool_param, validated_host_name, validated_ref_name},
+        validators::{
+            is_sha1_hash, matches_ref_shape, query_bool, validated_host_name, validated_ref_name,
+        },
     },
 };
 
-/// Raw `(key, value)` pairs as they appear in a query string, before the
-/// routing pass in [`route_location_params`] turns them into typed slots
-/// on [`LocationParameters`] / [`ParamRefRev`]. Keys may carry a leading
-/// `&` left over from the param parser; the `LocationParamKeys` `FromStr`
-/// strips it.
-pub(crate) type RawParamValues<'i> = Vec<(&'i str, &'i str)>;
-
-// TODO: use a param-specific parser, handle the inversion specifically.
-/// Take all that is behind the "?" tag.
-/// Returns everything prior as not parsed.
+/// Parse a flake reference in `context`.
 ///
-/// `ref` / `rev` query keys are pulled out into a [`ParamRefRev`] side-channel
-/// rather than stashed inside [`LocationParameters`], because the typed
-/// destination for those values lives on the `FlakeRef`'s kind. The caller
-/// applies them via [`FlakeRefType::set_ref`] / [`FlakeRefType::set_rev`] and
-/// flips the kind's [`RefLocation`] to `QueryParameter`.
-pub(crate) fn parse_params<'i>(
-    input: &mut &'i str,
-) -> ModalResult<(&'i str, Option<RawParamValues<'i>>)> {
-    // Routing (and bool-parse validation that surfaces
-    // `NixUriError::InvalidValue`) happens in `route_location_params`
-    // because winnow's `ModalResult` cannot carry a `NixUriError`.
-    let maybe_flake_type = opt(take_until(0.., "?")).parse_next(input)?;
+/// Three readings are tried in order:
+///
+/// 1. the flake-id shorthand `id[/ref-or-rev]` (`nixpkgs/nixos-25.05`),
+/// 2. a URL with a scheme (`github:`, `git+https:`, `path:`, ...),
+/// 3. a path, with an optional query.
+///
+/// A URL that is malformed falls through to the path reading, which in a
+/// [`Context::FlakeInput`] keeps it as a relative path
+/// (`github:NixOS/nixpkgs/a..b` is the directory of that name). Other URL
+/// failures, such as an unknown scheme, are final.
+pub(crate) fn parse_nix_uri(input: &str, context: Context) -> NixUriResult<FlakeRef> {
+    if input.trim().is_empty() || input.chars().any(char::is_control) {
+        return Err(NixUriError::InvalidUrl(input.into()));
+    }
 
-    if let Some(flake_type) = maybe_flake_type {
-        // Discard leading "?".
-        let _q = any.parse_next(input)?;
-        let param_values: Vec<(&str, &str)> = repeat(
-            0..,
-            separated_pair(
-                take_until(0.., "="),
-                '='.context(StrContext::Expected(StrContextValue::CharLiteral('='))),
-                alt((take_until(0.., "&"), take_till(0.., |c| c == '#'))),
-            ),
-        )
-        .context(StrContext::Label("param_fetch"))
-        .parse_next(input)?;
-        Ok((flake_type, Some(param_values)))
-    } else {
-        // No "?": the entire input is the prefix.
-        let prefix = rest.parse_next(input)?;
-        Ok((prefix, None))
+    let (head, fragment) = match input.split_once('#') {
+        Some((head, fragment)) => (head, Some(encoding::decode_percent(fragment)?.into_owned())),
+        None => (input, None),
+    };
+
+    let mut flake_ref = match parse_flake_id(head) {
+        Some(parsed) => parsed?,
+        None => match parse_url(head) {
+            Ok(parsed) => parsed,
+            Err(UrlFailure::Final(err)) => return Err(err),
+            // When the path reading fails too, the URL error says more
+            // about what the input was meant to be.
+            Err(UrlFailure::Malformed(url_err)) => {
+                parse_path(head, context).map_err(|path_err| url_err.unwrap_or(path_err))?
+            }
+        },
+    };
+
+    if let Some(fragment) = fragment.as_deref().filter(|f| !f.is_empty()) {
+        if !context.allows_fragment() {
+            return Err(NixUriError::Unsupported(UnsupportedReason::Fragment {
+                fragment: fragment.into(),
+            }));
+        }
+    }
+    flake_ref.set_fragment(fragment);
+    Ok(flake_ref)
+}
+
+/// The flake-id shorthand: an id, optionally followed by `/` and a ref
+/// and/or revision. Returns `None` when `head` does not have that shape.
+/// Once it does, a failure (`nixpkgs/a..b`) is final.
+fn parse_flake_id(head: &str) -> Option<NixUriResult<FlakeRef>> {
+    let (id, tail) = match head.split_once('/') {
+        Some((id, tail)) => (id, Some(tail)),
+        None => (head, None),
+    };
+    if !is_flake_id(id) || !tail.is_none_or(matches_ref_shape) {
+        return None;
+    }
+    let segments: Vec<&str> = head.split('/').filter(|s| !s.is_empty()).collect();
+    Some(indirect_from_segments(&segments, head).map(FlakeRef::new))
+}
+
+enum UrlFailure {
+    /// Not a URL, or a malformed one. The input is retried as a path.
+    /// Carries the URL error, if there was a scheme to blame.
+    Malformed(Option<NixUriError>),
+    /// A URL that is rejected outright.
+    Final(NixUriError),
+}
+
+fn parse_url(head: &str) -> Result<FlakeRef, UrlFailure> {
+    let Some(scheme) = url_scheme(head) else {
+        return Err(UrlFailure::Malformed(None));
+    };
+    let (location, query) = split_query(head);
+    let parsed = FlakeRefType::parse_type(location).and_then(|kind| {
+        let mut flake_ref = FlakeRef::new(kind);
+        apply_query(&mut flake_ref, query)?;
+        Ok(flake_ref)
+    });
+    parsed.map_err(|err| {
+        if is_final_url_error(scheme, &err) {
+            UrlFailure::Final(err)
+        } else {
+            UrlFailure::Malformed(Some(err))
+        }
+    })
+}
+
+/// The scheme of `input`, if it starts with one: a letter followed by
+/// letters, digits, `+`, `-` or `.`, then `:`.
+fn url_scheme(input: &str) -> Option<&str> {
+    let (scheme, _) = input.split_once(':')?;
+    let mut chars = scheme.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    valid.then_some(scheme)
+}
+
+/// A URL is only retried as a path when it is malformed. An unknown
+/// scheme or transport, a `path:` URL with an authority or a bad
+/// parameter, and a git-forge `?rev=` that is not a SHA-1 hash are final.
+fn is_final_url_error(scheme: &str, err: &NixUriError) -> bool {
+    match err {
+        NixUriError::Unsupported(
+            UnsupportedReason::UriType { .. }
+            | UnsupportedReason::TransportLayer { .. }
+            | UnsupportedReason::Authority { .. },
+        ) => true,
+        NixUriError::Unsupported(UnsupportedReason::Param { .. })
+        | NixUriError::InvalidValue { .. }
+            if scheme == "path" =>
+        {
+            true
+        }
+        NixUriError::InvalidValue { field: "rev", .. } => {
+            matches!(scheme, "github" | "gitlab" | "sourcehut")
+        }
+        _ => false,
     }
 }
 
-/// Route raw `(key, value)` pairs from [`parse_params`] into the typed
-/// destinations: typed slots on [`LocationParameters`], typed bool
-/// conversion for the seven Git-flavoured params, and the `ref` / `rev`
-/// side-channel ([`ParamRefRev`]). Keys without a typed slot
-/// (e.g. `name`, `treeHash`) round-trip through
-/// `LocationParameters::arbitrary`. Every scheme accepts every key:
-/// the parser mirrors Nix's permissive `parseFlakeRef` instead of
-/// gating per scheme.
+/// The last reading: everything before `?` is a path. Only absolute paths
+/// are accepted in [`Context::Standalone`].
+fn parse_path(head: &str, context: Context) -> NixUriResult<FlakeRef> {
+    let (path, query) = split_query(head);
+    if path.is_empty() {
+        return Err(NixUriError::InvalidUrl(head.into()));
+    }
+    if !path.starts_with('/') && !context.allows_relative_path() {
+        let reason = if looks_like_scp_url(path) {
+            UnsupportedReason::ScpStyleUrl { url: path.into() }
+        } else {
+            UnsupportedReason::RelativePath { path: path.into() }
+        };
+        return Err(NixUriError::Unsupported(reason));
+    }
+    let mut flake_ref = FlakeRef::new(FlakeRefType::Path {
+        path: path.into(),
+        rev: None,
+    });
+    apply_query(&mut flake_ref, query)?;
+    Ok(flake_ref)
+}
+
+/// An SCP-style git location, `user@host:path`, as written by
+/// `git clone`. Only used to explain why such an input is rejected.
+fn looks_like_scp_url(path: &str) -> bool {
+    path.split_once(':').is_some_and(|(authority, rest)| {
+        authority.contains('@') && !authority.contains('/') && !rest.is_empty()
+    })
+}
+
+fn split_query(input: &str) -> (&str, Option<&str>) {
+    match input.split_once('?') {
+        Some((before, query)) => (before, Some(query)),
+        None => (input, None),
+    }
+}
+
+/// Parse `query`, check it against what the kind of `flake_ref` allows,
+/// and store it on `flake_ref`.
+fn apply_query(flake_ref: &mut FlakeRef, query: Option<&str>) -> NixUriResult<()> {
+    let Some(query) = query else {
+        return Ok(());
+    };
+    let pairs = parse_query(query)?;
+    check_query(flake_ref.kind(), &pairs)?;
+    let (params, ref_rev) = route_location_params(pairs);
+    flake_ref.replace_params(params);
+    apply_param_ref_rev(flake_ref, ref_rev)
+}
+
+/// Split a query into `&`-separated `key=value` pairs, both
+/// sides percent-decoded. A pair without `=` is ignored, and of repeated
+/// keys the first one wins.
+pub(crate) fn parse_query(query: &str) -> NixUriResult<Vec<(String, String)>> {
+    if !query.chars().all(encoding::is_query_char) {
+        return Err(NixUriError::InvalidUrl(query.into()));
+    }
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let key = encoding::decode_percent(key)?.into_owned();
+        if pairs.iter().any(|(seen, _)| *seen == key) {
+            continue;
+        }
+        let value = encoding::decode_percent(value)?.into_owned();
+        pairs.push((key, value));
+    }
+    Ok(pairs)
+}
+
+/// Check each query parameter against what the kind accepts.
 ///
-/// Surfaces [`NixUriError::InvalidValue`] when a typed boolean param
-/// (`lfs`, `exportIgnore`, `allRefs`, `verifyCommit`, `submodules`,
-/// `shallow`) carries a value outside Nix's URL-time coercion, which
-/// is strictly `value == "1"` (i.e. `"1"` or `"0"`; `"true"` /
-/// `"false"` are rejected so the parse-time diagnostic is preserved).
-pub(crate) fn route_location_params(
-    values: RawParamValues<'_>,
-) -> Result<(LocationParameters, ParamRefRev), NixUriError> {
-    let mut params = LocationParameters::default();
-    let mut ref_rev = ParamRefRev::default();
-    for (param, value) in values {
-        if let Ok(key) = param.parse::<LocationParamKeys>() {
-            // Match Nix's query decoding: every value is percent-decoded
-            // before it lands in a typed slot or the arbitrary bag, so
-            // the in-memory representation is the raw user string and
-            // Display re-encodes uniformly.
-            let decoded = encoding::decode_percent(value)?.into_owned();
-            match key {
-                LocationParamKeys::Dir => params.set_dir(Some(decoded)),
-                LocationParamKeys::NarHash => params.set_nar_hash(Some(decoded)),
-                LocationParamKeys::LastModified => {
-                    params.set_last_modified(Some(decoded));
+/// `dir` is the flake's subdirectory and allowed everywhere. Git forges
+/// take only `ref`, `rev` (a SHA-1 hash), `host` and `narHash`. `path:`
+/// takes `rev`, `narHash` and the integers `revCount` and `lastModified`.
+/// Git checks `ref` against Git's ref-name rules and Mercurial against
+/// the flake-id ref shape. Everything else is passed through to the
+/// fetcher and is not checked, and `flake:` ignores its query entirely.
+fn check_query(kind: &FlakeRefType, query: &[(String, String)]) -> NixUriResult<()> {
+    for (key, value) in query {
+        let unsupported = || {
+            Err(NixUriError::Unsupported(UnsupportedReason::Param {
+                name: key.clone(),
+            }))
+        };
+        match kind {
+            FlakeRefType::GitForge(_) => match key.as_str() {
+                "dir" | "narHash" => {}
+                "ref" => {
+                    validated_ref_name(value)?;
                 }
-                LocationParamKeys::RevCount => params.set_rev_count(Some(decoded)),
-                LocationParamKeys::Host => {
-                    params.set_host(Some(validated_host_name(&decoded)?));
+                "rev" => require_sha1_hash(value)?,
+                "host" => {
+                    validated_host_name(value)?;
                 }
-                LocationParamKeys::Ref => ref_rev.r#ref = Some(decoded),
-                LocationParamKeys::Rev => ref_rev.rev = Some(decoded),
-                LocationParamKeys::Submodules => {
-                    params.set_submodules(Some(parse_bool_param("submodules", &decoded)?));
+                _ => return unsupported(),
+            },
+            FlakeRefType::Path { .. } => match key.as_str() {
+                "dir" | "rev" | "narHash" => {}
+                "revCount" => require_integer("revCount", value)?,
+                "lastModified" => require_integer("lastModified", value)?,
+                _ => return unsupported(),
+            },
+            FlakeRefType::Resource(res) if key == "ref" => match res.res_type {
+                ResourceType::Git => {
+                    validated_ref_name(value)?;
                 }
-                LocationParamKeys::Shallow => {
-                    params.set_shallow(Some(parse_bool_param("shallow", &decoded)?));
+                ResourceType::Mercurial if !matches_ref_shape(value) => {
+                    return Err(NixUriError::InvalidValue {
+                        field: "ref",
+                        reason: "expected a Mercurial branch or tag name".to_string(),
+                    });
                 }
-                LocationParamKeys::Lfs => {
-                    params.set_lfs(Some(parse_bool_param("lfs", &decoded)?));
-                }
-                LocationParamKeys::ExportIgnore => {
-                    params.set_export_ignore(Some(parse_bool_param("exportIgnore", &decoded)?));
-                }
-                LocationParamKeys::AllRefs => {
-                    params.set_all_refs(Some(parse_bool_param("allRefs", &decoded)?));
-                }
-                LocationParamKeys::VerifyCommit => {
-                    params.set_verify_commit(Some(parse_bool_param("verifyCommit", &decoded)?));
-                }
-                LocationParamKeys::Keytype => params.set_keytype(Some(decoded)),
-                LocationParamKeys::PublicKey => params.set_public_key(Some(decoded)),
-                LocationParamKeys::PublicKeys => params.set_public_keys(Some(decoded)),
-                LocationParamKeys::Arbitrary(k) => {
-                    params.add_arbitrary((k, decoded));
-                }
-            }
+                _ => {}
+            },
+            FlakeRefType::Resource(_) | FlakeRefType::Indirect { .. } => {}
         }
     }
-    Ok((params, ref_rev))
+    Ok(())
+}
+
+fn require_sha1_hash(value: &str) -> NixUriResult<()> {
+    if is_sha1_hash(value) {
+        return Ok(());
+    }
+    Err(NixUriError::InvalidValue {
+        field: "rev",
+        reason: "expected a SHA-1 commit hash".to_string(),
+    })
+}
+
+fn require_integer(field: &'static str, value: &str) -> NixUriResult<()> {
+    if value.parse::<u64>().is_ok() {
+        return Ok(());
+    }
+    Err(NixUriError::InvalidValue {
+        field,
+        reason: "expected a non-negative integer".to_string(),
+    })
+}
+
+/// Route decoded query pairs into their typed destinations: the slots on
+/// [`LocationParameters`], and the `ref` / `rev` side-channel
+/// ([`ParamRefRev`]) whose values belong on the kind. Keys without a typed
+/// slot (e.g. `name`, `treeHash`) round-trip through
+/// `LocationParameters::arbitrary`. A boolean parameter is true only for
+/// `"1"`.
+pub(crate) fn route_location_params(
+    pairs: Vec<(String, String)>,
+) -> (LocationParameters, ParamRefRev) {
+    let mut params = LocationParameters::default();
+    let mut ref_rev = ParamRefRev::default();
+    for (key, value) in pairs {
+        match LocationParamKeys::from(key.as_str()) {
+            LocationParamKeys::Dir => params.set_dir(Some(value)),
+            LocationParamKeys::NarHash => params.set_nar_hash(Some(value)),
+            LocationParamKeys::LastModified => params.set_last_modified(Some(value)),
+            LocationParamKeys::RevCount => params.set_rev_count(Some(value)),
+            LocationParamKeys::Host => params.set_host(Some(value)),
+            LocationParamKeys::Ref => ref_rev.r#ref = Some(value),
+            LocationParamKeys::Rev => ref_rev.rev = Some(value),
+            LocationParamKeys::Submodules => params.set_submodules(Some(query_bool(&value))),
+            LocationParamKeys::Shallow => params.set_shallow(Some(query_bool(&value))),
+            LocationParamKeys::Lfs => params.set_lfs(Some(query_bool(&value))),
+            LocationParamKeys::ExportIgnore => {
+                params.set_export_ignore(Some(query_bool(&value)));
+            }
+            LocationParamKeys::AllRefs => params.set_all_refs(Some(query_bool(&value))),
+            LocationParamKeys::VerifyCommit => {
+                params.set_verify_commit(Some(query_bool(&value)));
+            }
+            LocationParamKeys::Keytype => params.set_keytype(Some(value)),
+            LocationParamKeys::PublicKey => params.set_public_key(Some(value)),
+            LocationParamKeys::PublicKeys => params.set_public_keys(Some(value)),
+            LocationParamKeys::Arbitrary(k) => params.add_arbitrary((k, value)),
+        }
+    }
+    (params, ref_rev)
 }
 
 /// Apply a [`ParamRefRev`] to a [`FlakeRef`]: write the ref/rev into the
 /// kind's typed slots and mark the kind's [`RefLocation`] as
 /// `QueryParameter` so a Display round-trip preserves the `?ref=` / `?rev=`
-/// form. No-op if both slots are empty.
+/// form. No-op if both slots are empty. The values were already checked by
+/// [`check_query`].
 ///
-/// Validates `?rev=` against [`looks_like_rev`]: the path-component
-/// side classifies a 40-hex (SHA-1) or 64-hex (SHA-256) value into `rev`
-/// and anything else into `ref_`, but the query side has no such
-/// classifier and would otherwise accept `?rev=main` verbatim. Returns
-/// [`NixUriError::InvalidValue`] `{ field: "rev", .. }` for values that
-/// are not a 40- or 64-character hex string.
+/// A git forge takes a ref or a revision, from the path or from the query,
+/// but not both, and not the same one twice. So `github:o/r/main?ref=dev`
+/// and `github:o/r/main?rev=<hash>` are rejected.
 ///
-/// Validates `?ref=` against
-/// [`validate_ref_name`](crate::flakeref::validators::validate_ref_name),
-/// matching Nix's accepted ref-name shape. Returns
-/// [`NixUriError::InvalidValue`] `{ field: "ref", .. }` for values that
-/// would not survive the downstream fetcher's own ref check.
-///
-/// Only writes a slot when the incoming value is `Some`. Preserving the
-/// existing path-component value when the matching query key is absent is
-/// what lets the post-parse mutual-exclusion check (see
-/// [`validate_gitforge_ref_rev_exclusion`]) observe both sources.
-///
-/// `Path` has no typed `ref_` slot (Nix's path scheme has no place for
-/// one), so a `?ref=` query value reaches the kind's no-op `set_ref` and
-/// is dropped. This mirrors Nix's permissive parse and trades round-trip
-/// fidelity on that one shape against accepting every input Nix accepts.
+/// `Path` has no typed `ref_` slot, and `?ref=` is rejected for it before
+/// this point.
 pub(crate) fn apply_param_ref_rev(
     flake_ref: &mut FlakeRef,
     ref_rev: ParamRefRev,
-) -> Result<(), NixUriError> {
+) -> NixUriResult<()> {
     if ref_rev.r#ref.is_none() && ref_rev.rev.is_none() {
         return Ok(());
     }
-    if let Some(rev) = ref_rev.rev.as_deref() {
-        if !looks_like_rev(rev) {
-            return Err(NixUriError::InvalidValue {
-                field: "rev",
-                reason: "expected 40-hex (SHA-1) or 64-hex (SHA-256) commit".to_string(),
+    if let FlakeRefType::GitForge(GitForge { ref_, rev, .. }) = flake_ref.kind() {
+        if ref_.is_some() && ref_rev.r#ref.is_some() {
+            return Err(NixUriError::DuplicateField { field: "ref" });
+        }
+        if rev.is_some() && ref_rev.rev.is_some() {
+            return Err(NixUriError::DuplicateField { field: "rev" });
+        }
+        if ref_.is_some() || rev.is_some() || (ref_rev.r#ref.is_some() && ref_rev.rev.is_some()) {
+            return Err(NixUriError::FieldConflict {
+                left: "ref",
+                right: "rev",
             });
         }
     }
-    if let Some(value) = ref_rev.r#ref.as_deref() {
-        let validated = validated_ref_name(value)?;
-        flake_ref.kind_mut().set_ref(Some(validated));
+    if ref_rev.r#ref.is_some() {
+        flake_ref.kind_mut().set_ref(ref_rev.r#ref);
     }
     if ref_rev.rev.is_some() {
         flake_ref.kind_mut().set_rev(ref_rev.rev);
@@ -183,235 +361,11 @@ pub(crate) fn apply_param_ref_rev(
     Ok(())
 }
 
-/// Reject a [`FlakeRefType::GitForge`] kind whose `ref_` and `rev` slots
-/// are both populated. Matches Nix's behaviour: a git-forge URL with both
-/// fields set is rejected.
-///
-/// Surfaces as [`NixUriError::FieldConflict`] (a structural relationship
-/// between two fields) rather than the value-shape
-/// [`NixUriError::InvalidValue`]; pattern-matching consumers can therefore
-/// distinguish "user typo'd a field" from "user combined two mutually
-/// exclusive fields".
-///
-/// Indirect's canonical `flake:id/ref/rev` form and Resource(Git)'s
-/// `?ref=branch&rev=hex` are both legitimate and stay untouched.
-fn validate_gitforge_ref_rev_exclusion(flake_ref: &FlakeRef) -> Result<(), NixUriError> {
-    if let FlakeRefType::GitForge(GitForge {
-        ref_: Some(_),
-        rev: Some(_),
-        ..
-    }) = flake_ref.kind()
-    {
-        return Err(NixUriError::FieldConflict {
-            left: "ref",
-            right: "rev",
-        });
-    }
-    Ok(())
-}
-
-/// Detect the SCP-style Git URL shape `[<user>@]<host>:<path>` and return
-/// the canonical `git+ssh://[<user>@]<host>/<path>` rewrite.
-///
-/// SCP form is the default output of `git remote add` / `git clone`, but the
-/// bare colon between host and path makes generic URL parsers (and ours)
-/// choke on the scheme dispatch. Nix canonicalises this to an
-/// `ssh://`-transport URL before dispatch; nix-uri does the same, but
-/// expressed in the crate's own grammar where `Resource(Git, Ssh)` Displays
-/// as `git+ssh://...`. The SCP form is one-directional: parse accepts it,
-/// `Display` always emits the canonical form.
-///
-/// Accepts the three shapes Nix's SCP detector recognises beyond the
-/// basic `git@host:repo`:
-///
-/// - **No userinfo.** `github.com:nixos/nixpkgs` rewrites to
-///   `git+ssh://github.com/nixos/nixpkgs`. The userinfo `@`-prefix is
-///   optional; when absent the host is everything up to the colon.
-///   Disambiguated from nix-uri's own bare-colon schemes (`github:`,
-///   `flake:`, `path:`, etc.) by requiring the host segment to look
-///   host-like (at least one `.` or a bracketed IPv6 literal) when no
-///   `@` is present.
-/// - **Absolute path after the colon.** `git@host:/srv/git/repo.git`
-///   rewrites to `git+ssh://git@host/srv/git/repo.git`. The leading `/`
-///   in the SCP path is preserved as the URL path (one slash, not two:
-///   the `git+ssh://<authority>` already terminates with the slot
-///   immediately before the path).
-/// - **IPv6 host.** `user@[::1]:repo` rewrites to
-///   `git+ssh://user@[::1]/repo`. Bracket parsing prefers `@[` if
-///   present, else a leading `[`; the `:` SCP separator must be the
-///   byte immediately after the closing `]` (otherwise we bail out and
-///   let the input fall through to the regular dispatch). Zone-ids
-///   inside the brackets (e.g. `[fe80::1%25eth0]`) round-trip
-///   verbatim; we do not crack the IPv6 literal open.
-///
-/// Returns `None` for any input that is not unambiguously SCP-shaped:
-///
-/// - input contains `://` (already a URL with an authority);
-/// - no `:` separator at all, or a `/` appears before the first `:`
-///   (making it a local path, not SCP);
-/// - the host segment is empty, or (when no `@` is present) looks
-///   like a scheme prefix rather than a hostname;
-/// - bracketed host with a malformed `[...]:` boundary;
-/// - empty path after the `:`.
-pub(crate) fn parse_scp_style(input: &str) -> Option<String> {
-    if input.contains("://") {
-        return None;
-    }
-
-    // Locate the SCP `:` separator and the host substring that precedes it.
-    // IPv6-bracket detection runs first because a bracketed host contains
-    // colons of its own; the SCP `:` lives immediately after `]`.
-    let bracket_start = input
-        .find("@[")
-        .map(|p| p + 1)
-        .or_else(|| input.starts_with('[').then_some(0));
-
-    let (host_with_userinfo, path) = if let Some(open) = bracket_start {
-        let close_rel = input[open + 1..].find(']')?;
-        let close = open + 1 + close_rel;
-        // Bail when a `:` exists after `]` but is not the very next
-        // byte; that keeps the rewrite path narrow and avoids silently
-        // dropping characters.
-        let after_bracket = &input[close + 1..];
-        if !after_bracket.starts_with(':') {
-            return None;
-        }
-        (&input[..=close], &after_bracket[1..])
-    } else {
-        let colon = input.find(':')?;
-        let host_part = &input[..colon];
-        // A `/` before the first `:` means a local path (e.g. `foo/bar:baz`),
-        // not SCP. Matches git's local-vs-ssh disambiguation.
-        if host_part.contains('/') {
-            return None;
-        }
-        (host_part, &input[colon + 1..])
-    };
-
-    // Split optional userinfo `<user>@` off the host segment.
-    let (userinfo, host) = match host_with_userinfo.rfind('@') {
-        Some(at) => {
-            let user = &host_with_userinfo[..at];
-            // Userinfo must be non-empty when `@` is present, must not
-            // contain `:` (which would make it a different kind of
-            // authority), and the host after `@` must be non-empty.
-            if user.is_empty() || user.contains(':') {
-                return None;
-            }
-            (Some(user), &host_with_userinfo[at + 1..])
-        }
-        None => (None, host_with_userinfo),
-    };
-    if host.is_empty() {
-        return None;
-    }
-
-    // Without a userinfo segment the host portion is ambiguous with
-    // nix-uri's own bare-colon scheme prefixes (`github:`, `flake:`,
-    // `path:`, ...). Require it to look host-like (a `.` somewhere, or a
-    // bracketed IPv6 literal) to avoid stealing those inputs from the
-    // scheme dispatch. Hosts with a userinfo segment are not subject to
-    // this filter because `<user>@<host>` already disambiguates.
-    if userinfo.is_none() && !host.contains('.') && !host.starts_with('[') {
-        return None;
-    }
-
-    if path.is_empty() {
-        return None;
-    }
-
-    // Preserve a leading `/` rather than doubling it: the URL authority
-    // already terminates immediately before the path slot, so an absolute
-    // SCP path `host:/abs/p` becomes `git+ssh://host/abs/p` (one slash),
-    // matching the canonical `ssh://host/abs/p` shape.
-    let path_separator = if path.starts_with('/') { "" } else { "/" };
-    match userinfo {
-        Some(user) => Some(format!("git+ssh://{user}@{host}{path_separator}{path}")),
-        None => Some(format!("git+ssh://{host}{path_separator}{path}")),
-    }
-}
-
-pub(crate) fn parse_nix_uri(input: &str) -> NixUriResult<FlakeRef> {
-    // Basic sanity checks.
-    if input.trim().is_empty()
-        || (input.trim() == "/")
-        || (input.trim() == ":")
-        || (input.trim() == "?")
-        || (!input.is_ascii())
-        || (!input.chars().all(|c| !c.is_control()))
-        || (!input.chars().all(|c| !c.is_ascii_control()))
-        || (input.ends_with(char::is_whitespace))
-        || (input.starts_with(char::is_whitespace))
-    {
-        return Err(NixUriError::InvalidUrl(input.into()));
-    }
-
-    let rewritten = parse_scp_style(input);
-    let input = rewritten.as_deref().unwrap_or(input);
-
-    // Slice off the trailing `#fragment` before handing the rest to the type
-    // and param parsers; both treat `#` as a terminator already, so removing
-    // it here just avoids leaving the unparsed remainder on the floor. The
-    // raw slice is percent-decoded so the in-memory fragment is the
-    // user-visible value and Display re-encodes uniformly.
-    let (head, fragment) = match input.find('#') {
-        Some(pos) => (
-            &input[..pos],
-            Some(encoding::decode_percent(&input[pos + 1..])?.into_owned()),
-        ),
-        None => (input, None),
-    };
-
-    let (_, (type_prefix, raw_values)) = run_partial(input, head, parse_params)?;
-    let mut flake_ref = FlakeRef::default().with_kind(FlakeRefType::parse_type(type_prefix)?);
-    if let Some(values) = raw_values {
-        let (params, ref_rev) = route_location_params(values)?;
-        flake_ref.replace_params(params);
-        apply_param_ref_rev(&mut flake_ref, ref_rev)?;
-    }
-    validate_gitforge_ref_rev_exclusion(&flake_ref)?;
-    flake_ref.set_fragment(fragment);
-
-    Ok(flake_ref)
-}
-
-/// Parses the part AFTER the leading `+` in `<scheme>+<layer>`. For input
-/// `"git+fizzbuzz"` returns `"fizzbuzz"`. The `+` and the prefix are both
-/// consumed.
-pub(crate) fn parse_from_transport_type<'i>(input: &mut &'i str) -> ModalResult<&'i str> {
-    let _prefix = take_until(0.., "+").parse_next(input)?;
-    let _plus = any.parse_next(input)?;
-    let layer = rest.parse_next(input)?;
-    Ok(layer)
-}
-
 pub(crate) fn is_tarball(input: &str) -> bool {
     let valid_extensions = &[
         ".zip", ".tar", ".tgz", ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst",
     ];
     valid_extensions.iter().any(|&ext| input.ends_with(ext))
-}
-
-#[allow(unused)]
-pub(crate) fn is_file(input: &str) -> bool {
-    !is_tarball(input)
-}
-
-// Parse the transport type itself.
-pub(crate) fn parse_transport_type(input: &str) -> Result<TransportLayer, NixUriError> {
-    let (_, layer_str) = run_partial(input, input, parse_from_transport_type)?;
-    TryInto::<TransportLayer>::try_into(layer_str)
-}
-
-#[allow(dead_code)]
-pub(crate) fn parse_sep(input: &mut &str) -> ModalResult<(char, char, char)> {
-    (
-        ':'.context(StrContext::Expected(StrContextValue::CharLiteral(':'))),
-        '/'.context(StrContext::Expected(StrContextValue::CharLiteral('/'))),
-        '/'.context(StrContext::Expected(StrContextValue::CharLiteral('/'))),
-    )
-        .context(StrContext::Label("location separator"))
-        .parse_next(input)
 }
 
 #[cfg(test)]
@@ -430,12 +384,12 @@ mod tests {
     #[test]
     fn check_file_uri() {
         let filename = "https://github.com/NixOS/patchelf/";
-        assert!(is_file(filename));
+        assert!(!is_tarball(filename));
     }
     #[test]
     fn check_file() {
         let filename = "example";
-        assert!(is_file(filename));
+        assert!(!is_tarball(filename));
     }
 }
 
@@ -445,7 +399,7 @@ mod ref_name_validation {
     //! ref-name shape is enforced at every routing site that hands a
     //! string into a kind's typed `ref_` slot; these tests pin the
     //! user-visible behaviour of the rejection paths.
-    use crate::{FlakeRef, NixUriError};
+    use crate::{Context, FlakeRef, NixUriError};
     use cool_asserts::assert_matches;
 
     #[test]
@@ -466,9 +420,10 @@ mod ref_name_validation {
 
     #[test]
     fn path_component_ref_rejects_leading_dot() {
-        // GitHub path-component ref: `github:o/r/.hidden`.
+        // GitHub path-component ref: `github:o/r/.hidden`. A flake input
+        // would read the malformed URL as a relative path.
         assert_matches!(
-            "github:o/r/.hidden".parse::<FlakeRef>(),
+            FlakeRef::parse("github:o/r/.hidden", Context::Standalone),
             Err(NixUriError::InvalidValue { field: "ref", .. })
         );
     }
@@ -476,7 +431,7 @@ mod ref_name_validation {
     #[test]
     fn indirect_ref_rejects_leading_dash() {
         assert_matches!(
-            "flake:nixpkgs/-bad".parse::<FlakeRef>(),
+            FlakeRef::parse("flake:nixpkgs/-bad", Context::Standalone),
             Err(NixUriError::InvalidValue { field: "ref", .. })
         );
     }
@@ -535,10 +490,9 @@ mod host_name_validation {
 
 #[cfg(test)]
 mod rev_validation {
-    //! Public-surface coverage for parse-time `?rev=` validation. Nix
-    //! accepts SHA-1 (40 hex) and SHA-256 (64 hex) commit hashes for
-    //! git inputs; anything else surfaces as
-    //! `InvalidValue { field: "rev", .. }`.
+    //! Public-surface coverage for parse-time git-forge `?rev=`
+    //! validation. It must be a SHA-1 hash, and anything else
+    //! surfaces as `InvalidValue { field: "rev", .. }`.
     use crate::{FlakeRef, NixUriError};
     use cool_asserts::assert_matches;
 
@@ -554,14 +508,12 @@ mod rev_validation {
     }
 
     #[test]
-    fn rev_query_64_hex_accepted() {
-        let parsed: FlakeRef =
+    fn rev_query_64_hex_rejected() {
+        // A git forge revision is a SHA-1 hash.
+        assert_matches!(
             "github:o/r?rev=0000000000000000000000000000000000000000000000000000000000000000"
-                .parse()
-                .expect("64-hex rev (SHA-256) must parse");
-        assert_eq!(
-            parsed.to_string(),
-            "github:o/r?rev=0000000000000000000000000000000000000000000000000000000000000000"
+                .parse::<FlakeRef>(),
+            Err(NixUriError::InvalidValue { field: "rev", .. })
         );
     }
 
@@ -614,145 +566,74 @@ mod rev_validation {
 
 #[cfg(test)]
 mod scp_style {
-    //! Public-surface coverage for the SCP-style Git URL shape
-    //! (`<user>@<host>:<path>`). Nix canonicalises this to an
-    //! ssh-transport form before dispatch; in nix-uri's grammar that
-    //! canonical form is `git+ssh://<user>@<host>/<path>` (a
-    //! `Resource(Git, Ssh)`). The rewrite happens at parser entry, so
-    //! `Display` always emits the canonical form rather than the SCP
-    //! pre-image.
-    use crate::{FlakeRef, FlakeRefType, ResourceType, TransportLayer};
+    //! SCP-style git locations (`[<user>@]<host>:<path>`), as written by
+    //! `git clone`, are not flake references. `builtins.parseFlakeRef`
+    //! rejects them, and a flake input reads them as relative paths, like
+    //! any other string that is not a URL.
+    use crate::{Context, FlakeRef, FlakeRefType, NixUriError, UnsupportedReason};
+    use cool_asserts::assert_matches;
     use rstest::rstest;
 
     #[rstest]
-    #[case::github(
-        "git@github.com:nixos/nixpkgs",
-        "git+ssh://git@github.com/nixos/nixpkgs"
-    )]
-    #[case::gitlab("git@gitlab.com:owner/repo", "git+ssh://git@gitlab.com/owner/repo")]
-    #[case::sourcehut("git@git.sr.ht:~user/proj", "git+ssh://git@git.sr.ht/~user/proj")]
-    #[case::self_hosted(
-        "git@self-hosted.example.com:team/svc",
-        "git+ssh://git@self-hosted.example.com/team/svc"
-    )]
-    fn git_scp_form_for_each_forge(#[case] scp: &str, #[case] canonical: &str) {
-        let parsed: FlakeRef = scp.parse().expect("SCP form must parse");
-        match parsed.kind() {
-            FlakeRefType::Resource(u) => {
-                assert_eq!(u.res_type, ResourceType::Git, "for {scp}");
-                assert_eq!(u.transport_type, Some(TransportLayer::Ssh), "for {scp}");
+    #[case("git@github.com:nixos/nixpkgs")]
+    #[case("git@gitlab.com:owner/repo")]
+    #[case("git@git.sr.ht:~user/proj")]
+    #[case("git@github.com:owner/repo/")]
+    #[case("first.last@host.example:team/svc")]
+    #[case("git@host.example:/srv/git/repo.git")]
+    #[case("user@[::1]:repo.git")]
+    #[case("git+ssh://git@github.com:nixos/nixpkgs")]
+    fn scp_style_location(#[case] input: &str) {
+        assert_matches!(
+            FlakeRef::parse(input, Context::Standalone),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::ScpStyleUrl { .. }
+            )),
+            "{input}"
+        );
+        let parsed = FlakeRef::parse(input, Context::FlakeInput).unwrap();
+        assert_eq!(
+            parsed.kind,
+            FlakeRefType::Path {
+                path: input.to_string(),
+                rev: None,
             }
-            other => panic!("expected Resource(Git, Ssh), got {other:?}"),
-        }
-        assert_eq!(parsed.to_string(), canonical);
-        let reparsed: FlakeRef = canonical.parse().expect("canonical form must parse");
-        assert_eq!(parsed, reparsed);
-        assert_eq!(reparsed.to_string(), canonical);
-    }
-
-    #[rstest]
-    #[case::trailing_slash("git@github.com:owner/repo/", "git+ssh://git@github.com/owner/repo/")]
-    #[case::tilde_path("git@host.example:~svc/repo", "git+ssh://git@host.example/~svc/repo")]
-    #[case::deep_path("git@host.example:a/b/c/d", "git+ssh://git@host.example/a/b/c/d")]
-    #[case::dotted_user(
-        "first.last@host.example:team/svc",
-        "git+ssh://first.last@host.example/team/svc"
-    )]
-    fn git_scp_form_edge_cases(#[case] scp: &str, #[case] canonical: &str) {
-        let parsed: FlakeRef = scp.parse().expect("SCP form must parse");
-        assert_eq!(parsed.to_string(), canonical);
-        let reparsed: FlakeRef = parsed.to_string().parse().unwrap();
-        assert_eq!(parsed, reparsed);
+        );
     }
 
     #[test]
-    fn explicit_git_ssh_scheme_unchanged() {
-        let uri = "git+ssh://git@github.com/nixos/nixpkgs";
-        let parsed: FlakeRef = uri.parse().unwrap();
+    fn scp_style_without_user_is_an_unknown_scheme() {
+        // `github.com` is a valid URL scheme, just not a known one.
+        for context in [Context::Standalone, Context::FlakeInput] {
+            assert_matches!(
+                FlakeRef::parse("github.com:nixos/nixpkgs", context),
+                Err(NixUriError::Unsupported(UnsupportedReason::UriType { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_url_with_port_is_not_scp_style() {
+        let uri = "git+ssh://git@github.com:22/nixos/nixpkgs";
+        let parsed = FlakeRef::parse(uri, Context::Standalone).unwrap();
         assert_eq!(parsed.to_string(), uri);
-        match parsed.kind() {
-            FlakeRefType::Resource(u) => {
-                assert_eq!(u.transport_type, Some(TransportLayer::Ssh));
-            }
-            other => panic!("expected Resource(Git, Ssh), got {other:?}"),
-        }
-    }
-
-    #[rstest]
-    #[case::email_no_path("user@host")]
-    #[case::empty_path_after_colon("git@host:")]
-    #[case::empty_path_no_userinfo("github.com:")]
-    fn scp_lookalikes_remain_rejected(#[case] uri: &str) {
-        // The detector's narrowness is what stops these strings from being
-        // silently rewritten into a parsing `git+ssh://...`. If a future
-        // change loosened any predicate, the rewrite would succeed and the
-        // input would start parsing instead of erroring; pin the error
-        // shape at the public surface so that regression is caught.
-        assert!(
-            uri.parse::<FlakeRef>().is_err(),
-            "{uri} must not be coerced into a valid FlakeRef",
-        );
-    }
-
-    /// Coverage for the three SCP shapes Nix's detector accepts:
-    ///   (a) no userinfo (`github.com:nixos/nixpkgs`),
-    ///   (b) absolute path after the colon (`git@host:/abs/path`),
-    ///   (c) IPv6 host (`user@[::1]:path`, with optional zone-id).
-    ///
-    /// The canonical-form column matches what `Display` re-emits after the
-    /// rewrite to `git+ssh://...`; the per-case round-trip through `parse ->
-    /// Display -> parse` pins that the widened detector did not also widen
-    /// the *output* shape.
-    #[rstest]
-    #[case::no_userinfo("github.com:nixos/nixpkgs", "git+ssh://github.com/nixos/nixpkgs")]
-    #[case::no_userinfo_with_subpath(
-        "git.example.org:team/repo/sub",
-        "git+ssh://git.example.org/team/repo/sub"
-    )]
-    #[case::absolute_path(
-        "git@host.example:/srv/git/repo.git",
-        "git+ssh://git@host.example/srv/git/repo.git"
-    )]
-    #[case::absolute_path_no_userinfo("host.example:/abs/path", "git+ssh://host.example/abs/path")]
-    #[case::ipv6_host("user@[::1]:repo.git", "git+ssh://user@[::1]/repo.git")]
-    #[case::ipv6_host_no_userinfo("[::1]:repo.git", "git+ssh://[::1]/repo.git")]
-    #[case::ipv6_host_with_zone_id(
-        "user@[fe80::1%25eth0]:repo",
-        "git+ssh://user@[fe80::1%25eth0]/repo"
-    )]
-    fn scp_widened_shapes(#[case] scp: &str, #[case] canonical: &str) {
-        let parsed: FlakeRef = scp.parse().expect("widened SCP form must parse");
-        match parsed.kind() {
-            FlakeRefType::Resource(u) => {
-                assert_eq!(u.res_type, ResourceType::Git, "for {scp}");
-                assert_eq!(u.transport_type, Some(TransportLayer::Ssh), "for {scp}");
-            }
-            other => panic!("expected Resource(Git, Ssh), got {other:?}"),
-        }
-        assert_eq!(parsed.to_string(), canonical, "Display canonical for {scp}");
-        let reparsed: FlakeRef = canonical.parse().expect("canonical form must parse");
-        assert_eq!(parsed, reparsed, "round-trip equality for {scp}");
-        assert_eq!(
-            reparsed.to_string(),
-            canonical,
-            "round-trip Display for {scp}"
-        );
     }
 }
 
 #[cfg(test)]
 mod arbitrary_query_keys {
-    //! Public-surface coverage for the permissive-key contract. Every
-    //! scheme accepts every query key: keys without a typed slot land
-    //! verbatim in [`crate::LocationParameters`]'s arbitrary bag, mirroring
-    //! Nix's `parseFlakeRef`. One representative case per scheme cluster
-    //! pins that contract.
-    use crate::FlakeRef;
+    //! Public-surface coverage for which query keys each scheme takes.
+    //! Git, Mercurial, tarball and file URLs pass unknown keys on to the
+    //! fetcher, and `flake:` ignores its query, so every key is accepted
+    //! there. Keys without a typed slot land verbatim in
+    //! [`crate::LocationParameters`]'s arbitrary bag. Git forges and
+    //! `path:` only take the keys their fetcher knows.
+    use crate::{Context, FlakeRef, NixUriError, UnsupportedReason};
+    use cool_asserts::assert_matches;
     use rstest::rstest;
 
     fn assert_value_preserved(input: &str, key: &str, value: &str) {
-        let parsed: FlakeRef = input
-            .parse()
+        let parsed = FlakeRef::parse(input, Context::Standalone)
             .unwrap_or_else(|e| panic!("{input}: expected success, got {e:?}"));
         let rendered = parsed.to_string();
         let needle = format!("{key}={value}");
@@ -763,14 +644,9 @@ mod arbitrary_query_keys {
     }
 
     #[rstest]
-    #[case::github("github:o/r?treeHash=abc", "treeHash", "abc")]
-    #[case::github_submodules("github:o/r?submodules=1", "submodules", "1")]
-    #[case::gitlab("gitlab:o/r?wurzel=pfropf", "wurzel", "pfropf")]
-    #[case::sourcehut("sourcehut:~o/r?treeHash=abc", "treeHash", "abc")]
     #[case::indirect("flake:nixpkgs?host=foo", "host", "foo")]
     #[case::git("git+ssh://example.com/repo?treeHash=abc", "treeHash", "abc")]
     #[case::mercurial("hg+https://example.com/repo?lfs=1", "lfs", "1")]
-    #[case::path("path:/foo/bar?host=x", "host", "x")]
     #[case::tarball_ref("tarball+https://example.com/x.tar.gz?ref=v1", "ref", "v1")]
     #[case::file_ref("file+https://example.com/x?ref=v1", "ref", "v1")]
     #[case::tarball("tarball+https://example.com/x.tar.gz?lfs=1", "lfs", "1")]
@@ -781,33 +657,41 @@ mod arbitrary_query_keys {
         #[case] value: &str,
     ) {
         // Recognised typed keys (`submodules`, `lfs`, `host`, `ref`, ...)
-        // route into their typed slots regardless of scheme; keys with no
-        // typed slot (`treeHash`, `wurzel`) land in the arbitrary bag.
-        // Either way the parser does not reject, and Display preserves
-        // the same `key=value` pair the user wrote.
+        // route into their typed slots, and keys with no typed slot
+        // (`treeHash`) land in the arbitrary bag. Either way Display
+        // preserves the `key=value` pair the user wrote.
         assert_value_preserved(input, key, value);
     }
 
-    /// Universal locked-attrs set: Nix moves `narHash`, `lastModified`,
-    /// and `revCount` out of the URL into `attrs` regardless of scheme.
-    /// They are the keys a `flake.lock`'s `locked` block emits when
-    /// round-trip serialised through Nix, so every scheme must accept
-    /// them at parse time. One representative shape per scheme pins the
-    /// contract.
     #[rstest]
-    #[case::github("github:o/r?")]
-    #[case::gitlab("gitlab:o/r?")]
-    #[case::sourcehut("sourcehut:~o/r?")]
+    #[case::github("github:o/r?treeHash=abc")]
+    #[case::github_submodules("github:o/r?submodules=1")]
+    #[case::github_last_modified("github:o/r?lastModified=1")]
+    #[case::gitlab("gitlab:o/r?wurzel=pfropf")]
+    #[case::sourcehut("sourcehut:~o/r?treeHash=abc")]
+    #[case::path("path:/foo/bar?host=x")]
+    #[case::path_ref("path:/foo/bar?ref=main")]
+    fn unknown_query_key_rejected_by_forges_and_paths(#[case] input: &str) {
+        assert_matches!(
+            FlakeRef::parse(input, Context::Standalone),
+            Err(NixUriError::Unsupported(UnsupportedReason::Param { .. }))
+        );
+    }
+
+    /// The locked attributes `narHash`, `lastModified` and `revCount`, as a
+    /// `flake.lock` stores them. Every scheme except the git forges takes
+    /// all three in the URL. Git forges only take `narHash` (see
+    /// [`unknown_query_key_rejected_by_forges_and_paths`]).
+    #[rstest]
     #[case::indirect("flake:nixpkgs?")]
     #[case::git("git+ssh://example.com/repo?")]
     #[case::mercurial("hg+https://example.com/repo?")]
     #[case::path("path:/foo/bar?")]
     #[case::tarball("tarball+https://example.com/x.tar.gz?")]
     #[case::file("file+https://example.com/x?")]
-    fn locked_attrs_accepted_on_every_scheme(#[case] prefix: &str) {
+    fn locked_attrs_accepted(#[case] prefix: &str) {
         let input = format!("{prefix}lastModified=1&narHash=sha256-abc&revCount=2");
-        let parsed: FlakeRef = input
-            .parse()
+        let parsed = FlakeRef::parse(&input, Context::Standalone)
             .unwrap_or_else(|e| panic!("{input}: expected success, got {e:?}"));
         // The query string Display sorts keys alphabetically and pulls
         // populated typed slots ahead of the arbitrary bag, so the
@@ -825,6 +709,399 @@ mod arbitrary_query_keys {
         assert!(
             rendered.contains("revCount=2"),
             "{input}: revCount missing in {rendered}",
+        );
+    }
+}
+
+#[cfg(test)]
+mod nix_acceptance {
+    //! What Nix accepts, per [`Context`]. Every row was checked against
+    //! Nix 2.35.3: `builtins.parseFlakeRef` for [`Context::Standalone`], a
+    //! flake input url for [`Context::FlakeInput`], and the flake input
+    //! behaviour plus a fragment for [`Context::Installable`].
+    //!
+    //! Accepted rows pin the key fields (through [`describe`]) and the
+    //! `Display` output. Some newly accepted shapes do not round-trip
+    //! byte for byte (`github:/o/r` renders `github:o/r`), so the
+    //! expected `Display` is spelled out per row.
+    use crate::{
+        Context, FlakeRef, FlakeRefType, NixUriError, UnsupportedReason,
+        flakeref::{GitForge, ResourceUrl},
+    };
+    use rstest::rstest;
+
+    const REV: &str = "0000000000000000000000000000000000000000";
+
+    #[derive(Debug, Clone, Copy)]
+    enum Rejected {
+        Fragment,
+        RelativePath,
+        ScpStyleUrl,
+        Param,
+        InvalidRef,
+        InvalidRev,
+        DuplicateRef,
+        UriType,
+        /// A malformed URL that is not one of the specific shapes above.
+        Malformed,
+    }
+
+    impl Rejected {
+        fn matches(self, err: &NixUriError) -> bool {
+            match self {
+                Self::Fragment => matches!(
+                    err,
+                    NixUriError::Unsupported(UnsupportedReason::Fragment { .. })
+                ),
+                Self::RelativePath => matches!(
+                    err,
+                    NixUriError::Unsupported(UnsupportedReason::RelativePath { .. })
+                ),
+                Self::ScpStyleUrl => matches!(
+                    err,
+                    NixUriError::Unsupported(UnsupportedReason::ScpStyleUrl { .. })
+                ),
+                Self::Param => matches!(
+                    err,
+                    NixUriError::Unsupported(UnsupportedReason::Param { .. })
+                ),
+                Self::InvalidRef => matches!(err, NixUriError::InvalidValue { field: "ref", .. }),
+                Self::InvalidRev => matches!(err, NixUriError::InvalidValue { field: "rev", .. }),
+                Self::DuplicateRef => matches!(err, NixUriError::DuplicateField { field: "ref" }),
+                Self::UriType => matches!(
+                    err,
+                    NixUriError::Unsupported(UnsupportedReason::UriType { .. })
+                ),
+                Self::Malformed => true,
+            }
+        }
+    }
+
+    /// The fields a row pins, in a compact `kind key=value ...` form.
+    fn describe(flake_ref: &FlakeRef) -> String {
+        let mut out = match flake_ref.kind() {
+            FlakeRefType::GitForge(GitForge {
+                platform,
+                owner,
+                repo,
+                ..
+            }) => format!("{platform} owner={owner} repo={repo}"),
+            FlakeRefType::Indirect { id, .. } => format!("indirect id={id}"),
+            FlakeRefType::Path { path, .. } => format!("path {path}"),
+            FlakeRefType::Resource(ResourceUrl {
+                res_type,
+                transport_type,
+                location,
+                ..
+            }) => {
+                let transport = transport_type
+                    .as_ref()
+                    .map_or_else(|| "-".to_string(), ToString::to_string);
+                format!("{res_type} {transport} {location}")
+            }
+        };
+        if let Some(r) = flake_ref.ref_() {
+            out.push_str(&format!(" ref={r}"));
+        }
+        if let Some(r) = flake_ref.rev() {
+            out.push_str(&format!(" rev={r}"));
+        }
+        if let Some(s) = flake_ref.params().submodules {
+            out.push_str(&format!(" submodules={s}"));
+        }
+        if let Some(f) = flake_ref.fragment() {
+            out.push_str(&format!(" #{f}"));
+        }
+        out
+    }
+
+    fn accepts(input: &str, context: Context, fields: &str, display: &str) {
+        let parsed = FlakeRef::parse(input, context)
+            .unwrap_or_else(|e| panic!("{input:?} in {context:?}: expected accept, got {e:?}"));
+        assert_eq!(describe(&parsed), fields, "{input:?} in {context:?}");
+        assert_eq!(parsed.to_string(), display, "{input:?} in {context:?}");
+    }
+
+    fn rejects(input: &str, context: Context, kind: Rejected) {
+        match FlakeRef::parse(input, context) {
+            Ok(parsed) => panic!("{input:?} in {context:?}: expected {kind:?}, got {parsed:?}"),
+            Err(err) => assert!(
+                kind.matches(&err),
+                "{input:?} in {context:?}: expected {kind:?}, got {err:?}"
+            ),
+        }
+    }
+
+    /// Accepted the same way in every context.
+    #[rstest]
+    #[case(
+        "github:ncaq/.xmonad",
+        "github owner=ncaq repo=.xmonad",
+        "github:ncaq/.xmonad"
+    )]
+    #[case(
+        "github:/InioX/Matugen",
+        "github owner=InioX repo=Matugen",
+        "github:InioX/Matugen"
+    )]
+    #[case("github:o//r", "github owner=o repo=r", "github:o/r")]
+    #[case("github:-o/r", "github owner=-o repo=r", "github:-o/r")]
+    #[case("github:o%2Fsub/r", "github owner=o/sub repo=r", "github:o%2Fsub/r")]
+    #[case("github:~o/r", "github owner=~o repo=r", "github:~o/r")]
+    #[case("sourcehut:o/r", "sourcehut owner=o repo=r", "sourcehut:o/r")]
+    #[case(
+        "github:NixOS/nixpkgs/nixos-25.05/",
+        "github owner=NixOS repo=nixpkgs ref=nixos-25.05",
+        "github:NixOS/nixpkgs/nixos-25.05"
+    )]
+    #[case(
+        "github:o/r//main",
+        "github owner=o repo=r ref=main",
+        "github:o/r/main"
+    )]
+    #[case("github:o/r/a/b", "github owner=o repo=r ref=a/b", "github:o/r/a/b")]
+    #[case("github:o/r?ref", "github owner=o repo=r", "github:o/r")]
+    #[case(
+        "github:o/r?&ref=main",
+        "github owner=o repo=r ref=main",
+        "github:o/r?ref=main"
+    )]
+    #[case(
+        "github:o/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "github owner=o repo=r rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "github:o/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA%3D"
+    )]
+    #[case(
+        "github:o/r?rev=00000000000000000000000000000000",
+        "github owner=o repo=r rev=00000000000000000000000000000000",
+        "github:o/r?rev=00000000000000000000000000000000"
+    )]
+    #[case(
+        "github:NixOS/nixpkgs?narHash=x",
+        "github owner=NixOS repo=nixpkgs",
+        "github:NixOS/nixpkgs?narHash=x"
+    )]
+    #[case(
+        "github:NixOS/nixpkgs?host=foo.com",
+        "github owner=NixOS repo=nixpkgs",
+        "github:NixOS/nixpkgs?host=foo.com"
+    )]
+    #[case(
+        "github:NixOS/nixpkgs?dir=lib",
+        "github owner=NixOS repo=nixpkgs",
+        "github:NixOS/nixpkgs?dir=lib"
+    )]
+    #[case("/", "path /", "path:/")]
+    #[case("path:", "path /", "path:/")]
+    #[case("path:./foo", "path ./foo", "path:./foo")]
+    #[case("/foo?dir=lib", "path /foo", "path:/foo?dir=lib")]
+    #[case("/a b", "path /a b", "path:/a b")]
+    #[case("/a[b", "path /a[b", "path:/a[b")]
+    #[case("file:.", "file file .", "file://.")]
+    #[case(
+        "git+https://h/r?rev=abc",
+        "git https h/r rev=abc",
+        "git+https://h/r?rev=abc"
+    )]
+    #[case(
+        "git+https://h.org/r?submodules=true",
+        "git https h.org/r submodules=false",
+        "git+https://h.org/r?submodules=0"
+    )]
+    #[case(
+        "git+https://h/r?ref=_under",
+        "git https h/r ref=_under",
+        "git+https://h/r?ref=_under"
+    )]
+    #[case(
+        "git+https://h/r?ref=x,y",
+        "git https h/r ref=x,y",
+        "git+https://h/r?ref=x%2Cy"
+    )]
+    #[case(
+        "NixOS/nixpkgs",
+        "indirect id=NixOS ref=nixpkgs",
+        "flake:NixOS/nixpkgs"
+    )]
+    #[case(
+        "nixpkgs/nixos-25.05",
+        "indirect id=nixpkgs ref=nixos-25.05",
+        "flake:nixpkgs/nixos-25.05"
+    )]
+    #[case(
+        "flake:nixpkgs?ref=a..b",
+        "indirect id=nixpkgs ref=a..b",
+        "flake:nixpkgs?ref=a..b"
+    )]
+    fn accepted_everywhere(#[case] input: &str, #[case] fields: &str, #[case] display: &str) {
+        for context in [
+            Context::Standalone,
+            Context::FlakeInput,
+            Context::Installable,
+        ] {
+            accepts(input, context, fields, display);
+        }
+    }
+
+    /// Rejected the same way in every context.
+    #[rstest]
+    #[case("github:NixOS/nixpkgs?rev=abc", Rejected::InvalidRev)]
+    #[case(
+        "github:o/r?rev=0000000000000000000000000000000000000000000000000000000000000000",
+        Rejected::InvalidRev
+    )]
+    #[case("nixpkgs/a..b", Rejected::InvalidRef)]
+    #[case("a/b/c/d", Rejected::Malformed)]
+    #[case("foo:bar", Rejected::UriType)]
+    #[case("path:/foo?unknown=1", Rejected::Param)]
+    #[case("path:/foo?ref=main", Rejected::Param)]
+    #[case("path:/foo?revCount=x", Rejected::Malformed)]
+    #[case("/foo?unknown=1", Rejected::Param)]
+    // A url that fails as a url falls back to a path, which then rejects
+    // the query. The url-level error is the one reported.
+    #[case("git+https://e.org/r?ref=a..b", Rejected::InvalidRef)]
+    #[case("git+https://h/r?ref=a.lock", Rejected::InvalidRef)]
+    #[case("github:NixOS/nixpkgs?unknown=1", Rejected::Param)]
+    #[case("github:NixOS/nixpkgs?tag=v1", Rejected::Param)]
+    #[case("github:NixOS/nixpkgs?submodules=1", Rejected::Param)]
+    #[case("github:o/r?treeHash=abc", Rejected::Param)]
+    #[case("gitlab:o/r?unknown=1", Rejected::Param)]
+    #[case("sourcehut:~o/r?unknown=1", Rejected::Param)]
+    #[case("github:o/r/main?ref=x", Rejected::DuplicateRef)]
+    fn rejected_everywhere(#[case] input: &str, #[case] kind: Rejected) {
+        for context in [
+            Context::Standalone,
+            Context::FlakeInput,
+            Context::Installable,
+        ] {
+            rejects(input, context, kind);
+        }
+    }
+
+    /// `builtins.parseFlakeRef` rejects relative paths, so a string that
+    /// is neither a flake id nor a valid url is an error there. A flake
+    /// input keeps it as a relative path instead.
+    #[rstest]
+    #[case("./foo", Rejected::RelativePath, "path ./foo", "path:./foo")]
+    #[case(".", Rejected::RelativePath, "path .", "path:.")]
+    #[case(
+        "nixpkgs?dir=lib",
+        Rejected::RelativePath,
+        "path nixpkgs",
+        "path:nixpkgs?dir=lib"
+    )]
+    #[case(
+        "nixpkgs/.x",
+        Rejected::RelativePath,
+        "path nixpkgs/.x",
+        "path:nixpkgs/.x"
+    )]
+    #[case(
+        "nixpkgs//main",
+        Rejected::RelativePath,
+        "path nixpkgs//main",
+        "path:nixpkgs//main"
+    )]
+    #[case("foo bar", Rejected::RelativePath, "path foo bar", "path:foo bar")]
+    #[case(":", Rejected::RelativePath, "path :", "path::")]
+    #[case(
+        "git@github.com:NixOS/nixpkgs",
+        Rejected::ScpStyleUrl,
+        "path git@github.com:NixOS/nixpkgs",
+        "path:git@github.com:NixOS/nixpkgs"
+    )]
+    #[case(
+        "git+ssh://git@github.com:NixOS/nixpkgs",
+        Rejected::ScpStyleUrl,
+        "path git+ssh://git@github.com:NixOS/nixpkgs",
+        "path:git+ssh://git@github.com:NixOS/nixpkgs"
+    )]
+    #[case(
+        "github:NixOS/nixpkgs/a..b",
+        Rejected::InvalidRef,
+        "path github:NixOS/nixpkgs/a..b",
+        "path:github:NixOS/nixpkgs/a..b"
+    )]
+    #[case(
+        "github:NixOS/nixpkgs?lastModified=1",
+        Rejected::Param,
+        "path github:NixOS/nixpkgs",
+        "path:github:NixOS/nixpkgs?lastModified=1"
+    )]
+    #[case("github:o", Rejected::Malformed, "path github:o", "path:github:o")]
+    #[case("github:", Rejected::Malformed, "path github:", "path:github:")]
+    #[case(
+        "flake:nixpkgs/main/0000000000000000000000000000000000000000000000000000000000000000",
+        Rejected::InvalidRev,
+        "path flake:nixpkgs/main/0000000000000000000000000000000000000000000000000000000000000000",
+        "path:flake:nixpkgs/main/0000000000000000000000000000000000000000000000000000000000000000"
+    )]
+    fn relative_path_fallback(
+        #[case] input: &str,
+        #[case] standalone: Rejected,
+        #[case] fields: &str,
+        #[case] display: &str,
+    ) {
+        rejects(input, Context::Standalone, standalone);
+        accepts(input, Context::FlakeInput, fields, display);
+        accepts(input, Context::Installable, fields, display);
+    }
+
+    /// Only installables take a `#fragment`.
+    #[rstest]
+    #[case(
+        "github:NixOS/nixpkgs#hello",
+        "github owner=NixOS repo=nixpkgs #hello",
+        "github:NixOS/nixpkgs#hello"
+    )]
+    #[case("nixpkgs#hello", "indirect id=nixpkgs #hello", "flake:nixpkgs#hello")]
+    #[case("/foo#bar", "path /foo #bar", "path:/foo#bar")]
+    #[case(
+        "github:o/r?dir=lib#x.y",
+        "github owner=o repo=r #x.y",
+        "github:o/r?dir=lib#x.y"
+    )]
+    fn fragment_only_in_installables(
+        #[case] input: &str,
+        #[case] fields: &str,
+        #[case] display: &str,
+    ) {
+        rejects(input, Context::Standalone, Rejected::Fragment);
+        rejects(input, Context::FlakeInput, Rejected::Fragment);
+        accepts(input, Context::Installable, fields, display);
+    }
+
+    #[test]
+    fn relative_path_fragment_in_installable() {
+        rejects("./foo#bar", Context::Standalone, Rejected::RelativePath);
+        rejects("./foo#bar", Context::FlakeInput, Rejected::Fragment);
+        accepts(
+            "./foo#bar",
+            Context::Installable,
+            "path ./foo #bar",
+            "path:./foo#bar",
+        );
+    }
+
+    #[test]
+    fn empty_fragment_is_not_a_fragment() {
+        // Only a non-empty fragment is rejected.
+        accepts(
+            "github:o/r#",
+            Context::Standalone,
+            "github owner=o repo=r #",
+            "github:o/r#",
+        );
+    }
+
+    #[test]
+    fn three_segment_indirect_takes_sha1_rev() {
+        let input = format!("nixpkgs/main/{REV}");
+        accepts(
+            &input,
+            Context::Standalone,
+            &format!("indirect id=nixpkgs ref=main rev={REV}"),
+            &format!("flake:nixpkgs/main/{REV}"),
         );
     }
 }
