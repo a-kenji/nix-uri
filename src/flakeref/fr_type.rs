@@ -536,10 +536,10 @@ impl Display for FlakeRefType {
                     owner = super::encoding::encode_path_segment(owner),
                     repo = super::encoding::encode_path_segment(repo),
                 )?;
-                if matches!(location, RefLocation::PathComponent) {
-                    if let Some(value) = ref_.as_deref().or(rev.as_deref()) {
-                        write!(f, "/{value}")?;
-                    }
+                if matches!(location, RefLocation::PathComponent)
+                    && let Some(value) = ref_.as_deref().or(rev.as_deref())
+                {
+                    write!(f, "/{value}")?;
                 }
                 Ok(())
             }

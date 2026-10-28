@@ -47,12 +47,12 @@ pub(crate) fn parse_nix_uri(input: &str, context: Context) -> NixUriResult<Flake
         },
     };
 
-    if let Some(fragment) = fragment.as_deref().filter(|f| !f.is_empty()) {
-        if !context.allows_fragment() {
-            return Err(NixUriError::Unsupported(UnsupportedReason::Fragment {
-                fragment: fragment.into(),
-            }));
-        }
+    if let Some(fragment) = fragment.as_deref().filter(|f| !f.is_empty())
+        && !context.allows_fragment()
+    {
+        return Err(NixUriError::Unsupported(UnsupportedReason::Fragment {
+            fragment: fragment.into(),
+        }));
     }
     flake_ref.set_fragment(fragment);
     Ok(flake_ref)

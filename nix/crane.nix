@@ -35,6 +35,7 @@ let
     commonArgs
     // {
       inherit cargoArtifacts;
+      cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
       nativeBuildInputs = [ rust.rustToolchainDevTOML ];
     }
   );

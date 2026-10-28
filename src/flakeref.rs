@@ -170,10 +170,10 @@ impl FlakeRef {
     /// Matches Nix's per-scheme host resolution: the `host` attr
     /// defaults to the canonical domain.
     pub fn domain(&self) -> Option<&str> {
-        if matches!(self.kind(), FlakeRefType::GitForge(_)) {
-            if let Some(host) = self.params.host_value() {
-                return Some(host);
-            }
+        if matches!(self.kind(), FlakeRefType::GitForge(_))
+            && let Some(host) = self.params.host_value()
+        {
+            return Some(host);
         }
         self.kind().domain()
     }
