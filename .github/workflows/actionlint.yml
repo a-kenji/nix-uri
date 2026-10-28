@@ -15,6 +15,10 @@ on:
     paths-ignore:
       - '**.md'
   merge_group:
+permissions:
+  contents: read
+  # lets hestia detect evicted cache entries upfront
+  actions: read
 jobs:
   actionlint:
     runs-on: ubuntu-latest
@@ -22,17 +26,15 @@ jobs:
     environment: cachix
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nixos/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
         with:
-          extra_nix_config: |
+          extra-conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: Mic92/hestia@dfed9ced335d28978ba74e513939a10db1f71025 # v3.1.0
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: kenji
           # If you chose API tokens for write access OR if you have a private cache
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-        with:
-          diagnostic-endpoint: ""
       - name: "actionlint"
         run: nix run -Lv --refresh --inputs-from .# nixpkgs#actionlint -- --ignore SC2002
