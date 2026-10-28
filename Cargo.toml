@@ -14,7 +14,6 @@ homepage = "https://github.com/a-kenji/nix-uri"
 include = ["src/**/*", "LICENSE", "README.md", "benches/*"]
 
 autoexamples = true
-rust-version = "1.85.0"
 
 keywords = ["nix", "flakes", "uri", "url", "flakeref"]
 
