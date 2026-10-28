@@ -3,7 +3,6 @@ use std::fmt;
 use thiserror::Error;
 use winnow::Parser;
 use winnow::error::{ContextError, ErrMode, ParseError, StrContext, StrContextValue};
-use winnow::stream::{Offset, Stream};
 use winnow::token::literal;
 
 pub type NixUriResult<T> = Result<T, NixUriError>;
@@ -16,7 +15,7 @@ pub type NixUriResult<T> = Result<T, NixUriError>;
 /// that fails the high-level URL shape, and `InvalidValue` for a field that
 /// passed parsing but failed validation. Structural failures that involve a
 /// relationship between fields (rather than a single value's literal shape)
-/// surface as named variants such as `FieldConflict`, `MissingScheme`, or
+/// surface as named variants such as `FieldConflict`, `DuplicateField`, or
 /// `TooManyIndirectSegments`. `ServoUrl` wraps the upstream
 /// `url::ParseError` for tarball- and HTTP-style URLs.
 #[derive(Debug, Error)]
@@ -51,16 +50,13 @@ pub enum NixUriError {
         left: &'static str,
         right: &'static str,
     },
-    /// A bare (no-scheme) input had more than one path segment, so it
-    /// cannot be classified as an indirect flake id and the parser cannot
-    /// guess which forge scheme (`github:` / `gitlab:` / `sourcehut:`)
-    /// the user intended. Mirrors upstream's rejection of bare
-    /// `owner/repo` shorthand.
-    #[error("input `{input}` has no scheme; bare two-segment shorthand is not supported")]
-    MissingScheme { input: String },
-    /// A `flake:` indirect URI exceeded Nix's three-segment cap
-    /// (`id[/ref[/rev]]`). `count` is the number of `/`-separated
-    /// segments in the rejected tail, including the id segment.
+    /// A field was given twice, for example a git-forge ref both as a
+    /// path segment and as `?ref=` (`github:o/r/main?ref=dev`).
+    #[error("`{field}` is given more than once")]
+    DuplicateField { field: &'static str },
+    /// An indirect reference (a `flake:` URL or a bare flake id) exceeded
+    /// the three-segment cap (`id[/ref[/rev]]`). `count` is the number
+    /// of `/`-separated segments, including the id segment.
     #[error("indirect form accepts at most 3 segments, got {count}")]
     TooManyIndirectSegments { count: usize },
     /// Wraps `url::ParseError` for tarball- and HTTP-style URLs.
@@ -160,6 +156,19 @@ pub enum UnsupportedReason {
     /// the same shape; `path://host/...` is malformed even though it
     /// superficially looks like a URL.
     Authority { scheme: &'static str },
+    /// A `#fragment` in a [`Context`](crate::Context) that does not take
+    /// one. Only [`Context::Installable`](crate::Context::Installable)
+    /// allows a fragment.
+    Fragment { fragment: String },
+    /// A relative path in a [`Context`](crate::Context) that only takes
+    /// absolute paths ([`Context::Standalone`](crate::Context::Standalone)).
+    /// Any input that is neither a flake id nor a valid URL is read as a
+    /// path, so this is also what an unparseable URL turns into there.
+    RelativePath { path: String },
+    /// An SCP-style git location (`git@github.com:owner/repo`), either
+    /// bare or after `git+ssh://`. It is not a flake reference URL. The
+    /// equivalent is `git+ssh://git@github.com/owner/repo`.
+    ScpStyleUrl { url: String },
 }
 
 impl fmt::Display for UnsupportedReason {
@@ -184,6 +193,18 @@ impl fmt::Display for UnsupportedReason {
             Self::Authority { scheme } => {
                 write!(f, "the `{scheme}:` scheme does not accept a URL authority")
             }
+            Self::Fragment { fragment } => write!(
+                f,
+                "unexpected fragment `{fragment}`, only installables take a `#fragment`"
+            ),
+            Self::RelativePath { path } => write!(
+                f,
+                "`{path}` is not an absolute path or a valid flake reference URL"
+            ),
+            Self::ScpStyleUrl { url } => write!(
+                f,
+                "`{url}` is an SCP-style git location, write it as `git+ssh://<user>@<host>/<path>`"
+            ),
         }
     }
 }
@@ -217,41 +238,6 @@ pub(crate) fn parse_error_from_winnow(
     NixUriError::Parse {
         position,
         expected: parse_expected_from_context(pe.inner()),
-    }
-}
-
-/// Run a parser that does NOT consume to end-of-input (the `parse_peek`
-/// shape) and surface failures through the public `Parse` variant.
-///
-/// `original` is the parser entry-point's input slice; `input` is the
-/// (possibly partial) slice this call should parse from. On error the byte
-/// position is reported in `original`'s coordinate space.
-pub(crate) fn run_partial<'i, P, O>(
-    original: &'i str,
-    input: &'i str,
-    mut parser: P,
-) -> Result<(&'i str, O), NixUriError>
-where
-    P: Parser<&'i str, O, ErrMode<ContextError>>,
-{
-    let mut current = input;
-    let start = current.checkpoint();
-    match parser.parse_next(&mut current) {
-        Ok(o) => Ok((current, o)),
-        Err(err_mode) => {
-            let inner = match err_mode {
-                ErrMode::Backtrack(e) | ErrMode::Cut(e) => e,
-                ErrMode::Incomplete(_) => {
-                    unreachable!("complete parsers do not return Incomplete")
-                }
-            };
-            let local_offset = current.offset_from(&start);
-            let position = offset_within(original, input) + local_offset;
-            Err(NixUriError::Parse {
-                position,
-                expected: parse_expected_from_context(&inner),
-            })
-        }
     }
 }
 
@@ -346,22 +332,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_position_reports_owner_repo_separator() {
-        // `parse_owner_repo_ref` consumes `n` as the owner and then
-        // demands `/`; the failure must be reported at byte 8 (the
-        // `/`'s expected column in the original input), not at the
-        // `:` (byte 6) where the GitForge arm was selected, nor at
-        // byte 0. Pins both the offset translation through
-        // `run_partial` and the `Char('/')` projection of the
-        // `StrContextValue::CharLiteral` context.
-        let err = "github:n".parse::<crate::FlakeRef>().unwrap_err();
+    fn parse_position_reports_missing_authority() {
+        // `hg+https:` must be followed by `//`.
+        let err = crate::FlakeRef::parse("hg+https:x", crate::Context::Standalone).unwrap_err();
         match err {
             NixUriError::Parse { position, expected } => {
-                assert_eq!(position, 8, "expected offset 8, got {position}");
+                assert_eq!(position, 9, "expected offset 9, got {position}");
                 assert_eq!(
                     expected,
-                    ParseExpected::Char('/'),
-                    "expected Char('/'), got {expected:?}",
+                    ParseExpected::Tag("//"),
+                    "expected Tag(\"//\"), got {expected:?}",
                 );
             }
             other => panic!("expected NixUriError::Parse, got {other:?}"),
@@ -414,7 +394,7 @@ mod tests {
             "github:",
             "github:nixos/",
         ] {
-            let err = input.parse::<crate::FlakeRef>().unwrap_err();
+            let err = crate::FlakeRef::parse(input, crate::Context::Standalone).unwrap_err();
             if let NixUriError::Parse { expected, .. } = err {
                 assert!(
                     !matches!(expected, ParseExpected::Other(_)),

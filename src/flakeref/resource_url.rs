@@ -1,14 +1,6 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{
-    ModalResult, Parser,
-    combinator::{alt, opt},
-    error::StrContext,
-    token::take_till,
-};
-
-use crate::{error::tag, parser::parse_sep};
 
 use super::{RefLocation, TransportLayer};
 
@@ -55,17 +47,6 @@ impl ResourceUrl {
             ref_location: RefLocation::PathComponent,
         }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn parse(input: &mut &str) -> ModalResult<Self> {
-        let res_type = ResourceType::parse(input)?;
-        let transport_type = opt(TransportLayer::plus_parse).parse_next(input)?;
-        let _ = parse_sep(input)?;
-        let location = take_till(0.., |c| c == '#' || c == '?')
-            .context(StrContext::Label("url location"))
-            .parse_next(input)?;
-        Ok(Self::new(res_type, location.to_string(), transport_type))
-    }
 }
 
 /// The resource flavour of a [`ResourceUrl`]: which canonical Nix scheme
@@ -78,20 +59,6 @@ pub enum ResourceType {
     Mercurial,
     File,
     Tarball,
-}
-
-impl ResourceType {
-    #[allow(dead_code)]
-    pub(crate) fn parse(input: &mut &str) -> ModalResult<Self> {
-        alt((
-            tag("git").value(Self::Git),
-            tag("hg").value(Self::Mercurial),
-            tag("file").value(Self::File),
-            tag("tarball").value(Self::Tarball),
-        ))
-        .context(StrContext::Label("resource selection"))
-        .parse_next(input)
-    }
 }
 
 impl Display for ResourceType {
@@ -110,23 +77,12 @@ impl Display for ResourceType {
 mod res_url {
     use cool_asserts::assert_matches;
 
-    use super::*;
-
-    #[test]
-    fn git() {
-        let url = "gitfoobar";
-        let (rest, parsed) = ResourceType::parse.parse_peek(url).unwrap();
-        let expected = ResourceType::Git;
-        assert_eq!(expected, parsed);
-        assert_eq!("foobar", rest);
-    }
-
     #[test]
     fn unknown_resource_scheme_routes_to_uri_type_unsupported() {
-        use crate::{NixUriError, error::UnsupportedReason, parser::parse_nix_uri};
+        use crate::{NixUriError, error::UnsupportedReason};
 
         assert_matches!(
-            parse_nix_uri("gat://x"),
+            crate::FlakeRef::parse("gat://x", crate::Context::default()),
             Err(NixUriError::Unsupported(UnsupportedReason::UriType { ty }))
                 => assert_eq!(ty, "gat")
         );

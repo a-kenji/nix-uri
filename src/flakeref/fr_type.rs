@@ -1,22 +1,16 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use winnow::{
-    ModalResult, Parser,
-    combinator::{alt, opt, peek, preceded, separated_pair, terminated},
-    error::{StrContext, StrContextValue},
-    token::{rest, take_till, take_until},
-};
 
 use crate::{
-    error::{NixUriError, NixUriResult, UnsupportedReason, run_partial, tag},
+    error::{NixUriError, NixUriResult, ParseExpected, UnsupportedReason},
     flakeref::{
         RefLocation, TransportLayer,
-        encoding::decode_percent,
-        forge::{GitForge, validate_owner_repo},
-        validators::{looks_like_rev, validated_ref_name},
+        encoding::{decode_percent, is_url_path_char},
+        forge::GitForge,
+        validators::{is_sha1_hex, looks_like_rev, validated_ref_name},
     },
-    parser::parse_transport_type,
+    parser::is_tarball,
 };
 
 use super::{
@@ -82,408 +76,106 @@ impl Default for FlakeRefType {
 }
 
 impl FlakeRefType {
-    #[allow(dead_code)]
-    pub(crate) fn parse_path(input: &mut &str) -> ModalResult<Self> {
-        preceded(
-            opt(alt((tag("path://"), tag("path:")))),
-            Self::path_parser.map(|path_str| Self::Path {
-                path: path_str.to_string(),
-                rev: None,
-            }),
-        )
-        .parse_next(input)
-    }
-
-    // TODO: #158
-    #[allow(dead_code)]
-    pub(crate) fn parse_file(input: &mut &str) -> ModalResult<Self> {
-        alt((
-            // Handle file+http[s]:// as Resource with proper transport.
-            Self::parse_file_with_http_transport,
-            Self::parse_explicit_file_scheme.map(|path| {
-                Self::Resource(ResourceUrl::new(
-                    ResourceType::File,
-                    path.display().to_string(),
-                    None,
-                ))
-            }),
-            Self::parse_naked.map(|path| Self::Path {
-                path: format!("{}", path.display()),
-                rev: None,
-            }),
-        ))
-        .context(StrContext::Label("path resource"))
-        .parse_next(input)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn parse_naked<'i>(input: &mut &'i str) -> ModalResult<&'i Path> {
-        // Check that input starts with `.` or `/`.
-        peek(alt(('.', '/')))
-            .context(StrContext::Label("path location"))
-            .parse_next(input)?;
-        let path_str = Self::path_parser.parse_next(input)?;
-        Ok(Path::new(path_str))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn path_parser<'i>(input: &mut &'i str) -> ModalResult<&'i str> {
-        preceded(peek(alt(('.', '/'))), Self::path_verifier).parse_next(input)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn path_verifier<'i>(input: &mut &'i str) -> ModalResult<&'i str> {
-        take_till(0.., |c| c == '#' || c == '?')
-            .verify(|c: &&str| !c.contains('[') && !c.contains(']'))
-            .context(StrContext::Label("path validation"))
-            .parse_next(input)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn parse_explicit_file_scheme<'i>(input: &mut &'i str) -> ModalResult<&'i Path> {
-        preceded(
-            tag("file"),
-            preceded(
-                opt(tag("+file")),
-                terminated(
-                    ':'.context(StrContext::Expected(StrContextValue::CharLiteral(':'))),
-                    opt(tag("//")),
-                ),
-            ),
-        )
-        .context(StrContext::Label("file resource"))
-        .parse_next(input)?;
-        let path_str = Self::path_parser.parse_next(input)?;
-        Ok(Path::new(path_str))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn parse_file_with_http_transport(input: &mut &str) -> ModalResult<Self> {
-        let scheme = alt((tag("file+https"), tag("file+http"))).parse_next(input)?;
-        let _ = tag("://").parse_next(input)?;
-        let location = take_till(0.., |c| c == '#' || c == '?').parse_next(input)?;
-
-        let transport_type = match scheme {
-            "file+https" => Some(TransportLayer::Https),
-            "file+http" => Some(TransportLayer::Http),
-            _ => unreachable!(),
-        };
-
-        Ok(Self::Resource(ResourceUrl::new(
-            ResourceType::File,
-            location.to_string(),
-            transport_type,
-        )))
-    }
-
-    /// TODO: different platforms have different rules about owner/repo/ref
-    /// strings; not enforced today.
-    /// `<github | gitlab | sourcehut>:<owner>/<repo>[/<rev | ref>]...`
-    #[allow(dead_code)]
-    pub(crate) fn parse_git_forge(input: &mut &str) -> ModalResult<Self> {
-        GitForge::parse.map(Self::GitForge).parse_next(input)
-    }
-
-    /// `<git | hg>[+<transport-type>]://...`
-    #[allow(dead_code)]
-    pub(crate) fn parse_resource(input: &mut &str) -> ModalResult<Self> {
-        ResourceUrl::parse.map(Self::Resource).parse_next(input)
-    }
-
-    /// Parse plain HTTP/HTTPS URLs with auto-detection.
-    #[allow(dead_code)]
-    pub(crate) fn parse_plain_url(input: &mut &str) -> ModalResult<Self> {
-        use crate::parser::is_tarball;
-
-        let scheme = alt((tag("https"), tag("http"))).parse_next(input)?;
-        let _ = tag("://").parse_next(input)?;
-        let location = take_till(0.., |c| c == '#' || c == '?')
-            .context(StrContext::Label("url location"))
-            .parse_next(input)?;
-
-        let res_type = if is_tarball(location) {
-            ResourceType::Tarball
-        } else {
-            ResourceType::File
-        };
-
-        let transport_type = match scheme {
-            "https" => Some(TransportLayer::Https),
-            "http" => Some(TransportLayer::Http),
-            _ => None,
-        };
-
-        Ok(Self::Resource(ResourceUrl::new(
-            res_type,
-            location.to_string(),
-            transport_type,
-        )))
-    }
-
-    /// Parse type-specific information; the production entry point for
-    /// classifying a URI's kind.
-    #[allow(dead_code)]
+    /// Parse the kind of a URL-shaped flake reference: `<scheme>:<rest>`
+    /// with the query and fragment already split off. Flake ids and paths
+    /// without a scheme are handled by the parser before and after this
+    /// stage.
     pub(crate) fn parse_type(input: &str) -> NixUriResult<Self> {
-        let (_, maybe_explicit_type) = run_partial(
-            input,
-            input,
-            opt(separated_pair(take_until(0.., ":"), ':', rest)),
-        )?;
-        if let Some((flake_ref_type_str, rest_input)) = maybe_explicit_type {
-            match flake_ref_type_str {
-                "github" | "gitlab" | "sourcehut" => {
-                    let (_input, owner_and_repo_or_ref) =
-                        run_partial(input, rest_input, GitForge::parse_owner_repo_ref)?;
-                    // Match Nix's per-segment percent-decode: split on raw
-                    // `/` boundaries, then percent-decode each segment.
-                    // Decoding *after* the split is what lets a `%2F` inside an
-                    // owner survive as a literal `/` without colliding with the
-                    // owner-vs-repo separator. The validator then accepts that
-                    // `/` only when the platform is `gitlab:` (subgroup form);
-                    // see [`validate_owner_repo`].
-                    let owner = decode_percent(owner_and_repo_or_ref.0)?.into_owned();
-                    let repo = decode_percent(owner_and_repo_or_ref.1)?.into_owned();
-                    let (ref_, rev) = match owner_and_repo_or_ref.2 {
-                        Some(v) => {
-                            let v = decode_percent(v)?.into_owned();
-                            if looks_like_rev(&v) {
-                                (None, Some(v))
-                            } else {
-                                (Some(validated_ref_name(&v)?), None)
-                            }
-                        }
-                        None => (None, None),
-                    };
-                    let platform = match flake_ref_type_str {
-                        "github" => GitForgePlatform::GitHub,
-                        "gitlab" => GitForgePlatform::GitLab,
-                        "sourcehut" => GitForgePlatform::SourceHut,
-                        _ => unreachable!(),
-                    };
-                    validate_owner_repo(&platform, &owner, &repo)?;
-                    let res = Self::GitForge(GitForge {
-                        platform,
-                        owner,
-                        repo,
-                        ref_,
-                        rev,
-                        location: RefLocation::PathComponent,
-                    });
-                    Ok(res)
+        let Some((flake_ref_type_str, rest_input)) = input.split_once(':') else {
+            return Err(NixUriError::InvalidUrl(input.into()));
+        };
+        match flake_ref_type_str {
+            "github" | "gitlab" | "sourcehut" => {
+                let platform = match flake_ref_type_str {
+                    "github" => GitForgePlatform::GitHub,
+                    "gitlab" => GitForgePlatform::GitLab,
+                    _ => GitForgePlatform::SourceHut,
+                };
+                parse_git_forge(platform, rest_input).map(Self::GitForge)
+            }
+            "path" => {
+                // `path://` is rejected only when the URL authority's
+                // host is non-empty. An empty authority (`path:///abs`)
+                // is the absolute path `/abs`. The body is stored
+                // verbatim (leading slashes preserved) so Display
+                // round-trips.
+                if let Some(after) = rest_input.strip_prefix("//") {
+                    let host_end = after.find('/').unwrap_or(after.len());
+                    if !after[..host_end].is_empty() {
+                        return Err(NixUriError::Unsupported(UnsupportedReason::Authority {
+                            scheme: "path",
+                        }));
+                    }
                 }
-                "path" => {
-                    // Nix rejects `path://` only when the URL authority's
-                    // host is non-empty. An *empty* authority (the body
-                    // begins `///` or is just `//`) decodes to the
-                    // trailing path and is accepted; e.g. `path:///abs`
-                    // parses as the absolute path `/abs`. So inspect
-                    // what follows the second `/` rather than rejecting
-                    // any `//` prefix outright. The body is stored
-                    // verbatim (leading slashes preserved) so Display
-                    // round-trips; the slash-collapse normalisation
-                    // Nix performs is intentionally deferred.
-                    if let Some(after) = rest_input.strip_prefix("//") {
-                        let host_end = after.find('/').unwrap_or(after.len());
-                        if !after[..host_end].is_empty() {
-                            return Err(NixUriError::Unsupported(UnsupportedReason::Authority {
-                                scheme: "path",
-                            }));
-                        }
+                check_url_path(rest_input)?;
+                // An empty `path:` is the root directory.
+                let path = if rest_input.is_empty() {
+                    "/"
+                } else {
+                    rest_input
+                };
+                Ok(Self::Path {
+                    path: path.into(),
+                    rev: None,
+                })
+            }
+            "flake" => {
+                // Empty segments are skipped when splitting the URL
+                // path, so `flake:nixpkgs//main` collapses to
+                // `flake:nixpkgs/main`.
+                let segments: Vec<&str> = rest_input.split('/').filter(|s| !s.is_empty()).collect();
+                indirect_from_segments(&segments, rest_input)
+            }
+            _ => {
+                let (res_type, transport_type, require_authority) = match flake_ref_type_str
+                    .split_once('+')
+                {
+                    Some((application, transport)) => {
+                        let res_type = match application {
+                            "git" => ResourceType::Git,
+                            "hg" => ResourceType::Mercurial,
+                            "tarball" => ResourceType::Tarball,
+                            "file" => ResourceType::File,
+                            _ => return Err(unsupported_uri_type(flake_ref_type_str)),
+                        };
+                        let transport = TransportLayer::try_from(transport)?;
+                        // Only Mercurial insists on `//`.
+                        (res_type, Some(transport), application == "hg")
                     }
-                    if rest_input.contains(']') || rest_input.contains('[') {
-                        return Err(NixUriError::InvalidUrl(rest_input.into()));
-                    }
-                    if rest_input.is_empty() || rest_input.trim().is_empty() {
-                        return Err(NixUriError::InvalidUrl(rest_input.into()));
-                    }
-                    if rest_input.contains('#') || rest_input.contains('?') {
-                        return Err(NixUriError::InvalidUrl(rest_input.into()));
-                    }
-                    let flake_ref_type = Self::Path {
-                        path: rest_input.into(),
-                        rev: None,
-                    };
-                    Ok(flake_ref_type)
-                }
-                "flake" => {
-                    // Nix skips empty segments when splitting the URL
-                    // path, so `flake:nixpkgs//main` collapses to
-                    // `flake:nixpkgs/main`. Match that here.
-                    let segments: Vec<&str> =
-                        rest_input.split('/').filter(|s| !s.is_empty()).collect();
-                    if segments.is_empty() {
-                        return Err(NixUriError::InvalidUrl(rest_input.into()));
-                    }
-                    if segments.len() > INDIRECT_MAX_SEGMENTS {
-                        return Err(NixUriError::TooManyIndirectSegments {
-                            count: segments.len(),
+                    // Plain `http(s)://` and `file:` URLs are classified
+                    // by their extension. A round-trip from the explicit
+                    // `tarball+file://` shape (whose Display strips
+                    // `tarball+`) lands back on the same kind. `file:`
+                    // takes no authority, so `file:.` is accepted.
+                    None => match flake_ref_type_str {
+                        "https" => (by_extension(rest_input), Some(TransportLayer::Https), true),
+                        "http" => (by_extension(rest_input), Some(TransportLayer::Http), true),
+                        "file" => (by_extension(rest_input), Some(TransportLayer::File), false),
+                        // Native git over the wire, no `+<transport>` layer.
+                        "git" => (ResourceType::Git, None, true),
+                        _ => return Err(unsupported_uri_type(flake_ref_type_str)),
+                    },
+                };
+                let location = match rest_input.strip_prefix("//") {
+                    Some(location) => location,
+                    None if require_authority => {
+                        return Err(NixUriError::Parse {
+                            position: flake_ref_type_str.len() + 1,
+                            expected: ParseExpected::Tag("//"),
                         });
                     }
-                    let (id, ref_, rev) = classify_indirect_segments(&segments, rest_input)?;
-                    Ok(Self::Indirect {
-                        id,
-                        ref_,
-                        rev,
-                        location: RefLocation::PathComponent,
-                    })
-                }
-
-                _ => {
-                    if flake_ref_type_str.starts_with("git+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (rest_input, _tag) = run_partial(input, rest_input, opt(tag("//")))?;
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            ResourceType::Git,
-                            rest_input.into(),
-                            Some(transport_type),
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str.starts_with("hg+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (rest_input, _tag) = run_partial(input, rest_input, tag("//"))?;
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            ResourceType::Mercurial,
-                            rest_input.into(),
-                            Some(transport_type),
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str.starts_with("tarball+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (rest_input, _tag) = run_partial(input, rest_input, opt(tag("//")))?;
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            ResourceType::Tarball,
-                            rest_input.into(),
-                            Some(transport_type),
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str.starts_with("file+") {
-                        let transport_type = parse_transport_type(flake_ref_type_str)?;
-                        let (rest_input, _tag) = run_partial(input, rest_input, opt(tag("//")))?;
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            ResourceType::File,
-                            rest_input.into(),
-                            Some(transport_type),
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str == "https" || flake_ref_type_str == "http" {
-                        // Plain HTTP/HTTPS URL - auto-detect type based on extension.
-                        use crate::parser::is_tarball;
-
-                        let (rest_input, _tag) = run_partial(input, rest_input, tag("//"))?;
-                        let res_type = if is_tarball(rest_input) {
-                            ResourceType::Tarball
-                        } else {
-                            ResourceType::File
-                        };
-                        let transport_type = match flake_ref_type_str {
-                            "https" => Some(TransportLayer::Https),
-                            "http" => Some(TransportLayer::Http),
-                            _ => None,
-                        };
-
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            res_type,
-                            rest_input.into(),
-                            transport_type,
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str == "file" {
-                        // Bare `file://` URL: Nix routes plain `file:`
-                        // through the same tarball-extension classifier
-                        // as `http(s)://`, splitting between the file
-                        // (no extension) and tarball (extension present)
-                        // shapes. The transport is always `file`, so a
-                        // round-trip from the explicit `tarball+file://`
-                        // shape (whose Display strips `tarball+`)
-                        // lands back on the same kind.
-                        use crate::parser::is_tarball;
-
-                        let (rest_input, _tag) = run_partial(input, rest_input, tag("//"))?;
-                        let res_type = if is_tarball(rest_input) {
-                            ResourceType::Tarball
-                        } else {
-                            ResourceType::File
-                        };
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            res_type,
-                            rest_input.into(),
-                            Some(TransportLayer::File),
-                        ));
-                        Ok(flake_ref_type)
-                    } else if flake_ref_type_str == "git" {
-                        // Bare git:// protocol: native git over the wire,
-                        // no `+<transport>` layer.
-                        let (rest_input, _tag) = run_partial(input, rest_input, tag("//"))?;
-                        let flake_ref_type = Self::Resource(ResourceUrl::new(
-                            ResourceType::Git,
-                            rest_input.into(),
-                            None,
-                        ));
-                        Ok(flake_ref_type)
-                    } else {
-                        Err(NixUriError::Unsupported(UnsupportedReason::UriType {
-                            ty: flake_ref_type_str.into(),
-                        }))
-                    }
-                }
-            }
-        } else {
-            // Implicit types can be paths or indirect flake-ids. The bare
-            // form matches Nix's bare-flake-id shape, which routes
-            // matching shapes through the same indirect scheme as
-            // `flake:`.
-            if input.starts_with('/')
-                || input.starts_with("./")
-                || input.starts_with("../")
-                || input == "."
-                || input == ".."
-            {
-                // Bare `//host/path` has no Nix grammar (Nix only
-                // recognises single-slash absolute and relative
-                // shapes for bare path flake-refs). Without this
-                // guard the body was stored verbatim and Display
-                // emitted `path://host/path`, which the `path:` arm
-                // then rejects on re-parse via the authority guard.
-                if input.starts_with("//") {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                let flake_ref_type = Self::Path {
-                    path: input.into(),
-                    rev: None,
+                    None => rest_input,
                 };
-                if input.contains(']')
-                    || input.contains('[')
-                    || !input.is_ascii()
-                    || input.contains('#')
-                    || input.contains('?')
-                {
-                    return Err(NixUriError::InvalidUrl(input.into()));
-                }
-                return Ok(flake_ref_type);
+                check_authority(location, transport_type.as_ref())?;
+                Ok(Self::Resource(ResourceUrl::new(
+                    res_type,
+                    location.into(),
+                    transport_type,
+                )))
             }
-
-            // Bare indirect form. Nix's bare-flake-id regex does not
-            // permit empty path segments (the `flake:` URL form skips
-            // empties, but the bare form is matched by a regex that
-            // requires non-empty content), so reject any.
-            let segments: Vec<&str> = input.split('/').collect();
-            if segments.iter().any(|s| s.is_empty()) {
-                return Err(NixUriError::InvalidUrl(input.into()));
-            }
-            if segments.len() > INDIRECT_MAX_SEGMENTS {
-                return Err(NixUriError::MissingScheme {
-                    input: input.into(),
-                });
-            }
-            let (id, ref_, rev) = classify_indirect_segments(&segments, input)?;
-            Ok(Self::Indirect {
-                id,
-                ref_,
-                rev,
-                location: RefLocation::PathComponent,
-            })
         }
     }
+
     /// Repository identifier for the kind: the `repo` of a `GitForge` or the
     /// trailing path segment of a `Resource(Git)` URL (with any `.git`
     /// suffix stripped). The public entry point is [`crate::FlakeRef::id`].
@@ -561,17 +253,11 @@ impl FlakeRefType {
                 transport_type,
                 ..
             }) => {
-                // URL form is `[user@]host[:port]/owner/repo`; the
-                // SCP-like SSH form (handled by `parse_scp_style` at
-                // entry, but a tolerant path also accepts the inline
-                // `host:owner/repo` shape) reuses `:` as a path
-                // separator, not a port. Strip any leading `user@`,
-                // take everything before the first `/`, then split on
-                // the first `:` and discriminate: a numeric segment is
-                // a port (kept verbatim when non-default for the
-                // scheme, dropped when it matches the default), a
-                // non-numeric segment is the SCP-style path separator
-                // (drop everything from `:` onwards).
+                // URL form is `[user@]host[:port]/owner/repo`. The parser
+                // only accepts a numeric (or empty) port. Strip any
+                // leading `user@`, take everything before the first `/`,
+                // and keep the port only when it is not the scheme's
+                // default.
                 let after_user = location
                     .split_once('@')
                     .map_or(location.as_str(), |(_, rest)| rest);
@@ -586,9 +272,7 @@ impl FlakeRefType {
                 if host.is_empty() {
                     return None;
                 }
-                let is_numeric_port =
-                    !port_str.is_empty() && port_str.bytes().all(|b| b.is_ascii_digit());
-                if !is_numeric_port {
+                if port_str.is_empty() {
                     return Some(host);
                 }
                 let default_port = match transport_type {
@@ -661,71 +345,152 @@ impl FlakeRefType {
     }
 }
 
+fn unsupported_uri_type(scheme: &str) -> NixUriError {
+    NixUriError::Unsupported(UnsupportedReason::UriType { ty: scheme.into() })
+}
+
+/// A plain URL is a tarball when its path has a tarball extension, and a
+/// file otherwise.
+fn by_extension(location: &str) -> ResourceType {
+    if is_tarball(location) {
+        ResourceType::Tarball
+    } else {
+        ResourceType::File
+    }
+}
+
 /// Maximum path-segment count for the indirect grammar
-/// (`id[/ref[/rev]]`). Matches Nix's three-segment cap; the bare
-/// (no-scheme) form uses the same cap because Nix's bare-flake-id form
-/// routes through the same indirect scheme.
+/// (`id[/ref[/rev]]`), shared by `flake:` URLs and the bare flake-id
+/// shorthand.
 const INDIRECT_MAX_SEGMENTS: usize = 3;
 
-/// Validate a non-empty, non-overflowing slice of indirect path segments
-/// and project them onto `(id, ref_, rev)` per Nix's indirect scheme
-/// rules.
+/// Returns `true` if `s` is a flake id: an ASCII letter followed by ASCII
+/// alphanumerics, `-` and `_`.
+pub(crate) fn is_flake_id(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Build an indirect kind from its non-empty path segments
+/// (`id[/ref[/rev]]`).
 ///
-/// Caller is responsible for the segment-count cap and for filtering
-/// empty segments where appropriate (the `flake:` URL form filters
-/// empties; the bare form does not, since Nix's bare-flake-id regex does
-/// not permit empties). Caller also picks the right "too many" error:
-/// `TooManyIndirectSegments` from the `flake:` arm, `MissingScheme` from
-/// the bare arm.
+/// With two segments, the second is a revision when it looks like one and
+/// a ref otherwise. With three, the second must be a ref and the third a
+/// 40-hex SHA-1 commit.
 ///
 /// `raw_input` is forwarded into [`NixUriError::InvalidUrl`] when the id
-/// segment is malformed so the diagnostic carries the original surface
-/// text.
-fn classify_indirect_segments(
+/// segment is malformed so the diagnostic carries the original text.
+pub(crate) fn indirect_from_segments(
     segments: &[&str],
     raw_input: &str,
-) -> Result<(String, Option<String>, Option<String>), NixUriError> {
-    let id = segments
-        .first()
-        .copied()
-        .ok_or_else(|| NixUriError::InvalidUrl(raw_input.into()))?;
-    if id.is_empty()
-        || !id.chars().next().unwrap().is_ascii_alphabetic()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(NixUriError::InvalidUrl(raw_input.into()));
+) -> NixUriResult<FlakeRefType> {
+    if segments.len() > INDIRECT_MAX_SEGMENTS {
+        return Err(NixUriError::TooManyIndirectSegments {
+            count: segments.len(),
+        });
     }
-
-    match segments.len() {
-        1 => Ok((id.to_string(), None, None)),
-        2 => {
-            let v = segments[1];
-            if looks_like_rev(v) {
-                Ok((id.to_string(), None, Some(v.to_string())))
-            } else {
-                Ok((id.to_string(), Some(validated_ref_name(v)?), None))
-            }
-        }
-        3 => {
-            let r = validated_ref_name(segments[1])?;
-            // Nix requires the third segment to be a commit hash;
-            // without this check a non-hex value was silently folded
-            // back into the ref name (the `rsplit_once` path would yield
-            // e.g. `ref_=Some("release-23.05/notahex")`).
-            // `looks_like_rev` accepts 40-hex (SHA-1) or 64-hex
-            // (SHA-256).
-            if !looks_like_rev(segments[2]) {
+    let id = match segments.first() {
+        Some(id) if is_flake_id(id) => (*id).to_string(),
+        _ => return Err(NixUriError::InvalidUrl(raw_input.into())),
+    };
+    let (ref_, rev) = match segments {
+        [_] => (None, None),
+        [_, value] if looks_like_rev(value) => (None, Some((*value).to_string())),
+        [_, value] => (Some(validated_ref_name(value)?), None),
+        [_, ref_, rev] => {
+            if !is_sha1_hex(rev) {
                 return Err(NixUriError::InvalidValue {
                     field: "rev",
-                    reason: "expected 40-hex (SHA-1) or 64-hex (SHA-256) commit in third indirect segment".to_string(),
+                    reason: "expected a 40-hex commit hash in the third indirect segment"
+                        .to_string(),
                 });
             }
-            Ok((id.to_string(), Some(r), Some(segments[2].to_string())))
+            (Some(validated_ref_name(ref_)?), Some((*rev).to_string()))
         }
-        _ => unreachable!("caller must enforce segment count <= INDIRECT_MAX_SEGMENTS"),
+        _ => unreachable!("segment count is checked above"),
+    };
+    Ok(FlakeRefType::Indirect {
+        id,
+        ref_,
+        rev,
+        location: RefLocation::PathComponent,
+    })
+}
+
+/// Parse the part of a git-forge URL after `<platform>:`, query and
+/// fragment already split off: `<owner>/<repo>[/<ref-or-rev>]`.
+///
+/// Empty segments are skipped (`github:/o/r` and
+/// `github:o/r/main/` are fine) and every segment after the repo forms the
+/// ref (`github:o/r/feature/x` is the ref `feature/x`). Owner and repo are
+/// not validated beyond URL syntax. Each segment is percent-decoded after
+/// the split, so a gitlab subgroup owner can be written `group%2Fsub`.
+fn parse_git_forge(platform: GitForgePlatform, input: &str) -> NixUriResult<GitForge> {
+    check_url_path(input)?;
+    let segments = input
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| decode_percent(s).map(std::borrow::Cow::into_owned))
+        .collect::<NixUriResult<Vec<String>>>()?;
+    let (owner, repo, rest) = match segments.as_slice() {
+        [owner, repo, rest @ ..] => (owner.clone(), repo.clone(), rest),
+        _ => {
+            return Err(NixUriError::Unsupported(
+                UnsupportedReason::MissingParameter {
+                    ty: platform.to_string(),
+                    parameter: if segments.is_empty() { "owner" } else { "repo" }.to_string(),
+                },
+            ));
+        }
+    };
+    let (ref_, rev) = match rest {
+        [] => (None, None),
+        [value] if looks_like_rev(value) => (None, Some(value.clone())),
+        _ => (Some(validated_ref_name(&rest.join("/"))?), None),
+    };
+    Ok(GitForge {
+        platform,
+        owner,
+        repo,
+        ref_,
+        rev,
+        location: RefLocation::PathComponent,
+    })
+}
+
+/// Reject a URL path with a character outside RFC 3986's path grammar or
+/// a malformed percent-escape.
+fn check_url_path(path: &str) -> NixUriResult<()> {
+    if !path.chars().all(is_url_path_char) {
+        return Err(NixUriError::InvalidUrl(path.into()));
     }
+    decode_percent(path).map(|_| ())
+}
+
+/// Reject a URL authority whose port is not a number.
+///
+/// Over ssh that is the SCP-style `user@host:path` location written after
+/// `git+ssh://`, which gets its own error.
+fn check_authority(location: &str, transport: Option<&TransportLayer>) -> NixUriResult<()> {
+    let authority = location.split('/').next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    // The port follows the last `:` after any bracketed IPv6 literal.
+    let after_brackets = host.rsplit_once(']').map_or(host, |(_, after)| after);
+    let Some((_, port)) = after_brackets.split_once(':') else {
+        return Ok(());
+    };
+    if port.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(());
+    }
+    if transport == Some(&TransportLayer::Ssh) {
+        return Err(NixUriError::Unsupported(UnsupportedReason::ScpStyleUrl {
+            url: location.into(),
+        }));
+    }
+    Err(NixUriError::InvalidUrl(location.into()))
 }
 
 impl Display for FlakeRefType {
@@ -765,8 +530,12 @@ impl Display for FlakeRefType {
                 rev,
                 location,
             }) => {
-                let owner_out = super::encoding::encode_path_segment(owner);
-                write!(f, "{platform}:{owner_out}/{repo}")?;
+                write!(
+                    f,
+                    "{platform}:{owner}/{repo}",
+                    owner = super::encoding::encode_path_segment(owner),
+                    repo = super::encoding::encode_path_segment(repo),
+                )?;
                 if matches!(location, RefLocation::PathComponent) {
                     if let Some(value) = ref_.as_deref().or(rev.as_deref()) {
                         write!(f, "/{value}")?;
@@ -798,6 +567,19 @@ impl Display for FlakeRefType {
     }
 }
 
+/// Parse `input` with the public entry point and return its kind.
+#[cfg(test)]
+fn parse_kind(input: &str) -> NixUriResult<FlakeRefType> {
+    crate::FlakeRef::parse(input, crate::Context::FlakeInput).map(|flake_ref| flake_ref.kind)
+}
+
+/// Like [`parse_kind`], as `builtins.parseFlakeRef` does. A malformed URL
+/// is an error here instead of a relative path.
+#[cfg(test)]
+fn parse_standalone_kind(input: &str) -> NixUriResult<FlakeRefType> {
+    crate::FlakeRef::parse(input, crate::Context::Standalone).map(|flake_ref| flake_ref.kind)
+}
+
 #[cfg(test)]
 mod inc_parse_vc {
     use crate::TransportLayer;
@@ -808,8 +590,8 @@ mod inc_parse_vc {
     fn parse_git_github_collision() {
         let hub = "github:foo/bar";
         let git = "git:///foo/bar";
-        let parsed_hub = FlakeRefType::parse_type(hub).unwrap();
-        let parsed_git = FlakeRefType::parse_type(git).unwrap();
+        let parsed_hub = parse_kind(hub).unwrap();
+        let parsed_git = parse_kind(git).unwrap();
         let expected_hub = FlakeRefType::GitForge(GitForge {
             platform: GitForgePlatform::GitHub,
             owner: "foo".to_string(),
@@ -853,8 +635,8 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
-        let file_parsed_refpath = FlakeRefType::parse_type(file_uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
+        let file_parsed_refpath = parse_kind(file_uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
         assert_eq!(expected_filerefpath, file_parsed_refpath);
@@ -872,7 +654,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -889,7 +671,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -906,7 +688,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let file_parsed_refpath = FlakeRefType::parse_type(file_uri).unwrap();
+        let file_parsed_refpath = parse_kind(file_uri).unwrap();
 
         assert_eq!(file_expected_refpath, file_parsed_refpath);
     }
@@ -923,7 +705,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -940,7 +722,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -957,7 +739,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -973,7 +755,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -989,7 +771,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1005,7 +787,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1021,7 +803,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1037,7 +819,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1053,7 +835,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1069,7 +851,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1085,7 +867,7 @@ mod inc_parse_vc {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1100,7 +882,7 @@ mod inc_parse_vc {
         ];
 
         for uri in test_cases {
-            let result = FlakeRefType::parse_type(uri).unwrap();
+            let result = parse_kind(uri).unwrap();
             match result {
                 FlakeRefType::Resource(ResourceUrl {
                     res_type: ResourceType::Tarball,
@@ -1116,7 +898,7 @@ mod inc_parse_vc {
     #[test]
     fn case_sensitive_extensions() {
         let uri_lowercase = "https://example.com/file.tar.gz";
-        let result_lowercase = FlakeRefType::parse_type(uri_lowercase).unwrap();
+        let result_lowercase = parse_kind(uri_lowercase).unwrap();
         match result_lowercase {
             FlakeRefType::Resource(ResourceUrl {
                 res_type: ResourceType::Tarball,
@@ -1129,7 +911,7 @@ mod inc_parse_vc {
 
         // Uppercase extension should be treated as File, not Tarball.
         let uri_uppercase = "https://example.com/file.TAR.GZ";
-        let result_uppercase = FlakeRefType::parse_type(uri_uppercase).unwrap();
+        let result_uppercase = parse_kind(uri_uppercase).unwrap();
         match result_uppercase {
             FlakeRefType::Resource(ResourceUrl {
                 res_type: ResourceType::File,
@@ -1156,7 +938,7 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1170,7 +952,7 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1184,7 +966,7 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1198,28 +980,28 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
     #[test]
     fn flake_explicit_scheme_invalid_start_with_number() {
         let uri = "flake:123invalid";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
     }
 
     #[test]
     fn flake_explicit_scheme_empty() {
         let uri = "flake:";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
     }
 
     #[test]
     fn flake_explicit_scheme_invalid_characters() {
         let uri = "flake:invalid!";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
     }
 
@@ -1233,7 +1015,7 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1247,7 +1029,7 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1261,11 +1043,11 @@ mod inc_parse_flake_id {
             location: RefLocation::PathComponent,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
 
         // Test via parse() method too.
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1274,7 +1056,7 @@ mod inc_parse_flake_id {
         // Test with too many slashes - should fail as indirect, no fallback should work.
         let uri = "my-flake/branch/deep/reference";
         // This should fail because it has too many slashes - only id/ref is allowed for bare IDs.
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_kind(uri);
         assert!(
             result.is_err(),
             "Multi-slash URIs should fail when not matching any scheme"
@@ -1288,7 +1070,7 @@ mod inc_parse_flake_id {
             rev: None,
             location: RefLocation::PathComponent,
         };
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1296,17 +1078,17 @@ mod inc_parse_flake_id {
     fn flake_scheme_validation_edge_cases() {
         // Empty ID after flake:.
         let uri = "flake:";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
 
         // ID starting with number.
         let uri = "flake:123invalid";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
 
         // ID with invalid characters.
         let uri = "flake:invalid!";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
 
         // Very long but valid ID.
@@ -1317,7 +1099,7 @@ mod inc_parse_flake_id {
             rev: None,
             location: RefLocation::PathComponent,
         };
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_standalone_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1327,8 +1109,8 @@ mod inc_parse_flake_id {
         let git_uri = "git://example.com/repo.git";
         let github_uri = "github:user/repo";
 
-        let git_result = FlakeRefType::parse_type(git_uri).unwrap();
-        let github_result = FlakeRefType::parse_type(github_uri).unwrap();
+        let git_result = parse_kind(git_uri).unwrap();
+        let github_result = parse_kind(github_uri).unwrap();
 
         match git_result {
             FlakeRefType::Resource(ResourceUrl {
@@ -1370,7 +1152,7 @@ mod inc_parse_flake_id {
         ];
 
         for (uri, expected_type) in test_cases {
-            let result = FlakeRefType::parse_type(uri).unwrap();
+            let result = parse_kind(uri).unwrap();
             match result {
                 FlakeRefType::Resource(ResourceUrl { res_type, .. }) => {
                     assert_eq!(expected_type, res_type, "Failed for URI: {}", uri);
@@ -1437,7 +1219,7 @@ mod inc_parse_flake_id {
         ];
 
         for (uri, expected_res_type, expected_transport) in test_cases {
-            let result = FlakeRefType::parse_type(uri).unwrap();
+            let result = parse_kind(uri).unwrap();
             match result {
                 FlakeRefType::Resource(ResourceUrl {
                     res_type,
@@ -1473,7 +1255,7 @@ mod inc_parse_flake_id {
         ];
 
         for uri in test_cases {
-            let result = FlakeRefType::parse_type(uri).unwrap();
+            let result = parse_kind(uri).unwrap();
             match result {
                 FlakeRefType::Path { path, rev } => {
                     assert_eq!(uri, path, "Path should match input for: {}", uri);
@@ -1488,7 +1270,7 @@ mod inc_parse_flake_id {
     fn flake_id_boundary_cases() {
         // Single character flake ID.
         let uri = "a";
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(
             result,
             FlakeRefType::Indirect {
@@ -1501,7 +1283,7 @@ mod inc_parse_flake_id {
 
         // Flake ID with maximum allowed characters.
         let uri = "abcDEF123-_";
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(
             result,
             FlakeRefType::Indirect {
@@ -1521,28 +1303,34 @@ mod inc_parse_errors {
     #[test]
     fn error_unsupported_scheme() {
         let uri = "unsupported://example.com";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_kind(uri);
         assert!(result.is_err());
     }
 
     #[test]
     fn error_malformed_url() {
         let uri = "://invalid";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_standalone_kind(uri);
         assert!(result.is_err());
     }
 
     #[test]
-    fn path_with_invalid_characters() {
+    fn path_with_brackets() {
+        // Not a URL, so URL syntax does not apply to a bare path.
         let uri = "/path/with[brackets]";
-        let result = FlakeRefType::parse_type(uri);
-        assert!(result.is_err());
+        assert_eq!(
+            parse_standalone_kind(uri).unwrap(),
+            FlakeRefType::Path {
+                path: uri.to_string(),
+                rev: None,
+            }
+        );
     }
 
     #[test]
     fn path_with_query_fragment() {
         let uri = "/path/with?query#fragment";
-        let result = FlakeRefType::parse_type(uri);
+        let result = parse_kind(uri);
         assert!(result.is_err());
     }
 
@@ -1550,7 +1338,7 @@ mod inc_parse_errors {
     fn file_extension_edge_cases() {
         // File without extension should be treated as File, not Tarball.
         let uri = "https://example.com/README";
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         match result {
             FlakeRefType::Resource(ResourceUrl {
                 res_type: ResourceType::File,
@@ -1565,7 +1353,7 @@ mod inc_parse_errors {
     #[test]
     fn url_with_port() {
         let uri = "https://example.com:8080/file.tar.gz";
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         match result {
             FlakeRefType::Resource(ResourceUrl {
                 res_type: ResourceType::Tarball,
@@ -1582,7 +1370,7 @@ mod inc_parse_errors {
     #[test]
     fn mixed_case_domain() {
         let uri = "https://Example.COM/file.tar.gz";
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         match result {
             FlakeRefType::Resource(ResourceUrl { location, .. }) => {
                 assert_eq!(location, "Example.COM/file.tar.gz");
@@ -1595,7 +1383,7 @@ mod inc_parse_errors {
     fn very_long_url() {
         let long_path = "a".repeat(1000);
         let uri = format!("https://example.com/{}.tar.gz", long_path);
-        let result = FlakeRefType::parse_type(&uri);
+        let result = parse_kind(&uri);
 
         // Should parse successfully even with very long URLs.
         assert!(result.is_ok());
@@ -1611,7 +1399,7 @@ mod inc_parse_errors {
         ];
 
         for uri in valid_tarballs {
-            let result = FlakeRefType::parse_type(uri);
+            let result = parse_kind(uri);
             assert!(result.is_ok(), "Failed to parse valid tarball URI: {}", uri);
         }
 
@@ -1623,7 +1411,7 @@ mod inc_parse_errors {
         ];
 
         for uri in valid_files {
-            let result = FlakeRefType::parse_type(uri);
+            let result = parse_kind(uri);
             assert!(result.is_ok(), "Failed to parse valid file URI: {}", uri);
         }
     }
@@ -1640,7 +1428,7 @@ mod inc_parse_errors {
             ref_location: RefLocation::PathComponent,
         });
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 }
@@ -1657,7 +1445,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -1670,7 +1458,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let parsed_refpath = FlakeRefType::parse_type(uri).unwrap();
+        let parsed_refpath = parse_kind(uri).unwrap();
 
         assert_eq!(expected_refpath, parsed_refpath);
     }
@@ -1683,7 +1471,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1695,7 +1483,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1707,7 +1495,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1719,7 +1507,7 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -1731,201 +1519,8 @@ mod inc_parse_file {
             rev: None,
         };
 
-        let result = FlakeRefType::parse_type(uri).unwrap();
+        let result = parse_kind(uri).unwrap();
         assert_eq!(expected, result);
-    }
-
-    #[test]
-    fn naked_cwd() {
-        let uri = "./foo/bar";
-        let expected_refpath = FlakeRefType::Path {
-            path: "./foo/bar".to_string(),
-            rev: None,
-        };
-
-        let (_rest, parsed_refpath) = FlakeRefType::parse_file.parse_peek(uri).unwrap();
-
-        assert_eq!(expected_refpath, parsed_refpath);
-    }
-
-    #[test]
-    fn http_layer() {
-        let uri = "file+http://example.com/file.txt";
-        let expected_refpath = FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::File,
-            location: "example.com/file.txt".to_string(),
-            transport_type: Some(TransportLayer::Http),
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        });
-
-        let (_rest, parsed_refpath) = FlakeRefType::parse_file.parse_peek(uri).unwrap();
-
-        assert_eq!(expected_refpath, parsed_refpath);
-    }
-
-    #[test]
-    fn https_layer() {
-        let uri = "file+https://example.com/file.txt";
-        let expected_refpath = FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::File,
-            location: "example.com/file.txt".to_string(),
-            transport_type: Some(TransportLayer::Https),
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        });
-
-        let (_rest, parsed_refpath) = FlakeRefType::parse_file.parse_peek(uri).unwrap();
-
-        assert_eq!(expected_refpath, parsed_refpath);
-    }
-
-    #[test]
-    fn file_layer() {
-        let uri = "file+file:///foo/bar";
-        let expected_refpath = FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/foo/bar".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        });
-
-        let (_rest, parsed_refpath) = FlakeRefType::parse_file.parse_peek(uri).unwrap();
-
-        assert_eq!(expected_refpath, parsed_refpath);
-    }
-
-    #[test]
-    fn file_then_path() {
-        let path_uri = "file:///wheres/wally";
-        let path_uri2 = "file:///wheres/wally/";
-
-        let mut expected_ref = ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/wheres/wally".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        };
-
-        let (_rest, parsed_ref) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        let (_rest, parsed_ref2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_ref);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref), parsed_ref2);
-    }
-
-    #[test]
-    fn empty_param_term() {
-        let path_uri = "file:///wheres/wally?";
-        let path_uri2 = "file:///wheres/wally/?";
-
-        let mut expected_ref = ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/wheres/wally".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        };
-
-        let (rest, parsed_file) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        assert_eq!(rest, "?");
-        let (rest, parsed_file2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-
-        assert_eq!(rest, "?");
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref), parsed_file2);
-    }
-
-    #[test]
-    fn param_term() {
-        let path_uri = "file:///wheres/wally?foo=bar#fizz";
-        let path_uri2 = "file:///wheres/wally/?foo=bar#fizz";
-
-        let (rest, parsed_file) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        assert_eq!(rest, "?foo=bar#fizz");
-        let (rest, parsed_file2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-        assert_eq!(rest, "?foo=bar#fizz");
-
-        let mut expected_ref = ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/wheres/wally".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        };
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref), parsed_file2);
-    }
-
-    #[test]
-    fn empty_param_attr_term() {
-        let path_uri = "file:///wheres/wally?#";
-        let path_uri2 = "file:///wheres/wally/?#";
-
-        let (rest, parsed_file) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        assert_eq!(rest, "?#");
-        let (rest, parsed_file2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-        assert_eq!(rest, "?#");
-
-        let mut expected_ref = ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/wheres/wally".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        };
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file2);
-
-        let path_uri = "file:///wheres/wally#?";
-        let path_uri2 = "file:///wheres/wally/#?";
-
-        let (rest, parsed_file) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        assert_eq!(rest, "#?");
-        let (rest, parsed_file2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-        assert_eq!(rest, "#?");
-
-        expected_ref.location = "/wheres/wally".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref), parsed_file2);
-    }
-
-    #[test]
-    fn attr_term() {
-        let path_uri = "file:///wheres/wally#";
-        let path_uri2 = "file:///wheres/wally/#";
-
-        let (rest, parsed_file) = FlakeRefType::parse_file.parse_peek(path_uri).unwrap();
-        assert_eq!(rest, "#");
-        let (rest, parsed_file2) = FlakeRefType::parse_file.parse_peek(path_uri2).unwrap();
-        assert_eq!(rest, "#");
-
-        let mut expected_ref = ResourceUrl {
-            res_type: ResourceType::File,
-            location: "/wheres/wally".to_string(),
-            transport_type: None,
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        };
-        assert_eq!(FlakeRefType::Resource(expected_ref.clone()), parsed_file);
-        expected_ref.location = "/wheres/wally/".to_string();
-        assert_eq!(FlakeRefType::Resource(expected_ref), parsed_file2);
-        assert_eq!(rest, "#");
     }
 }
 
@@ -2120,8 +1715,6 @@ mod resource_type_methods {
     }
 
     #[rstest]
-    #[case("git+ssh://git@host:owner/repo", "host")]
-    #[case("git+ssh://host:owner/repo", "host")]
     #[case("git+ssh://git@host/owner/repo", "host")]
     #[case("git+https://host/owner/repo", "host")]
     fn domain_strips_user_and_path(#[case] url: &str, #[case] expected_host: &str) {

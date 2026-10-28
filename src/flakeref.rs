@@ -2,10 +2,13 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{NixUriError, UnsupportedReason};
+use crate::{
+    Context,
+    error::{NixUriError, UnsupportedReason},
+};
 
 pub(crate) mod encoding;
-mod fr_type;
+pub(crate) mod fr_type;
 pub use fr_type::FlakeRefType;
 pub(crate) mod location_params;
 pub(crate) use location_params::LocationParamKeys;
@@ -93,6 +96,26 @@ pub enum RefKind {
 }
 
 impl FlakeRef {
+    /// Parse `input` as a flake reference in `context`.
+    ///
+    /// The [`FromStr`](std::str::FromStr) and `TryFrom<&str>` impls parse
+    /// with [`Context::default`] ([`Context::FlakeInput`]).
+    ///
+    /// ```
+    /// # use nix_uri::{Context, FlakeRef, NixUriError};
+    /// let installable = FlakeRef::parse("github:NixOS/nixpkgs#hello", Context::Installable)?;
+    /// assert_eq!(installable.fragment(), Some("hello"));
+    ///
+    /// // `builtins.parseFlakeRef` rejects both fragments and relative paths.
+    /// assert!(FlakeRef::parse("github:NixOS/nixpkgs#hello", Context::Standalone).is_err());
+    /// assert!(FlakeRef::parse("./foo", Context::Standalone).is_err());
+    /// assert!(FlakeRef::parse("./foo", Context::FlakeInput).is_ok());
+    /// # Ok::<(), NixUriError>(())
+    /// ```
+    pub fn parse(input: &str, context: Context) -> Result<Self, NixUriError> {
+        crate::parser::parse_nix_uri(input, context)
+    }
+
     /// Construct a `FlakeRef` around `kind` with no fragment and an empty
     /// [`LocationParameters`] block. Use the consuming `with_*` builders or
     /// the `set_*` mutators to fill in the rest.
@@ -668,8 +691,7 @@ impl TryFrom<&str> for FlakeRef {
     type Error = NixUriError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        use crate::parser::parse_nix_uri;
-        parse_nix_uri(value)
+        Self::parse(value, Context::default())
     }
 }
 
@@ -677,8 +699,7 @@ impl std::str::FromStr for FlakeRef {
     type Err = NixUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use crate::parser::parse_nix_uri;
-        parse_nix_uri(s)
+        Self::parse(s, Context::default())
     }
 }
 
@@ -687,13 +708,8 @@ mod tests {
 
     use cool_asserts::assert_matches;
     use resource_url::{ResourceType, ResourceUrl};
-    use winnow::Parser;
 
     use super::*;
-    use crate::{
-        NixUriResult,
-        parser::{parse_nix_uri, parse_params, route_location_params},
-    };
 
     #[test]
     fn parse_simple_uri() {
@@ -728,22 +744,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_simple_uri_no_params() {
-        let uri = "github:zellij-org/zellij";
-        let parsed = parse_params.parse_peek(uri).unwrap().1;
-        assert_eq!(("github:zellij-org/zellij", None), parsed);
-    }
-
-    #[test]
     fn parse_simple_uri_attr_with_params() {
-        let uri = "github:zellij-org/zellij?dir=assets";
         let mut location_params = LocationParameters::default();
         location_params.dir(Some("assets".into()));
-        let (head, raw_values) = parse_params.parse_peek(uri).unwrap().1;
-        assert_eq!("github:zellij-org/zellij", head);
-        let (params, ref_rev) = route_location_params(raw_values.unwrap()).unwrap();
-        assert_eq!(location_params, params);
-        assert!(ref_rev.r#ref.is_none() && ref_rev.rev.is_none());
+        let parsed: FlakeRef = "github:zellij-org/zellij?dir=assets".parse().unwrap();
+        assert_eq!(&location_params, parsed.params());
+        assert_eq!(parsed.ref_kind(), RefKind::None);
     }
 
     #[test]
@@ -758,7 +764,7 @@ mod tests {
             location: RefLocation::QueryParameter,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -774,7 +780,7 @@ mod tests {
             location: RefLocation::QueryParameter,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -790,7 +796,7 @@ mod tests {
             location: RefLocation::PathComponent,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -810,7 +816,7 @@ mod tests {
             }))
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -830,7 +836,7 @@ mod tests {
             }))
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
     #[test]
@@ -849,7 +855,7 @@ mod tests {
             }))
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
     #[test]
@@ -869,7 +875,7 @@ mod tests {
             }))
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -881,7 +887,7 @@ mod tests {
             rev: None,
         });
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed, "{}", uri);
     }
 
@@ -897,7 +903,7 @@ mod tests {
             })
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed, "{}", uri);
     }
 
@@ -913,7 +919,7 @@ mod tests {
             location: RefLocation::PathComponent,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -929,7 +935,7 @@ mod tests {
             location: RefLocation::PathComponent,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -945,14 +951,14 @@ mod tests {
             location: RefLocation::PathComponent,
         }));
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
     #[test]
     fn parse_gitlab_nested_subgroup() {
         let uri = "gitlab:veloren%2Fdev/rfcs";
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
             platform: GitForgePlatform::GitLab,
             owner: "veloren/dev".into(),
@@ -982,7 +988,7 @@ mod tests {
             }))
             .with_params(params);
 
-        let parsed = parse_nix_uri(uri).unwrap();
+        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
         assert_eq!(flake_ref, parsed);
     }
 
@@ -1192,17 +1198,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_path_uri_empty_body_rejected() {
-        // The path: branch admits `path:.` and `path:../.`, so it does
-        // not gate on `Path::is_absolute()`. An explicit guard on
-        // empty / whitespace bodies keeps `path:` (and friends) from
-        // parsing to `FlakeRefType::Path { path: "" }` and round-tripping
-        // back into parse_nix_uri's trim-empty guard.
-        for uri in ["path:", "path: ", "path:  "] {
-            let result: Result<FlakeRef, _> = uri.try_into();
-            assert!(
-                matches!(result, Err(NixUriError::InvalidUrl(_))),
-                "expected InvalidUrl for {uri:?}, got {result:?}"
+    fn parse_path_uri_empty_body_is_root() {
+        // An empty `path:` is the root directory.
+        let parsed: FlakeRef = "path:".parse().unwrap();
+        assert_eq!(
+            parsed.kind,
+            FlakeRefType::Path {
+                path: "/".to_owned(),
+                rev: None,
+            }
+        );
+        // A space is not valid in a URL, and `path: ` is not absolute.
+        for uri in ["path: ", "path:  "] {
+            assert_matches!(
+                FlakeRef::parse(uri, Context::Standalone),
+                Err(NixUriError::InvalidUrl(_))
             );
         }
     }
@@ -1420,39 +1430,34 @@ mod tests {
 
     #[test]
     fn parse_wrong_git_uri_extension_type() {
-        let uri = "git+(:z";
-        let parsed: NixUriResult<FlakeRef> = uri.try_into();
-        let parsed = parsed.unwrap_err();
         assert_matches!(
-            parsed,
-            NixUriError::Unsupported(UnsupportedReason::TransportLayer { ty })
-                => assert_eq!("(", ty)
+            FlakeRef::parse("git+(:z", Context::Standalone),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::RelativePath { .. }
+            ))
+        );
+        assert_matches!(
+            FlakeRef::parse("git+foo://h/r", Context::Standalone),
+            Err(NixUriError::Unsupported(UnsupportedReason::TransportLayer { ty }))
+                => assert_eq!("foo", ty)
         );
     }
 
     #[test]
     fn parse_github_missing_parameter_public_surface() {
-        use crate::ParseExpected;
-
         assert_matches!(
-            parse_nix_uri("github:"),
-            Err(NixUriError::Parse {
-                position: 7,
-                expected: ParseExpected::Label("TakeTill1"),
-            })
+            FlakeRef::parse("github:", Context::Standalone),
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. }))
+                => assert_eq!(parameter, "owner")
         );
     }
 
     #[test]
     fn parse_github_missing_parameter_repo_public_surface() {
-        use crate::ParseExpected;
-
         assert_matches!(
-            parse_nix_uri("github:nixos/"),
-            Err(NixUriError::Parse {
-                position: 13,
-                expected: ParseExpected::Label("TakeTill1"),
-            })
+            FlakeRef::parse("github:nixos/", Context::Standalone),
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. }))
+                => assert_eq!(parameter, "repo")
         );
     }
 
@@ -1461,7 +1466,7 @@ mod tests {
         use crate::ParseExpected;
 
         assert_matches!(
-            parse_nix_uri("git:x"),
+            FlakeRef::parse("git:x", Context::Standalone),
             Err(NixUriError::Parse {
                 position: 4,
                 expected: ParseExpected::Tag("//"),
@@ -1471,19 +1476,20 @@ mod tests {
 
     #[test]
     fn parse_github_starts_with_whitespace() {
-        let uri = " github:nixos/nixpkgs";
+        // Not a URL with a leading space, so a relative path.
         assert_matches!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
+            FlakeRef::parse(" github:nixos/nixpkgs", Context::Standalone),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::RelativePath { .. }
+            ))
         );
     }
 
     #[test]
     fn parse_github_ends_with_whitespace() {
-        let uri = "github:nixos/nixpkgs ";
         assert_matches!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidUrl(uri_match)) => assert_eq!(uri, uri_match)
+            FlakeRef::parse("github:nixos/nixpkgs ", Context::Standalone),
+            Err(NixUriError::InvalidUrl(_))
         );
     }
 
@@ -1507,19 +1513,21 @@ mod tests {
 
     #[test]
     fn parse_slash_trim_invalid_url() {
-        let uri = "   /   ";
         assert_matches!(
-            uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+            FlakeRef::parse("   /   ", Context::Standalone),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::RelativePath { .. }
+            ))
         );
     }
 
     #[test]
     fn parse_double_trim_invalid_url() {
-        let uri = "   :   ";
         assert_matches!(
-            uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+            FlakeRef::parse("   :   ", Context::Standalone),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::RelativePath { .. }
+            ))
         );
     }
 
@@ -1559,7 +1567,7 @@ mod tests {
         // The trailing `#fragment` is preserved on `FlakeRef.fragment`
         // and re-emitted by Display.
         let uri = "github:nixos/nixpkgs#default";
-        let parsed: FlakeRef = uri.parse().unwrap();
+        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
         assert_eq!(parsed.fragment.as_deref(), Some("default"));
         assert_eq!(parsed.to_string(), uri);
     }
@@ -1567,7 +1575,7 @@ mod tests {
     #[test]
     fn fragment_round_trip_with_params() {
         let uri = "github:nixos/nixpkgs?dir=foo#bar";
-        let parsed: FlakeRef = uri.parse().unwrap();
+        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
         assert_eq!(parsed.fragment.as_deref(), Some("bar"));
         assert_eq!(parsed.to_string(), uri);
     }
@@ -1609,15 +1617,15 @@ mod tests {
         );
     }
 
-    /// Nix's bare-flake-id regex does not match four bare segments, so
-    /// `nixos/nixpkgs/extra/parts` is rejected. nix-uri keeps surfacing
-    /// that as `MissingScheme`.
+    /// The bare flake-id shorthand takes at most three segments, like
+    /// `flake:`. Nix rejects `nixos/nixpkgs/extra/parts` outright rather
+    /// than reading it as a path.
     #[test]
     fn bare_four_segment_rejected() {
         let err = "nixos/nixpkgs/extra/parts"
             .parse::<FlakeRef>()
             .expect_err("bare four-segment must not parse");
-        assert_matches!(err, NixUriError::MissingScheme { input } if input == "nixos/nixpkgs/extra/parts");
+        assert_matches!(err, NixUriError::TooManyIndirectSegments { count: 4 });
     }
 
     /// Nix requires the third indirect segment to be a 40-hex commit
@@ -1626,8 +1634,7 @@ mod tests {
     /// slash-containing ref.
     #[test]
     fn flake_three_segment_non_hex_rejects() {
-        let err = "flake:nixpkgs/release-23.05/notahex"
-            .parse::<FlakeRef>()
+        let err = FlakeRef::parse("flake:nixpkgs/release-23.05/notahex", Context::Standalone)
             .expect_err("non-hex third segment must reject");
         assert_matches!(err, NixUriError::InvalidValue { field: "rev", .. },);
     }
@@ -1659,17 +1666,21 @@ mod tests {
         );
     }
 
-    /// Bare `//host/path` (no `path:` prefix) was silently stored as
-    /// `Path { path: "//host/path" }`, which Display emitted as
-    /// `path://host/path` -- a string the parser then rejects on
-    /// re-parse via the authority guard. Reject the malformed shape
-    /// up-front instead.
+    /// Bare `//host/path` is not a URL (it has no scheme), so it is read
+    /// as an absolute path. It is stored verbatim, so its Display,
+    /// `path://host/path`, reads as a `path:` URL with an authority and
+    /// does not round-trip.
     #[test]
-    fn bare_double_slash_rejects() {
-        let err = "//host/path"
-            .parse::<FlakeRef>()
-            .expect_err("bare //host/path must reject");
-        assert_matches!(err, NixUriError::InvalidUrl(input) if input == "//host/path");
+    fn bare_double_slash_is_an_absolute_path() {
+        let parsed = FlakeRef::parse("//host/path", Context::Standalone).unwrap();
+        assert_eq!(
+            parsed.kind,
+            FlakeRefType::Path {
+                path: "//host/path".to_owned(),
+                rev: None,
+            }
+        );
+        assert_eq!(parsed.to_string(), "path://host/path");
     }
 
     /// Sanity: the legitimate bare-path shapes still round-trip after
@@ -1692,8 +1703,7 @@ mod tests {
     /// producing a ref name that contains `/`.
     #[test]
     fn flake_scheme_four_segment_rejected() {
-        let err = "flake:nixpkgs/main/abc/extra"
-            .parse::<FlakeRef>()
+        let err = FlakeRef::parse("flake:nixpkgs/main/abc/extra", Context::Standalone)
             .expect_err("flake: 4+ segments must not parse");
         assert_matches!(err, NixUriError::TooManyIndirectSegments { count: 4 });
     }
@@ -2004,7 +2014,7 @@ mod canonical_round_trip {
     // where all three are recognised.
     #[case("git+https://example.com/repo?lastModified=12345&narHash=sha256-abc&revCount=42")]
     fn round_trip(#[case] uri: &str) {
-        let parsed: FlakeRef = uri.parse().unwrap();
+        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
         assert_eq!(parsed.to_string(), uri, "round-trip mismatch");
     }
 
@@ -2499,7 +2509,7 @@ mod ref_rev_validation {
         // (two mutually exclusive fields were both populated), distinct
         // from a value-shape failure.
         assert_matches!(
-            uri.parse::<FlakeRef>(),
+            FlakeRef::parse(uri, Context::Standalone),
             Err(NixUriError::FieldConflict {
                 left: "ref",
                 right: "rev",
@@ -2510,33 +2520,37 @@ mod ref_rev_validation {
 
     #[rstest]
     #[case::github("github:owner/repo?rev=not-a-hash")]
-    #[case::git_https("git+https://example.com/owner/repo?rev=not-a-hash")]
-    #[case::hg_https("hg+https://example.com/repo?rev=zzzz")]
-    #[case::indirect("flake:nixpkgs?rev=main")]
     #[case::gitlab("gitlab:owner/repo?rev=not-a-hash")]
     #[case::sourcehut("sourcehut:~owner/repo?rev=not-a-hash")]
     #[case::short_hex("github:owner/repo?rev=abc123")]
     #[case::between_40_and_64_hex(
         "github:owner/repo?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d29800000"
     )]
-    #[case::sixty_five_hex(
-        "github:owner/repo?rev=00000000000000000000000000000000000000000000000000000000000000000"
+    #[case::sha256_hex(
+        "github:owner/repo?rev=0000000000000000000000000000000000000000000000000000000000000000"
     )]
-    #[case::sixty_three_hex(
-        "github:owner/repo?rev=000000000000000000000000000000000000000000000000000000000000000"
-    )]
-    fn query_rev_must_be_40_or_64_hex(#[case] uri: &str) {
-        // Matches Nix's accepted commit-hash shapes: SHA-1 (40 hex) or
-        // SHA-256 (64 hex). Anything else surfaces as InvalidValue with
-        // the algorithm-aware diagnostic.
-        assert_matches!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::InvalidValue {
-                field: "rev",
-                reason,
-            }) if reason == "expected 40-hex (SHA-1) or 64-hex (SHA-256) commit",
-            "expected hex-validation rejection for {uri}",
-        );
+    fn gitforge_query_rev_must_be_sha1(#[case] uri: &str) {
+        // A git forge parses `?rev=` as a SHA-1 hash, and a failure is
+        // final in every context.
+        for context in [Context::Standalone, Context::FlakeInput] {
+            assert_matches!(
+                FlakeRef::parse(uri, context),
+                Err(NixUriError::InvalidValue { field: "rev", .. }),
+                "expected hash rejection for {uri} in {context:?}",
+            );
+        }
+    }
+
+    #[rstest]
+    #[case::git_https("git+https://example.com/owner/repo?rev=not-a-hash")]
+    #[case::hg_https("hg+https://example.com/repo?rev=zzzz")]
+    #[case::indirect("flake:nixpkgs?rev=main")]
+    #[case::tarball("https://example.com/x.tar.gz?rev=abc")]
+    #[case::path("path:/foo?rev=abc")]
+    fn query_rev_is_not_validated_elsewhere(#[case] uri: &str) {
+        // Only git forges check the revision when parsing.
+        FlakeRef::parse(uri, Context::Standalone)
+            .unwrap_or_else(|e| panic!("{uri}: expected accept, got {e:?}"));
     }
 
     // GitLab and SourceHut `?ref=...` (the ref-only query shape) have no
@@ -2676,7 +2690,7 @@ mod percent_encoding_round_trip {
     //! encodes the four extra bytes `:@/?` too. The tests cover both
     //! sides plus the strict-decode contract (a stray `%` not followed
     //! by two hex digits rejects rather than passing through).
-    use crate::{FlakeRef, NixUriError};
+    use crate::{Context, FlakeRef, NixUriError};
     use rstest::rstest;
 
     #[rstest]
@@ -2716,7 +2730,7 @@ mod percent_encoding_round_trip {
     #[case::question_mark_in_fragment("github:o/r#a%3Fb", "a?b")]
     #[case::slash_in_fragment("github:o/r#a%2Fb", "a/b")]
     fn fragment_round_trips_for_encoded_byte(#[case] input: &str, #[case] decoded: &str) {
-        let parsed: FlakeRef = input.parse().expect("input must parse");
+        let parsed = FlakeRef::parse(input, Context::Installable).expect("input must parse");
         assert_eq!(parsed.fragment(), Some(decoded));
         assert_eq!(parsed.to_string(), input);
     }
@@ -3101,7 +3115,7 @@ mod canonical_string {
     #[test]
     fn fragment_survives_canonicalisation() {
         let input = "github:nixos/nixpkgs/main#hello";
-        let parsed: FlakeRef = input.parse().unwrap();
+        let parsed = FlakeRef::parse(input, Context::Installable).unwrap();
         assert_eq!(
             parsed.to_canonical_string(),
             "github:nixos/nixpkgs/main#hello"

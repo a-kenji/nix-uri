@@ -67,20 +67,45 @@ pub(crate) fn encode_fragment(s: &str) -> Cow<'_, str> {
     utf8_percent_encode(s, FRAGMENT).into()
 }
 
-/// Re-encode a single path segment so the `/` separators inside it survive a
-/// `Display` round-trip without being mistaken for the segment boundary.
-///
-/// Matches Nix's per-segment percent-encoding of URL paths (each segment
-/// is percent-encoded individually so `/` between segments stays raw).
-/// Applied to a [`super::GitForge`] owner that the parser decoded out of
-/// `<scheme>:<seg>%2F<seg>/<repo>`: the validator stores the decoded
-/// `seg/seg` form, and Display re-emits `%2F` between the segments so the
-/// literal `/` does not collide with the owner-vs-repo boundary.
+/// ASCII bytes that must be percent-encoded inside a URL path segment:
+/// everything outside RFC 3986's `pchar`, plus `%` (segments are stored
+/// decoded) and `/` (so a literal `/` inside a segment does not become a
+/// segment boundary).
+const PATH_SEGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
+
+/// Re-encode a single decoded path segment, such as a git-forge owner or
+/// repo, so it survives a `Display` round-trip.
 pub(crate) fn encode_path_segment(s: &str) -> Cow<'_, str> {
-    if !s.contains('/') {
-        return Cow::Borrowed(s);
-    }
-    s.replace('/', "%2F").into()
+    utf8_percent_encode(s, PATH_SEGMENT).into()
+}
+
+/// Returns `true` for a character that may appear unescaped in a URL path:
+/// RFC 3986's `pchar` (unreserved, sub-delims, `:`, `@`), `%` of a
+/// percent-escape, and the `/` separator.
+pub(crate) fn is_url_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "-._~!$&'()*+,;=:@%/".contains(c)
+}
+
+/// Returns `true` for a character allowed unescaped in a query: the URL
+/// path characters plus `?`, space and `"`.
+pub(crate) fn is_query_char(c: char) -> bool {
+    is_url_path_char(c) || matches!(c, '?' | ' ' | '"')
 }
 
 /// Returns [`NixUriError::InvalidUrl`] when a `%` byte is not followed by
@@ -152,6 +177,13 @@ mod tests {
     fn decode_rejects_non_hex() {
         assert!(decode_percent("foo%XY").is_err());
         assert!(decode_percent("foo%2Z").is_err());
+    }
+
+    #[test]
+    fn path_segment_encodes_slash_and_non_pchar() {
+        assert_eq!(encode_path_segment("group/sub"), "group%2Fsub");
+        assert_eq!(encode_path_segment("r x%"), "r%20x%25");
+        assert_eq!(encode_path_segment("~o!:@"), "~o!:@");
     }
 
     #[test]

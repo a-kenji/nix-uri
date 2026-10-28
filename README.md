@@ -54,7 +54,7 @@ The uri syntax representation is parsed by this library:
  ```rust
   let uri = "github:nixos/nixpkgs";
   let parsed: FlakeRef = uri.parse().unwrap();
-  match parsed.kind {
+  match parsed.kind() {
       FlakeRefType::GitForge(forge) => {
           assert_eq!(forge.platform, GitForgePlatform::GitHub);
           assert_eq!(forge.owner, "nixos");

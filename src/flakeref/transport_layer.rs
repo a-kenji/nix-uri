@@ -131,10 +131,8 @@ mod err_msg {
 
     #[test]
     fn unknown_transport_after_plus_routes_to_transport_layer_unsupported() {
-        use crate::parser::parse_nix_uri;
-
         assert_matches!(
-            parse_nix_uri("git+fizzbuzz://x"),
+            crate::FlakeRef::parse("git+fizzbuzz://x", crate::Context::default()),
             Err(NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty }))
                 => assert_eq!(ty, "fizzbuzz")
         );
