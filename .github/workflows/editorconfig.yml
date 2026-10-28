@@ -10,6 +10,10 @@ on:
       - ready_for_review
   push:
     branches: [main]
+permissions:
+  contents: read
+  # lets hestia detect evicted cache entries upfront
+  actions: read
 jobs:
   editor-config:
     runs-on: ubuntu-latest
@@ -21,6 +25,7 @@ jobs:
         with:
           extra-conf: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: Mic92/hestia@dfed9ced335d28978ba74e513939a10db1f71025 # v3.1.0
       - name: "install editorconfig-checker"
         run: nix shell --refresh --inputs-from .# nixpkgs#editorconfig-checker
       - name: Checking EditorConfig
