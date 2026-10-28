@@ -2,7 +2,6 @@
   self,
   lib,
   pkgs,
-  cargo-fuzz,
 }:
 let
   rust = pkgs.callPackage ./rust.nix { inherit self; };
@@ -43,45 +42,36 @@ let
   cargoTarpaulin = craneLib.cargoTarpaulin (commonArgs // { inherit cargoArtifacts; });
   cargoDoc = craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
   cargoTest = craneLib.cargoNextest (commonArgs // { inherit cargoArtifacts; });
-  fuzz =
-    ((self.inputs.crane.mkLib pkgs).overrideToolchain rust.rustNightlyToolchainTOML).buildPackage
-      (
-        commonArgs
-        // rec {
-          inherit src;
-          cargoArtifacts =
-            ((self.inputs.crane.mkLib pkgs).overrideToolchain rust.rustNightlyToolchainTOML).buildDepsOnly commonArgs
-            // {
-              inherit version pname;
-            };
-          __flags = [
-            "--cfg fuzzing"
-            "--cfg fuzzing_repro"
-            "-Cpasses=sancov-module"
-            "-C opt-level=3"
-            "-Cllvm-args=-sanitizer-coverage-level=4"
-            "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters"
-            "-Cllvm-args=-sanitizer-coverage-pc-table"
-            "-Cllvm-args=-sanitizer-coverage-trace-compares"
-            "-Z sanitizer=address"
-            "-Zsanitizer=memory" # memory 1
-            "-Zsanitizer-memory-track-origins" # memory 2
-            "-Cllvm-args=-sanitizer-coverage-stack-depth" # only linux
-            "-Cdebug-assertions"
-          ];
-          buildFlags = __flags;
-          cargoBuildCommand = "cargo b --package=nix-uri-fuzz --bin fuzz_comp_err";
-          CARGO_PROFILE = "fuzz";
-          doCheck = false;
-          pname = "fuzz_comp_err";
-          name = pname;
-          nativeBuildInputs = [
-            rust.rustNightlyToolchainTOML
-            cargo-fuzz
-          ];
-          inherit version;
-        }
-      );
+  craneLibNightly = (self.inputs.crane.mkLib pkgs).overrideToolchain rust.rustLatestNightlyToolchain;
+  fuzzArgs = commonArgs // rec {
+    pname = "fuzz_comp_err";
+    name = pname;
+    cargoExtraArgs = "--package=nix-uri-fuzz --bin fuzz_comp_err";
+    CARGO_PROFILE = "fuzz";
+    CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+    RUSTFLAGS = lib.concatStringsSep " " (
+      [
+        "--cfg fuzzing"
+        "-Cpasses=sancov-module"
+        "-Cllvm-args=-sanitizer-coverage-level=4"
+        "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters"
+        "-Cllvm-args=-sanitizer-coverage-pc-table"
+        "-Cllvm-args=-sanitizer-coverage-trace-compares"
+        "-Zsanitizer=address"
+        "-Cdebug-assertions"
+        "-Coverflow-checks"
+      ]
+      ++ lib.optional pkgs.stdenv.hostPlatform.isLinux "-Cllvm-args=-sanitizer-coverage-stack-depth"
+    );
+    doCheck = false;
+  };
+  fuzz = craneLibNightly.buildPackage (
+    fuzzArgs
+    // {
+      cargoArtifacts = craneLibNightly.buildDepsOnly fuzzArgs;
+      meta.mainProgram = "fuzz_comp_err";
+    }
+  );
 in
 {
   inherit
