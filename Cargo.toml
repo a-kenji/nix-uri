@@ -29,16 +29,16 @@ default = []
 
 [dependencies]
 percent-encoding = "2.3.2"
-serde = { version = "1.0.228", features = ["derive"] }
-thiserror = "2.0.18"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
 url = { version = "2.5.8" }
-winnow = "1.0.3"
+winnow = "1.0.4"
 
 [dev-dependencies]
-cool_asserts = "2.0.3"
-criterion = { version = "0.8.2", features = ["html_reports"] }
+cool_asserts = "2.0.4"
+criterion = { version = "0.7.0", features = ["html_reports"] }
 proptest = "1"
-rstest = "0.26.1"
+rstest = "0.28.0"
 
 [[bench]]
 name = "bench"
