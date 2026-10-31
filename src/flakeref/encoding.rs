@@ -47,11 +47,11 @@ pub(crate) fn encode_ip_literal(s: &str) -> Cow<'_, str> {
     utf8_percent_encode(s, IP_LITERAL).into()
 }
 
-fn is_unreserved(c: char) -> bool {
+pub(crate) fn is_unreserved(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~')
 }
 
-fn is_sub_delim(c: char) -> bool {
+pub(crate) fn is_sub_delim(c: char) -> bool {
     matches!(
         c,
         '!' | '$' | '&' | '\'' | '(' | ')' | '*' | '+' | ',' | ';' | '='
