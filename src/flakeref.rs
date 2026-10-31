@@ -22,6 +22,7 @@ pub(crate) mod hash;
 pub use fr_type::FlakeRefType;
 mod git;
 pub use git::GitRepo;
+pub(crate) use git::split_scp_location;
 mod indirect;
 pub use indirect::Indirect;
 pub(crate) use indirect::is_flake_id;
@@ -582,6 +583,21 @@ mod from_attrs {
     /// The forms Nix normalises a git `url` attribute into.
     #[rstest]
     #[case("git@github.com:o/r", "ssh://git@github.com/o/r")]
+    #[case("github.com:o/r", "ssh://github.com/o/r")]
+    #[case("git+github:o/r", "ssh://git%2Bgithub/o/r")]
+    #[case("https:o/r", "https:o/r")]
+    #[case("git+ftps:x", "ftps:x")]
+    #[case("a@b@c:x", "ssh://a@b%40c/x")]
+    #[case("h%20:x", "ssh://h%2520/x")]
+    #[case("h:o/r?x=1", "ssh://h/o/r%3Fx%3D1")]
+    #[case(":x", "ssh:///x")]
+    #[case("@h:x", "ssh://@h/x")]
+    #[case("u@[::1]:x", "ssh://u@[::1]/x")]
+    #[case("git+foo:a@[::1]:x", "ssh://git%2Bfoo%3Aa@[::1]/x")]
+    #[case("[0:0:0:0:0:0:0:1]:x", "ssh://[::1]/x")]
+    #[case("[::FFFF:1.2.3.4]:x", "ssh://[::ffff:1.2.3.4]/x")]
+    #[case("[::1.2.3.4]:x", "ssh://[::102:304]/x")]
+    #[case("[1:0:0:0:1:0:0:1]:x", "ssh://[1::1:0:0:1]/x")]
     #[case("/local/x", "file:///local/x")]
     #[case("git+https://h/a*b", "https://h/a%2Ab")]
     fn git_url_is_normalised(#[case] url: &str, #[case] normalised: &str) {
@@ -590,6 +606,20 @@ mod from_attrs {
         assert_eq!(
             flake_ref.to_attrs(),
             attrs(&format!(r#"{{"type":"git","url":"{normalised}"}}"#))
+        );
+    }
+
+    #[rstest]
+    #[case("h:")]
+    #[case("u@[::1]:")]
+    #[case("[fe80::1%25eth0]:x")]
+    #[case("[v1.x]:x")]
+    #[case("[zz]:x")]
+    fn malformed_scp_git_url(#[case] url: &str) {
+        let json = format!(r#"{{"type":"git","url":"{url}"}}"#);
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(&json)),
+            Err(NixUriError::InvalidUrl(_))
         );
     }
 

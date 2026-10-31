@@ -7,7 +7,7 @@ use crate::{
         DOWNLOAD_TRANSPORTS, Download, FlakeRef, FlakeRefType, GitForge, GitForgePlatform, GitRepo,
         HG_TRANSPORTS, Indirect, MercurialRepo, PathRef, encoding,
         hash::is_sha1_hash,
-        is_flake_id, nul_in_path,
+        is_flake_id, nul_in_path, split_scp_location,
         url::{Authority, Url, parse_query, scheme_of, split_scheme},
         validators::{is_sha1_hex, matches_ref_shape, validated_host_name, validated_ref_name},
     },
@@ -259,9 +259,8 @@ fn parse_path(head: &str, context: Context) -> NixUriResult<FlakeRef> {
 /// An SCP-style git location, `user@host:path`, as written by
 /// `git clone`. Only used to explain why such an input is rejected.
 fn looks_like_scp_url(path: &str) -> bool {
-    path.split_once(':').is_some_and(|(authority, rest)| {
-        authority.contains('@') && !authority.contains('/') && !rest.is_empty()
-    })
+    split_scp_location(path)
+        .is_some_and(|(user_host, rest)| user_host.contains('@') && !rest.is_empty())
 }
 
 #[cfg(test)]

@@ -1,12 +1,13 @@
 use std::borrow::Cow;
+use std::net::Ipv6Addr;
 
 use crate::{
-    error::NixUriResult,
+    error::{NixUriError, NixUriResult},
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
         forge::render_rev,
-        url::{EncodedPath, Url},
+        url::{Authority, EncodedPath, Host, Url},
         validators::{query_bool, validated_ref_name},
     },
 };
@@ -74,8 +75,13 @@ impl GitRepo {
         git.export_ignore = take("exportIgnore").map(|v| query_bool(&v));
         git.all_refs = take("allRefs").map(|v| query_bool(&v));
         git.verify_commit = take("verifyCommit").map(|v| query_bool(&v));
-        url.strip_application();
-        git.url = url.to_string();
+        git.url = match scp_to_ssh(&url.to_string())? {
+            Some(ssh) => ssh,
+            None => {
+                url.strip_application();
+                url.to_string()
+            }
+        };
         Ok(git)
     }
 
@@ -159,7 +165,7 @@ fn fix_git_url(url: &str) -> NixUriResult<String> {
         let path = super::path_ref::fs_path_segments(url);
         return Ok(format!("file://{}", EncodedPath(&path)));
     }
-    if let Some(ssh) = scp_to_ssh(url) {
+    if let Some(ssh) = scp_to_ssh(url)? {
         return Ok(ssh);
     }
     let mut parsed = Url::parse(url)?;
@@ -169,16 +175,67 @@ fn fix_git_url(url: &str) -> NixUriResult<String> {
     Ok(parsed.to_string())
 }
 
-/// `[user@]host:path`, where the part before `:` has no `/`.
-fn scp_to_ssh(url: &str) -> Option<String> {
+const GIT_URL_TRANSPORTS: &[&str] = &["ssh", "http", "https", "file", "ftp", "ftps", "git"];
+
+/// The `[user@]host` and the path of an SCP-style git location, `[user@]host:path`.
+pub(crate) fn split_scp_location(url: &str) -> Option<(&str, &str)> {
     if url.contains("://") {
         return None;
     }
-    let (authority, path) = url.split_once(':')?;
-    if authority.is_empty() || authority.contains('/') || !authority.contains('@') {
+    let (first, _) = url.split_once(':')?;
+    let transport = first.strip_prefix("git+").unwrap_or(first);
+    if first.contains('/') || GIT_URL_TRANSPORTS.contains(&transport) {
         return None;
     }
-    Url::parse(&format!("ssh://{authority}/{path}"))
-        .ok()
-        .map(|u| u.to_string())
+    let bracket = match url.find("@[") {
+        Some(at) => Some(at + 1),
+        None => url.starts_with('[').then_some(0),
+    };
+    let host_end =
+        match bracket.and_then(|start| url[start..].find(']').map(|close| start + close + 1)) {
+            Some(end) if url[end..].starts_with(':') => end,
+            Some(_) => return None,
+            None => first.len(),
+        };
+    Some((&url[..host_end], &url[host_end + 1..]))
+}
+
+/// An SCP-style location as an `ssh://` URL.
+fn scp_to_ssh(url: &str) -> NixUriResult<Option<String>> {
+    let Some((user_host, path)) = split_scp_location(url) else {
+        return Ok(None);
+    };
+    let invalid = || NixUriError::InvalidUrl(url.into());
+    if path.is_empty() {
+        return Err(invalid());
+    }
+    let (user, host) = match user_host.split_once('@') {
+        Some((user, host)) => (Some(user), host),
+        None => (None, user_host),
+    };
+    let host = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some(literal) => Host::Literal(
+            literal
+                .parse::<Ipv6Addr>()
+                .map_err(|_| invalid())?
+                .to_string(),
+        ),
+        None => Host::Name(Cow::Borrowed(host)),
+    };
+    let mut segments: Vec<Cow<'_, str>> = path.split('/').map(Cow::Borrowed).collect();
+    if !path.starts_with('/') {
+        segments.insert(0, Cow::Borrowed(""));
+    }
+    let ssh = Url {
+        scheme: "ssh",
+        authority: Some(Authority {
+            user: user.map(Cow::Borrowed),
+            password: None,
+            host,
+            port: None,
+        }),
+        path: segments,
+        query: Default::default(),
+    };
+    Ok(Some(ssh.to_string()))
 }
