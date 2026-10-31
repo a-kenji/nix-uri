@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 
@@ -71,49 +72,78 @@ pub enum RefKind {
 }
 
 #[derive(Debug)]
-pub(crate) struct RenderUrl {
-    base: String,
-    query: BTreeMap<String, String>,
+pub(crate) struct RenderUrl<'a> {
+    base: RenderBase<'a>,
+    query: BTreeMap<Cow<'a, str>, Cow<'a, str>>,
 }
 
-impl RenderUrl {
-    pub(crate) fn new(base: String) -> Self {
+#[derive(Debug)]
+enum RenderBase<'a> {
+    /// `<scheme>:` and a path given as decoded segments.
+    Segments {
+        scheme: &'static str,
+        segments: Vec<Cow<'a, str>>,
+    },
+    Url {
+        prefix: &'static str,
+        url: url::Url,
+    },
+    Verbatim {
+        prefix: &'static str,
+        url: &'a str,
+    },
+}
+
+impl<'a> RenderUrl<'a> {
+    pub(crate) fn from_segments(scheme: &'static str, segments: Vec<Cow<'a, str>>) -> Self {
         Self {
-            base,
+            base: RenderBase::Segments { scheme, segments },
             query: BTreeMap::new(),
         }
     }
 
-    pub(crate) fn from_url_string(url: &str, prefix: impl Fn(&str) -> String) -> Self {
+    pub(crate) fn from_url_string(url: &'a str, prefix: impl Fn(&str) -> &'static str) -> Self {
         match url::Url::parse(url) {
             Ok(mut parsed) => {
-                let query = std::mem::take(&mut parsed.query);
+                let query = std::mem::take(&mut parsed.query)
+                    .into_iter()
+                    .map(|(key, value)| (Cow::Owned(key), Cow::Owned(value)))
+                    .collect();
                 Self {
-                    base: format!("{}{parsed}", prefix(&parsed.scheme)),
+                    base: RenderBase::Url {
+                        prefix: prefix(&parsed.scheme),
+                        url: parsed,
+                    },
                     query,
                 }
             }
-            Err(_) => Self::new(format!(
-                "{}{url}",
-                prefix(url::scheme_of(url).unwrap_or_default())
-            )),
+            Err(_) => Self {
+                base: RenderBase::Verbatim {
+                    prefix: prefix(url::scheme_of(url).unwrap_or_default()),
+                    url,
+                },
+                query: BTreeMap::new(),
+            },
         }
     }
 
-    pub(crate) fn query_opt(&mut self, key: &str, value: Option<&str>) {
+    pub(crate) fn query_opt(&mut self, key: &'a str, value: Option<impl Into<Cow<'a, str>>>) {
         if let Some(value) = value {
-            self.query.insert(key.to_string(), value.to_string());
+            self.query.insert(Cow::Borrowed(key), value.into());
         }
     }
 }
 
-impl Display for RenderUrl {
+impl Display for RenderUrl<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.base)?;
-        if !self.query.is_empty() {
-            write!(f, "?{}", url::render_query(&self.query))?;
+        match &self.base {
+            RenderBase::Segments { scheme, segments } => {
+                write!(f, "{scheme}:{}", url::EncodedPath(segments))?;
+            }
+            RenderBase::Url { prefix, url } => write!(f, "{prefix}{url}")?,
+            RenderBase::Verbatim { prefix, url } => write!(f, "{prefix}{url}")?,
         }
-        Ok(())
+        write!(f, "{}", url::EncodedQuery(&self.query))
     }
 }
 

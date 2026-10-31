@@ -9,7 +9,9 @@
 
 use std::borrow::Cow;
 
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use percent_encoding::{
+    AsciiSet, NON_ALPHANUMERIC, PercentEncode, percent_decode_str, utf8_percent_encode,
+};
 
 use crate::error::NixUriError;
 
@@ -29,22 +31,22 @@ const PATH_SEGMENT: &AsciiSet = &RESERVED.remove(b':').remove(b'@');
 /// An IP literal keeps its `:` separators.
 const IP_LITERAL: &AsciiSet = &RESERVED.remove(b':');
 
-pub(crate) fn encode_query(s: &str) -> Cow<'_, str> {
-    utf8_percent_encode(s, QUERY).into()
+pub(crate) fn encode_query(s: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(s, QUERY)
 }
 
 /// Encode a fragment, or the user, password or host name of an authority.
-pub(crate) fn encode_unreserved(s: &str) -> Cow<'_, str> {
-    utf8_percent_encode(s, RESERVED).into()
+pub(crate) fn encode_unreserved(s: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(s, RESERVED)
 }
 
 /// Encode a single decoded path segment, such as a git-forge owner or a ref.
-pub(crate) fn encode_path_segment(s: &str) -> Cow<'_, str> {
-    utf8_percent_encode(s, PATH_SEGMENT).into()
+pub(crate) fn encode_path_segment(s: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(s, PATH_SEGMENT)
 }
 
-pub(crate) fn encode_ip_literal(s: &str) -> Cow<'_, str> {
-    utf8_percent_encode(s, IP_LITERAL).into()
+pub(crate) fn encode_ip_literal(s: &str) -> PercentEncode<'_> {
+    utf8_percent_encode(s, IP_LITERAL)
 }
 
 pub(crate) fn is_unreserved(c: char) -> bool {
@@ -145,28 +147,28 @@ mod tests {
 
     #[test]
     fn space_is_encoded_in_query_value() {
-        assert_eq!(encode_query("foo bar"), "foo%20bar");
+        assert_eq!(encode_query("foo bar").to_string(), "foo%20bar");
     }
 
     #[test]
     fn slash_is_kept_in_query_value() {
-        assert_eq!(encode_query("foo/bar:@?"), "foo/bar:@?");
+        assert_eq!(encode_query("foo/bar:@?").to_string(), "foo/bar:@?");
     }
 
     #[test]
     fn slash_is_encoded_in_fragment() {
-        assert_eq!(encode_unreserved("foo/bar"), "foo%2Fbar");
+        assert_eq!(encode_unreserved("foo/bar").to_string(), "foo%2Fbar");
     }
 
     #[test]
     fn non_ascii_is_encoded() {
-        assert_eq!(encode_query("fÖö"), "f%C3%96%C3%B6");
-        assert_eq!(encode_unreserved("fÖö"), "f%C3%96%C3%B6");
+        assert_eq!(encode_query("fÖö").to_string(), "f%C3%96%C3%B6");
+        assert_eq!(encode_unreserved("fÖö").to_string(), "f%C3%96%C3%B6");
     }
 
     #[test]
     fn decode_round_trip() {
-        let encoded = encode_query("foo bar/baz");
+        let encoded = encode_query("foo bar/baz").to_string();
         assert_eq!(decode_percent(&encoded).unwrap(), "foo bar/baz");
     }
 
@@ -186,11 +188,11 @@ mod tests {
     fn path_segment_encodes_sub_delims() {
         // `https://h/a!$&()+,;=:@~b` renders as follows in Nix 2.35.3.
         assert_eq!(
-            encode_path_segment("a!$&()+,;=:@~b"),
+            encode_path_segment("a!$&()+,;=:@~b").to_string(),
             "a%21%24%26%28%29%2B%2C%3B%3D:@~b"
         );
-        assert_eq!(encode_path_segment("group/sub"), "group%2Fsub");
-        assert_eq!(encode_path_segment("*"), "%2A");
+        assert_eq!(encode_path_segment("group/sub").to_string(), "group%2Fsub");
+        assert_eq!(encode_path_segment("*").to_string(), "%2A");
     }
 
     #[test]
@@ -212,7 +214,11 @@ mod tests {
         for byte in 0..=0x7f_u8 {
             let c = char::from(byte);
             let s = c.to_string();
-            assert_eq!(encode_unreserved(&s) == s, is_unreserved(c), "{c:?}");
+            assert_eq!(
+                encode_unreserved(&s).to_string() == s,
+                is_unreserved(c),
+                "{c:?}"
+            );
         }
     }
 }

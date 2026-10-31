@@ -1,9 +1,11 @@
+use std::borrow::Cow;
+
 use crate::{
     error::{NixUriError, NixUriResult, UnsupportedReason},
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
-        url::{Url, render_segments},
+        url::Url,
     },
 };
 
@@ -95,15 +97,16 @@ impl PathRef {
 
     /// `path:<path>` with the path percent-encoded and every attribute in the query,
     /// values as given.
-    pub(crate) fn render(&self) -> RenderUrl {
-        let mut out = RenderUrl::new(format!("path:{}", render_fs_path(&self.path)));
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let segments = fs_path_segments(&self.path)
+            .into_iter()
+            .map(Cow::Borrowed)
+            .collect();
+        let mut out = RenderUrl::from_segments("path", segments);
         out.query_opt("rev", self.rev.as_deref());
         out.query_opt("narHash", self.nar_hash.as_deref());
-        out.query_opt("revCount", self.rev_count.map(|n| n.to_string()).as_deref());
-        out.query_opt(
-            "lastModified",
-            self.last_modified.map(|n| n.to_string()).as_deref(),
-        );
+        out.query_opt("revCount", self.rev_count.map(|n| n.to_string()));
+        out.query_opt("lastModified", self.last_modified.map(|n| n.to_string()));
         out
     }
 }
@@ -131,7 +134,7 @@ fn collapse_slashes(path: &str) -> String {
     out
 }
 
-pub(crate) fn render_fs_path(path: &str) -> String {
+pub(crate) fn fs_path_segments(path: &str) -> Vec<&str> {
     let mut segments = Vec::new();
     if path.starts_with('/') {
         segments.push("");
@@ -144,12 +147,14 @@ pub(crate) fn render_fs_path(path: &str) -> String {
     if path.is_empty() || path.ends_with('/') {
         segments.push("");
     }
-    render_segments(&segments)
+    segments
 }
 
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+
+    use crate::flakeref::url::EncodedPath;
 
     /// `builtins.flakeRefToString { type = "path"; path = <path>; }` in Nix 2.35.3.
     #[rstest]
@@ -163,6 +168,7 @@ mod tests {
     #[case("/a b%", "/a%20b%25")]
     #[case("/a/../b", "/a/../b")]
     fn renders_like_nix(#[case] path: &str, #[case] rendered: &str) {
-        assert_eq!(super::render_fs_path(path), rendered);
+        let segments = super::fs_path_segments(path);
+        assert_eq!(EncodedPath(&segments).to_string(), rendered);
     }
 }
