@@ -1,48 +1,61 @@
 use std::fmt;
 
-use thiserror::Error;
-
 pub type NixUriResult<T> = Result<T, NixUriError>;
 
 /// Failures the parser may produce.
 ///
 /// Variants are stable categories: callers can match `Unsupported` for a recognised input
 /// that asks for something the library does not implement.
-#[derive(Debug, Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum NixUriError {
     /// The input parsed but requests an unsupported operation, parameter,
     /// type, or transport layer.
-    #[error("{0}")]
     Unsupported(UnsupportedReason),
     /// The input is malformed at a higher level than the byte parser:
     /// an illegal path character, a non-absolute path where one was required,
     /// or an otherwise unparseable URL shape.
-    #[error("not a valid URL: {0}")]
     InvalidUrl(String),
     /// A field's value did not pass validation. Reserved for failures where
     /// a single field's literal shape is wrong (e.g. a `?rev=` that is not
     /// 40 hex chars). Failures that involve a relationship between two
     /// fields surface as [`Self::FieldConflict`].
-    #[error("invalid value for `{field}`: {reason}")]
     InvalidValue { field: &'static str, reason: String },
     /// Two fields were populated that the grammar treats as mutually exclusive. The
     /// canonical case is a `GitForge` input that supplies both `ref` and `rev`.
-    #[error("`{left}` and `{right}` are mutually exclusive")]
     FieldConflict {
         left: &'static str,
         right: &'static str,
     },
     /// A field was given twice, for example a git-forge ref both as a
     /// path segment and as `?ref=` (`github:o/r/main?ref=dev`).
-    #[error("`{field}` is given more than once")]
     DuplicateField { field: &'static str },
     /// An indirect reference (a `flake:` URL or a bare flake id) exceeded
     /// the three-segment cap (`id[/ref[/rev]]`). `count` is the number
     /// of `/`-separated segments, including the id segment.
-    #[error("indirect form accepts at most 3 segments, got {count}")]
     TooManyIndirectSegments { count: usize },
 }
+
+impl fmt::Display for NixUriError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported(reason) => reason.fmt(f),
+            Self::InvalidUrl(url) => write!(f, "not a valid URL: {url}"),
+            Self::InvalidValue { field, reason } => {
+                write!(f, "invalid value for `{field}`: {reason}")
+            }
+            Self::FieldConflict { left, right } => {
+                write!(f, "`{left}` and `{right}` are mutually exclusive")
+            }
+            Self::DuplicateField { field } => write!(f, "`{field}` is given more than once"),
+            Self::TooManyIndirectSegments { count } => {
+                write!(f, "indirect form accepts at most 3 segments, got {count}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NixUriError {}
 
 /// Categorised reason an `Unsupported` URI was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
