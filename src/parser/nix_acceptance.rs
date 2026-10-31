@@ -2034,6 +2034,126 @@ pub(super) const ACCEPTED: &[(&str, &str, &str)] = &[
         "{\"owner\":\"o\",\"ref\":\"FOO/x\",\"repo\":\"r\",\"type\":\"gitlab\"}",
         "gitlab:o/r/FOO%2Fx",
     ),
+    (
+        "github:o/r?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS1%3D",
+        "{\"narHash\":\"sha256-qQ2Zz4DNHUpgVCi6rTS7EE4+RMqFQtUfWF26NUtJKS1=\",\"owner\":\"o\",\"repo\":\"r\",\"type\":\"github\"}",
+        "github:o/r?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS0%3D",
+    ),
+    (
+        "github:o/r?narHash=",
+        "{\"narHash\":\"\",\"owner\":\"o\",\"repo\":\"r\",\"type\":\"github\"}",
+        "github:o/r?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D",
+    ),
+    (
+        "https://e.org/a.tar.gz?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS0",
+        "{\"narHash\":\"sha256-qQ2Zz4DNHUpgVCi6rTS7EE4+RMqFQtUfWF26NUtJKS0\",\"type\":\"tarball\",\"url\":\"https://e.org/a.tar.gz\"}",
+        "https://e.org/a.tar.gz?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS0%3D",
+    ),
+    (
+        "git+https://e.org/r?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS1%3D",
+        "{\"type\":\"git\",\"url\":\"https://e.org/r?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS1%3D\"}",
+        "git+https://e.org/r?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS1%3D",
+    ),
+    (
+        "path:/a?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS0",
+        "{\"narHash\":\"sha256-qQ2Zz4DNHUpgVCi6rTS7EE4+RMqFQtUfWF26NUtJKS0\",\"path\":\"/a\",\"type\":\"path\"}",
+        "path:/a?narHash=sha256-qQ2Zz4DNHUpgVCi6rTS7EE4%2BRMqFQtUfWF26NUtJKS0",
+    ),
+    (
+        "git+ssh://h/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=x",
+        "{\"rev\":\"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=x\",\"type\":\"git\",\"url\":\"ssh://h/r\"}",
+        "git+ssh://h/r?rev=0000000000000000000000000000000000000000",
+    ),
+    (
+        "hg+ssh://h/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "{\"rev\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"hg\",\"url\":\"ssh://h/r\"}",
+        "hg+ssh://h/r?rev=0000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    (
+        "hg+ssh://h/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=a3",
+        "{\"rev\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=a3\",\"type\":\"hg\",\"url\":\"ssh://h/r\"}",
+        "hg+ssh://h/r?rev=0000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    (
+        "hg+ssh://h/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "{\"rev\":\"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"hg\",\"url\":\"ssh://h/r\"}",
+        "hg+ssh://h/r?rev=0000000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "{\"rev\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=0000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=sha256:abababababababababababababababababababababababababababababababab",
+        "{\"rev\":\"sha256:abababababababababababababababababababababababababababababababab\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=abababababababababababababababababababababababababababababababab",
+    ),
+    (
+        "git+https://h/r?rev=sha1:ABABABABABABABABABABABABABABABABABABABAB",
+        "{\"rev\":\"sha1:ABABABABABABABABABABABABABABABABABABABAB\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=abababababababababababababababababababab",
+    ),
+    (
+        "git+https://h/r?rev=ABABABABABABABABABABABABABABABABABABABAB",
+        "{\"rev\":\"ABABABABABABABABABABABABABABABABABABABAB\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=abababababababababababababababababababab",
+    ),
+    (
+        "git+https://h/r?rev=md5-AAAAAAAAAAAAAAAAAAAAAA==",
+        "{\"rev\":\"md5-AAAAAAAAAAAAAAAAAAAAAA==\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=00000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "{\"rev\":\"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=sha1:0000000000000000000000000000001z",
+        "{\"rev\":\"sha1:0000000000000000000000000000001z\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=3f00000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=0000000000000000000000000000001z",
+        "{\"rev\":\"0000000000000000000000000000001z\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=3f00000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=zz00000000000000000000000000000z",
+        "{\"rev\":\"zz00000000000000000000000000000z\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=1f0000000000000000000000000000000000c0ff",
+    ),
+    (
+        "git+https://h/r?rev=sha256:0000000000000000000000000000000000000000000000000000",
+        "{\"rev\":\"sha256:0000000000000000000000000000000000000000000000000000\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=0000000000000000000000000000000000000000000000000000000000000000",
+    ),
+    (
+        "github:o/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=x",
+        "{\"owner\":\"o\",\"repo\":\"r\",\"rev\":\"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=x\",\"type\":\"github\"}",
+        "github:o/r/0000000000000000000000000000000000000000",
+    ),
+    (
+        "github:o/r?rev=sha1:0000000000000000000000000000001z",
+        "{\"owner\":\"o\",\"repo\":\"r\",\"rev\":\"sha1:0000000000000000000000000000001z\",\"type\":\"github\"}",
+        "github:o/r/3f00000000000000000000000000000000000000",
+    ),
+    (
+        "github:o/r?rev=ABABABABABABABABABABABABABABABABABABABAB",
+        "{\"owner\":\"o\",\"repo\":\"r\",\"rev\":\"ABABABABABABABABABABABABABABABABABABABAB\",\"type\":\"github\"}",
+        "github:o/r/abababababababababababababababababababab",
+    ),
+    (
+        "git+https://h/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA%0A=",
+        "{\"rev\":\"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA\\n=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=0000000000000000000000000000000000000000",
+    ),
+    (
+        "git+https://h/r?rev=sha1-AAAA%0AAAAAAAAAAAAAAAAAAAAAAAA=",
+        "{\"rev\":\"sha1-AAAA\\nAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=0000000000000000000000000000000000000000",
+    ),
 ];
 
 /// Accepted, but `flakeRefToString` fails: (input, attributes, our `Display`, why Nix
@@ -2086,6 +2206,48 @@ pub(super) const ACCEPTED_NIX_CANNOT_RENDER: &[(&str, &str, &str, &str)] = &[
         "{\"narHash\":\"sha256-hH\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"type\":\"github\"}",
         "github:NixOS/nixpkgs?narHash=sha256-hH",
         "invalid SRI hash 'hH', length 1 != expected length 32",
+    ),
+    (
+        "git+https://h/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+        "{\"rev\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB%3D",
+        "hash 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=' should have type 'sha1'",
+    ),
+    (
+        "git+https://h/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+        "{\"rev\":\"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAAB=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAAB%3D",
+        "invalid SRI hash 'AAAAAAAAAAAAAAAAAAAAAAAAAAAB=', length 21 != expected length 20",
+    ),
+    (
+        "git+https://h/r?rev=AAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+        "{\"rev\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAB=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=AAAAAAAAAAAAAAAAAAAAAAAAAAAB%3D",
+        "hash 'AAAAAAAAAAAAAAAAAAAAAAAAAAAB=' has wrong length for hash algorithm 'sha1'",
+    ),
+    (
+        "git+https://h/r?rev=AAAAAAAAAAAAAAAAAAAAAAAAAAA=x",
+        "{\"rev\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAA=x\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=AAAAAAAAAAAAAAAAAAAAAAAAAAA%3Dx",
+        "hash 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=x' has wrong length for hash algorithm 'sha1'",
+    ),
+    (
+        "git+https://h/r?rev=sha256-abc",
+        "{\"rev\":\"sha256-abc\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=sha256-abc",
+        "hash 'sha256-abc' should have type 'sha1'",
+    ),
+    (
+        "git+https://h/r?rev=foo-abc",
+        "{\"rev\":\"foo-abc\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=foo-abc",
+        "unknown hash algorithm 'foo', expect 'blake3', 'md5', 'sha1', 'sha256', or 'sha512'",
+    ),
+    (
+        "git+https://h/r?rev=blake3-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "{\"rev\":\"blake3-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
+        "git+https://h/r?rev=blake3-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D",
+        "experimental Nix feature 'blake3-hashes' is disabled; add '--extra-experimental-features blake3-hashes' to enable it",
     ),
 ];
 
@@ -3085,4 +3247,14 @@ pub(super) const REJECTED: &[(&str, Rejected, Rejected)] = &[
         Rejected::InvalidRev,
     ),
     ("github:o/r?rev=abc&x=1", Rejected::Param, Rejected::Param),
+    (
+        "github:o/r?rev=AAAAAAAAAAAAAAAAAAAAAAAAAAAB=",
+        Rejected::InvalidRev,
+        Rejected::InvalidRev,
+    ),
+    (
+        "github:o/r?rev=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        Rejected::InvalidRev,
+        Rejected::InvalidRev,
+    ),
 ];

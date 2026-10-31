@@ -6,7 +6,7 @@ use crate::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
         url::render_segments,
-        validators::{sha1_to_base16, validated_ref_name},
+        validators::{render_nar_hash, rev_to_base16, validated_ref_name},
     },
 };
 
@@ -133,13 +133,14 @@ impl GitForge {
         segments.extend(self.ref_.as_deref().or(rev.as_deref()));
         let mut url = RenderUrl::new(format!("{}:{}", self.platform, render_segments(&segments)));
         url.query_opt("host", self.host.as_deref());
-        url.query_opt("narHash", self.nar_hash.as_deref());
+        let nar_hash = self.nar_hash.as_deref().map(render_nar_hash);
+        url.query_opt("narHash", nar_hash.as_deref());
         url
     }
 }
 
 pub(crate) fn render_rev(rev: &str) -> String {
-    sha1_to_base16(rev).unwrap_or_else(|| rev.to_string())
+    rev_to_base16(rev).unwrap_or_else(|| rev.to_string())
 }
 
 #[cfg(test)]

@@ -52,7 +52,7 @@ fn lock_only<T: std::fmt::Debug + Clone + 'static>(
 }
 
 fn nar_hash_strategy() -> impl Strategy<Value = String> {
-    "sha256-[A-Za-z0-9+/]{43}="
+    "sha256-[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]="
 }
 
 fn query_value_strategy() -> impl Strategy<Value = String> {

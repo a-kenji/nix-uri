@@ -4,6 +4,7 @@ use crate::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
         url::Url,
+        validators::render_nar_hash,
     },
 };
 
@@ -90,7 +91,8 @@ impl Download {
     /// The bare URL with `narHash`.
     pub(crate) fn render(&self) -> RenderUrl {
         let mut out = RenderUrl::from_url_string(&self.url, |_| String::new());
-        out.query_opt("narHash", self.nar_hash.as_deref());
+        let nar_hash = self.nar_hash.as_deref().map(render_nar_hash);
+        out.query_opt("narHash", nar_hash.as_deref());
         out
     }
 }
