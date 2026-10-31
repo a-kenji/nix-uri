@@ -2154,6 +2154,76 @@ pub(super) const ACCEPTED: &[(&str, &str, &str)] = &[
         "{\"rev\":\"sha1-AAAA\\nAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
         "git+https://h/r?rev=0000000000000000000000000000000000000000",
     ),
+    (
+        "http://[fe80::1%25eth0]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[fe80::1%25eth0]/x\"}",
+        "http://[fe80::1%25eth0]/x",
+    ),
+    (
+        "http://[fe80::1%25e%41]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[fe80::1%25eA]/x\"}",
+        "http://[fe80::1%25eA]/x",
+    ),
+    (
+        "http://[fe80::1%25e%2Fx]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[fe80::1%25e%2Fx]/x\"}",
+        "http://[fe80::1%25e%2Fx]/x",
+    ),
+    (
+        "http://[v1.x]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[v1.x]/x\"}",
+        "http://[v1.x]/x",
+    ),
+    (
+        "http://[vA.x]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[vA.x]/x\"}",
+        "http://[vA.x]/x",
+    ),
+    (
+        "http://[FE80::A]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[FE80::A]/x\"}",
+        "http://[FE80::A]/x",
+    ),
+    (
+        "http://[::]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[::]/x\"}",
+        "http://[::]/x",
+    ),
+    (
+        "http://[1:2:3:4:5:6:7::]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[1:2:3:4:5:6:7::]/x\"}",
+        "http://[1:2:3:4:5:6:7::]/x",
+    ),
+    (
+        "http://[::1:2:3:4:5:6:7]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[::1:2:3:4:5:6:7]/x\"}",
+        "http://[::1:2:3:4:5:6:7]/x",
+    ),
+    (
+        "http://[1:2:3:4:5:6:1.2.3.4]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[1:2:3:4:5:6:1.2.3.4]/x\"}",
+        "http://[1:2:3:4:5:6:1.2.3.4]/x",
+    ),
+    (
+        "http://[1:2::1.2.3.4]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[1:2::1.2.3.4]/x\"}",
+        "http://[1:2::1.2.3.4]/x",
+    ),
+    (
+        "http://[::0.0.0.0]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[::0.0.0.0]/x\"}",
+        "http://[::0.0.0.0]/x",
+    ),
+    (
+        "http://[0001::1]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[0001::1]/x\"}",
+        "http://[0001::1]/x",
+    ),
+    (
+        "http://[::1]:80/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[::1]:80/x\"}",
+        "http://[::1]:80/x",
+    ),
 ];
 
 /// Accepted, but `flakeRefToString` fails: (input, attributes, our `Display`, why Nix
@@ -2248,6 +2318,12 @@ pub(super) const ACCEPTED_NIX_CANNOT_RENDER: &[(&str, &str, &str, &str)] = &[
         "{\"rev\":\"blake3-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"type\":\"git\",\"url\":\"https://h/r\"}",
         "git+https://h/r?rev=blake3-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D",
         "experimental Nix feature 'blake3-hashes' is disabled; add '--extra-experimental-features blake3-hashes' to enable it",
+    ),
+    (
+        "http://[v1.a!b:c]/x",
+        "{\"type\":\"tarball\",\"url\":\"http://[v1.a%21b:c]/x\"}",
+        "http://[v1.a%21b:c]/x",
+        "the IPvFuture host re-encodes `!` as `%21`, which Boost.URL then refuses",
     ),
 ];
 
@@ -2745,6 +2821,132 @@ pub(super) const RELATIVE_PATH_FALLBACK: &[(&str, Rejected, &str, &str)] = &[
         Rejected::Malformed,
         "{\"path\":\"https:/h:99999/x\",\"type\":\"path\"}",
         "path:https:/h:99999/x",
+    ),
+    (
+        "http://[1:2:3:4:5:6:7:8:9]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1:2:3:4:5:6:7:8:9]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1:2:3:4:5:6:7:8:9%5D/x",
+    ),
+    (
+        "http://[1::2::3]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1::2::3]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1::2::3%5D/x",
+    ),
+    (
+        "http://[::ffff:1.2.3]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[::ffff:1.2.3]/x\",\"type\":\"path\"}",
+        "path:http:/%5B::ffff:1.2.3%5D/x",
+    ),
+    (
+        "http://[:1]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[:1]/x\",\"type\":\"path\"}",
+        "path:http:/%5B:1%5D/x",
+    ),
+    (
+        "http://[fe79::8115c]/dir",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[fe79::8115c]/dir\",\"type\":\"path\"}",
+        "path:http:/%5Bfe79::8115c%5D/dir",
+    ),
+    (
+        "http://[V1.x]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[V1.x]/x\",\"type\":\"path\"}",
+        "path:http:/%5BV1.x%5D/x",
+    ),
+    (
+        "http://[v.x]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[v.x]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bv.x%5D/x",
+    ),
+    (
+        "http://[v1.]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[v1.]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bv1.%5D/x",
+    ),
+    (
+        "http://[v1x]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[v1x]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bv1x%5D/x",
+    ),
+    (
+        "http://[fe80::1%25]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[fe80::1%25]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bfe80::1%2525%5D/x",
+    ),
+    (
+        "http://[fe80::1%eth0]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[fe80::1%eth0]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bfe80::1%25eth0%5D/x",
+    ),
+    (
+        "http://[fe80::1%25e!x]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[fe80::1%25e!x]/x\",\"type\":\"path\"}",
+        "path:http:/%5Bfe80::1%2525e%21x%5D/x",
+    ),
+    (
+        "http://[1:2:3:4:5:6:7:8::]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1:2:3:4:5:6:7:8::]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1:2:3:4:5:6:7:8::%5D/x",
+    ),
+    (
+        "http://[::1:2:3:4:5:6:7:8]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[::1:2:3:4:5:6:7:8]/x\",\"type\":\"path\"}",
+        "path:http:/%5B::1:2:3:4:5:6:7:8%5D/x",
+    ),
+    (
+        "http://[1:2:3:4:5:6:7:1.2.3.4]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1:2:3:4:5:6:7:1.2.3.4]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1:2:3:4:5:6:7:1.2.3.4%5D/x",
+    ),
+    (
+        "http://[::1.2.3.04]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[::1.2.3.04]/x\",\"type\":\"path\"}",
+        "path:http:/%5B::1.2.3.04%5D/x",
+    ),
+    (
+        "http://[::1.2.3.256]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[::1.2.3.256]/x\",\"type\":\"path\"}",
+        "path:http:/%5B::1.2.3.256%5D/x",
+    ),
+    (
+        "http://[1.2.3.4]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1.2.3.4]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1.2.3.4%5D/x",
+    ),
+    (
+        "http://[00001::1]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[00001::1]/x\",\"type\":\"path\"}",
+        "path:http:/%5B00001::1%5D/x",
+    ),
+    (
+        "http://[1:2:3:4:5::6:7:8]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[1:2:3:4:5::6:7:8]/x\",\"type\":\"path\"}",
+        "path:http:/%5B1:2:3:4:5::6:7:8%5D/x",
+    ),
+    (
+        "http://[::1.2.3.4:5]/x",
+        Rejected::Malformed,
+        "{\"path\":\"http:/[::1.2.3.4:5]/x\",\"type\":\"path\"}",
+        "path:http:/%5B::1.2.3.4:5%5D/x",
     ),
     (
         "p:%s",

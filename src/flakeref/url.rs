@@ -11,8 +11,8 @@ use crate::{
     error::{NixUriError, NixUriResult, UnsupportedReason},
     flakeref::encoding::{
         check_percent_escapes, decode_percent, encode_ip_literal, encode_path_segment,
-        encode_query, encode_unreserved, is_query_char, is_reg_name_char, is_url_path_char,
-        is_userinfo_char,
+        encode_query, encode_unreserved, is_query_char, is_reg_name_char, is_sub_delim,
+        is_unreserved, is_url_path_char, is_userinfo_char,
     },
 };
 
@@ -161,18 +161,12 @@ impl Authority {
         };
         let (host, port) = if let Some(literal) = host_port.strip_prefix('[') {
             let (literal, after) = literal.split_once(']').ok_or_else(invalid)?;
-            let valid = !literal.is_empty()
-                && literal
-                    .chars()
-                    .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.' | 'v' | 'V'));
-            if !valid {
-                return Err(invalid());
-            }
+            let literal = parse_ip_literal(literal)?.ok_or_else(invalid)?;
             let port = match after {
                 "" => None,
                 _ => Some(after.strip_prefix(':').ok_or_else(invalid)?),
             };
-            (Host::Literal(literal.to_string()), port)
+            (Host::Literal(literal), port)
         } else {
             let (host, port) = match host_port.split_once(':') {
                 Some((host, port)) => (host, Some(port)),
@@ -244,6 +238,82 @@ impl Display for Url {
         }
         Ok(())
     }
+}
+
+/// The text between an IP literal's brackets: IPv6, optionally with a zone ID, or
+/// `IPvFuture` (`v1.x`, lower-case `v`). The zone ID is decoded, so `fe80::1%25eth0` is
+/// `fe80::1%eth0`. `None` when it is neither.
+fn parse_ip_literal(literal: &str) -> NixUriResult<Option<String>> {
+    if let Some(future) = literal.strip_prefix('v') {
+        let valid = future.split_once('.').is_some_and(|(version, rest)| {
+            !version.is_empty()
+                && version.chars().all(|c| c.is_ascii_hexdigit())
+                && !rest.is_empty()
+                && rest
+                    .chars()
+                    .all(|c| is_unreserved(c) || is_sub_delim(c) || c == ':')
+        });
+        return Ok(valid.then(|| literal.to_string()));
+    }
+    let (address, zone) = match literal.split_once('%') {
+        Some((address, zone)) => match zone.strip_prefix("25") {
+            Some(zone) if !zone.is_empty() => (address, Some(zone)),
+            _ => return Ok(None),
+        },
+        None => (literal, None),
+    };
+    if !is_ipv6_address(address) {
+        return Ok(None);
+    }
+    match zone {
+        None => Ok(Some(address.to_string())),
+        Some(zone) if zone.chars().all(|c| is_unreserved(c) || c == '%') => {
+            Ok(Some(format!("{address}%{}", decode_percent(zone)?)))
+        }
+        Some(_) => Ok(None),
+    }
+}
+
+/// RFC 3986's `IPv6address`.
+fn is_ipv6_address(address: &str) -> bool {
+    fn groups(part: &str, ipv4_tail: bool) -> Option<usize> {
+        if part.is_empty() {
+            return Some(0);
+        }
+        let pieces: Vec<&str> = part.split(':').collect();
+        let (last, init) = pieces.split_last()?;
+        let h16 = |p: &&str| (1..=4).contains(&p.len()) && p.chars().all(|c| c.is_ascii_hexdigit());
+        if !init.iter().all(h16) {
+            return None;
+        }
+        if h16(last) {
+            Some(pieces.len())
+        } else if ipv4_tail && is_ipv4_address(last) {
+            Some(pieces.len() + 1)
+        } else {
+            None
+        }
+    }
+    match address.split_once("::") {
+        Some((left, right)) => match (groups(left, false), groups(right, true)) {
+            (Some(left), Some(right)) => left + right <= 7,
+            _ => false,
+        },
+        None => groups(address, true) == Some(8),
+    }
+}
+
+/// A dotted IPv4 address whose octets are written without leading zeros.
+fn is_ipv4_address(address: &str) -> bool {
+    let octets: Vec<&str> = address.split('.').collect();
+    octets.len() == 4
+        && octets.iter().all(|octet| {
+            !octet.is_empty()
+                && octet.len() <= 3
+                && octet.chars().all(|c| c.is_ascii_digit())
+                && (octet.len() == 1 || !octet.starts_with('0'))
+                && octet.parse::<u8>().is_ok()
+        })
 }
 
 pub(crate) fn render_segments(segments: &[&str]) -> String {
