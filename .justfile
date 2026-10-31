@@ -23,7 +23,7 @@ deny:
     cargo deny check
 
 cargo-test:
-    cargo test
+    cargo test --all-features
 
 cargo-public-api:
     nix develop .#lintShell --command cargo public-api

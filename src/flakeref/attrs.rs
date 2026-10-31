@@ -1,20 +1,19 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::{NixUriError, NixUriResult, UnsupportedReason};
 
 /// A flake reference as an attribute set: what `builtins.parseFlakeRef` returns, a node
 /// in `flake.lock`, or a registry entry.
 ///
-/// Serialises to the same JSON as those: `{"type": "github", "owner": "NixOS", "repo":
-/// "nixpkgs"}`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// With the `serde` feature it serialises to the same JSON as those: `{"type": "github", "owner": "NixOS", "repo": "nixpkgs"}`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Attrs(BTreeMap<String, AttrValue>);
 
 /// The value of one attribute.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 #[non_exhaustive]
 pub enum AttrValue {
     String(String),
@@ -185,7 +184,45 @@ fn wrong_type(field: &'static str, expected: &str) -> NixUriError {
     }
 }
 
+/// JSON without the `serde` feature, so tests can compare attributes with Nix's output in any build.
 #[cfg(test)]
+impl Attrs {
+    pub(crate) fn to_json(&self) -> String {
+        let object: serde_json::Map<String, serde_json::Value> = self
+            .iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    AttrValue::String(s) => s.as_str().into(),
+                    AttrValue::Int(n) => (*n).into(),
+                    AttrValue::Bool(b) => (*b).into(),
+                };
+                (name.to_string(), value)
+            })
+            .collect();
+        serde_json::Value::Object(object).to_string()
+    }
+
+    pub(crate) fn from_json(json: &str) -> Self {
+        let serde_json::Value::Object(object) = serde_json::from_str(json).unwrap() else {
+            panic!("not a JSON object: {json}");
+        };
+        object
+            .into_iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    serde_json::Value::String(s) => AttrValue::String(s),
+                    serde_json::Value::Number(n) => AttrValue::Int(n.as_u64().unwrap()),
+                    serde_json::Value::Bool(b) => AttrValue::Bool(b),
+                    other => panic!("not an attribute value: {other}"),
+                };
+                (name, value)
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "serde")]
 mod tests {
     use super::*;
 

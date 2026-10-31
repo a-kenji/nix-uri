@@ -335,6 +335,7 @@ proptest! {
     }
 
     /// So does the JSON of a lock file node.
+    #[cfg(feature = "serde")]
     #[test]
     fn json_round_trip(flake_ref in flake_ref_strategy(false)) {
         let json = serde_json::to_string(&flake_ref).unwrap();

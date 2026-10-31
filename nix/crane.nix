@@ -16,6 +16,7 @@ let
       name
       ;
     pname = name;
+    cargoExtraArgs = "--locked --all-features";
   };
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
   mkExample =
@@ -26,7 +27,7 @@ let
         inherit cargoArtifacts;
         pname = "${example}-example-${name}";
         name = "${example}-example-${name}";
-        cargoExtraArgs = "--example ${example}";
+        cargoExtraArgs = "${commonArgs.cargoExtraArgs} --example ${example}";
         doCheck = false;
         meta.mainProgram = example;
       }
@@ -35,7 +36,7 @@ let
     commonArgs
     // {
       inherit cargoArtifacts;
-      cargoClippyExtraArgs = "--all-targets --all-features -- --deny warnings";
+      cargoClippyExtraArgs = "--all-targets -- --deny warnings";
       nativeBuildInputs = [ rust.rustToolchainDevTOML ];
     }
   );

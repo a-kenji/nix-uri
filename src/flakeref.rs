@@ -2,8 +2,6 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
     Context,
     error::{NixUriError, UnsupportedReason},
@@ -41,9 +39,10 @@ pub(crate) mod validators;
 /// [`Display`] is `builtins.flakeRefToString`. Parsing normalises: `github:o/r?ref=main`
 /// renders as `github:o/r/main`, and `nixpkgs` as `flake:nixpkgs`.
 ///
-/// Serialises as its attribute set, the JSON of a `flake.lock` node.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(into = "Attrs", try_from = "Attrs")]
+/// With the `serde` feature it serialises as its attribute set, the JSON of a `flake.lock` node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(into = "Attrs", try_from = "Attrs"))]
 #[non_exhaustive]
 pub struct FlakeRef {
     /// What the reference points to. Reachable through [`Self::kind`] and
@@ -187,10 +186,15 @@ impl FlakeRef {
     /// entry, or the result of `builtins.parseFlakeRef`.
     ///
     /// ```
-    /// # use nix_uri::{Attrs, FlakeRef, NixUriError};
-    /// let attrs: Attrs = serde_json::from_str(
-    ///     r#"{"type": "github", "owner": "NixOS", "repo": "nixpkgs", "lastModified": 1700000000}"#,
-    /// ).unwrap();
+    /// # use nix_uri::{AttrValue, Attrs, FlakeRef, NixUriError};
+    /// let attrs: Attrs = [
+    ///     ("type", AttrValue::from("github")),
+    ///     ("owner", "NixOS".into()),
+    ///     ("repo", "nixpkgs".into()),
+    ///     ("lastModified", 1_700_000_000u64.into()),
+    /// ]
+    /// .into_iter()
+    /// .collect();
     /// let flake_ref = FlakeRef::from_attrs(&attrs)?;
     /// assert_eq!(flake_ref.to_string(), "github:NixOS/nixpkgs");
     /// assert_eq!(flake_ref.to_attrs(), attrs);
@@ -469,7 +473,7 @@ mod from_attrs {
     use crate::{Attrs, FlakeRef, NixUriError, UnsupportedReason};
 
     fn attrs(json: &str) -> Attrs {
-        serde_json::from_str(json).unwrap()
+        Attrs::from_json(json)
     }
 
     #[rstest]
@@ -641,6 +645,7 @@ mod from_attrs {
     }
 
     /// `FlakeRef` serialises as its attributes.
+    #[cfg(feature = "serde")]
     #[test]
     fn serde_is_the_lock_file_shape() {
         let flake_ref: FlakeRef = "github:NixOS/nixpkgs/nixos-25.05?dir=lib".parse().unwrap();

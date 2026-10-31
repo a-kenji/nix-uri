@@ -67,7 +67,7 @@ impl Rejected {
 }
 
 fn attrs_json(flake_ref: &FlakeRef) -> String {
-    serde_json::to_string(&flake_ref.to_attrs()).unwrap()
+    flake_ref.to_attrs().to_json()
 }
 
 fn accepts(input: &str, context: Context, attrs: &str, display: &str) {

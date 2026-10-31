@@ -36,12 +36,16 @@ or use `cargo add`:
 cargo add nix-uri
 ```
 
+### Features
+
+- `serde`: `Serialize` and `Deserialize` for `FlakeRef` and `Attrs`
+
 ## Examples
 Check out the examples directory, for more information, or run an example:
 
 ```markdown
 cargo run --example simple
-cargo run --example cli github:nixos/nixpkgs
+cargo run --example cli --features serde github:nixos/nixpkgs
 ```
 
 ### Example: Parsing `github:nixos/nixpkgs`
