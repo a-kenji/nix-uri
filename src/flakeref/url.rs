@@ -128,6 +128,12 @@ impl Url {
         })
     }
 
+    /// Drop the application from the scheme: `git+https` becomes `https`.
+    pub(crate) fn strip_application(&mut self) {
+        let (_, transport) = split_scheme(&self.scheme);
+        self.scheme = transport.to_string();
+    }
+
     pub(crate) fn non_empty_segments(&self) -> impl Iterator<Item = &str> {
         self.path
             .iter()

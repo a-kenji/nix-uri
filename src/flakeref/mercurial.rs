@@ -40,7 +40,7 @@ impl MercurialRepo {
         let mut hg = Self::new(String::new());
         hg.ref_ = url.query.remove("ref").map(validated_hg_ref).transpose()?;
         hg.rev = url.query.remove("rev");
-        url.scheme = url.scheme.trim_start_matches("hg+").to_string();
+        url.strip_application();
         hg.url = url.to_string();
         Ok(hg)
     }

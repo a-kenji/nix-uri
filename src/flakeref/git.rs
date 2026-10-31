@@ -71,13 +71,7 @@ impl GitRepo {
         git.export_ignore = take("exportIgnore").map(|v| query_bool(&v));
         git.all_refs = take("allRefs").map(|v| query_bool(&v));
         git.verify_commit = take("verifyCommit").map(|v| query_bool(&v));
-        if url.scheme != "git" {
-            url.scheme = url
-                .scheme
-                .strip_prefix("git+")
-                .unwrap_or(&url.scheme)
-                .to_string();
-        }
+        url.strip_application();
         git.url = url.to_string();
         Ok(git)
     }
