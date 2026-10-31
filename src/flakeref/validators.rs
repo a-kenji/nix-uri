@@ -24,7 +24,12 @@ pub(crate) fn is_sha1_hash(s: &str) -> bool {
 
 pub(crate) fn rev_to_base16(rev: &str) -> Option<String> {
     let digest = parse_hash(rev, None).or_else(|| parse_hash(rev, Some(HashAlgo::Sha1)))?;
-    Some(digest.iter().map(|b| format!("{b:02x}")).collect())
+    let mut base16 = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        base16.push(char::from(BASE16_CHARS[usize::from(b >> 4)]));
+        base16.push(char::from(BASE16_CHARS[usize::from(b & 0xf)]));
+    }
+    Some(base16)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,14 +89,26 @@ fn parse_hash(s: &str, default: Option<HashAlgo>) -> Option<Vec<u8>> {
     (bytes.len() == size).then_some(bytes)
 }
 
+const BASE16_CHARS: &[u8; 16] = b"0123456789abcdef";
+
 fn decode_base16(s: &str) -> Option<Vec<u8>> {
-    if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let (pairs, rest) = s.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+    pairs
+        .iter()
+        .map(|&[high, low]| Some((hex_digit(high)? << 4) | hex_digit(low)?))
         .collect()
+}
+
+fn hex_digit(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
 }
 
 const NIX32_CHARS: &[u8] = b"0123456789abcdfghijklmnpqrsvwxyz";
