@@ -34,6 +34,7 @@ pub(crate) fn is_flake_id(s: &str) -> bool {
 }
 
 impl Indirect {
+    #[must_use]
     pub fn new(id: String) -> Self {
         Self {
             id,

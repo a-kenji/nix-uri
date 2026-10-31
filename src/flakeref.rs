@@ -256,6 +256,7 @@ impl FlakeRef {
         Ok(Self::new(kind).with_dir(dir))
     }
 
+    #[must_use]
     pub fn to_attrs(&self) -> Attrs {
         let mut attrs = Attrs::new();
         match &self.kind {
@@ -272,10 +273,12 @@ impl FlakeRef {
     }
 
     /// A flake reference to `kind` at the root of its source tree.
+    #[must_use]
     pub fn new(kind: FlakeRefType) -> Self {
         Self { kind, dir: None }
     }
 
+    #[must_use]
     pub fn kind(&self) -> &FlakeRefType {
         &self.kind
     }
@@ -286,26 +289,31 @@ impl FlakeRef {
     }
 
     /// The subdirectory of the source tree that holds `flake.nix`.
+    #[must_use]
     pub fn dir(&self) -> Option<&str> {
         self.dir.as_deref()
     }
 
     /// The repository name of a git forge, or the second path segment of a git URL
     /// (`host/owner/<repo>`, without `.git`).
+    #[must_use]
     pub fn repo(&self) -> Option<String> {
         self.kind.repo()
     }
 
     /// The owner of a git forge, or the first path segment of a git URL.
+    #[must_use]
     pub fn owner(&self) -> Option<String> {
         self.kind.owner()
     }
 
+    #[must_use]
     pub fn domain(&self) -> Option<String> {
         self.kind.domain()
     }
 
     /// Platform, owner, repository and host of a git-forge reference.
+    #[must_use]
     pub fn forge_identity(&self) -> Option<ForgeIdentity> {
         match &self.kind {
             FlakeRefType::GitForge(forge) => Some(ForgeIdentity {
@@ -319,20 +327,24 @@ impl FlakeRef {
     }
 
     /// The branch or tag name.
+    #[must_use]
     pub fn ref_(&self) -> Option<&str> {
         self.kind.ref_()
     }
 
     /// The revision, as given.
+    #[must_use]
     pub fn rev(&self) -> Option<&str> {
         self.kind.rev()
     }
 
     /// The revision if there is one, the ref otherwise.
+    #[must_use]
     pub fn ref_or_rev(&self) -> Option<&str> {
         self.rev().or_else(|| self.ref_())
     }
 
+    #[must_use]
     pub fn ref_kind(&self) -> RefKind {
         match (self.ref_().is_some(), self.rev().is_some()) {
             (false, false) => RefKind::None,
@@ -342,6 +354,7 @@ impl FlakeRef {
         }
     }
 
+    #[must_use]
     pub fn is_pinned_to_rev(&self) -> bool {
         self.rev().is_some()
     }
@@ -383,6 +396,7 @@ impl FlakeRef {
         Ok(self)
     }
 
+    #[must_use]
     pub fn pin_to_rev(mut self, rev: String) -> Self {
         if let FlakeRefType::GitForge(forge) = &mut self.kind {
             forge.ref_ = None;
@@ -408,6 +422,7 @@ impl FlakeRef {
     }
 
     /// Set or clear the subdirectory.
+    #[must_use]
     pub fn with_dir(mut self, dir: Option<String>) -> Self {
         self.dir = dir.filter(|dir| !dir.is_empty());
         self
