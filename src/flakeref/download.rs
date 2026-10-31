@@ -87,10 +87,9 @@ impl Download {
     }
 
     /// The bare URL with `narHash`.
-    pub(crate) fn render(&self) -> RenderUrl {
-        let mut out = RenderUrl::from_url_string(&self.url, |_| String::new());
-        let nar_hash = self.nar_hash.as_deref().map(render_nar_hash);
-        out.query_opt("narHash", nar_hash.as_deref());
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let mut out = RenderUrl::from_url_string(&self.url, |_| "");
+        out.query_opt("narHash", self.nar_hash.as_deref().map(render_nar_hash));
         out
     }
 }

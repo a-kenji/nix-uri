@@ -81,12 +81,22 @@ pub(crate) fn parse_query(query: &str) -> NixUriResult<BTreeMap<String, String>>
     Ok(pairs)
 }
 
-pub(crate) fn render_query(query: &BTreeMap<String, String>) -> String {
-    query
-        .iter()
-        .map(|(key, value)| format!("{}={}", encode_query(key), encode_query(value)))
-        .collect::<Vec<_>>()
-        .join("&")
+/// `?` and the encoded `key=value` pairs, or nothing when the query is empty.
+pub(crate) struct EncodedQuery<'q, K, V>(pub(crate) &'q BTreeMap<K, V>);
+
+impl<K: AsRef<str>, V: AsRef<str>> Display for EncodedQuery<'_, K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, (key, value)) in self.0.iter().enumerate() {
+            let separator = if i == 0 { '?' } else { '&' };
+            write!(
+                f,
+                "{separator}{}={}",
+                encode_query(key.as_ref()),
+                encode_query(value.as_ref())
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl Url {
@@ -207,9 +217,15 @@ impl Authority {
     }
 
     pub(crate) fn host_str(&self) -> String {
-        match &self.host {
-            Host::Name(name) => encode_unreserved(name).into_owned(),
-            Host::Literal(literal) => format!("[{}]", encode_ip_literal(literal)),
+        self.host.to_string()
+    }
+}
+
+impl Display for Host {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(name) => write!(f, "{}", encode_unreserved(name)),
+            Self::Literal(literal) => write!(f, "[{}]", encode_ip_literal(literal)),
         }
     }
 }
@@ -223,7 +239,7 @@ impl Display for Authority {
             }
             write!(f, "@")?;
         }
-        write!(f, "{}", self.host_str())?;
+        write!(f, "{}", self.host)?;
         if let Some(port) = self.port {
             write!(f, ":{port}")?;
         }
@@ -237,12 +253,12 @@ impl Display for Url {
         if let Some(authority) = &self.authority {
             write!(f, "//{authority}")?;
         }
-        let path: Vec<_> = self.path.iter().map(|s| encode_path_segment(s)).collect();
-        write!(f, "{}", path.join("/"))?;
-        if !self.query.is_empty() {
-            write!(f, "?{}", render_query(&self.query))?;
-        }
-        Ok(())
+        write!(
+            f,
+            "{}{}",
+            EncodedPath(&self.path),
+            EncodedQuery(&self.query)
+        )
     }
 }
 
@@ -322,12 +338,18 @@ fn is_ipv4_address(address: &str) -> bool {
         })
 }
 
-pub(crate) fn render_segments(segments: &[&str]) -> String {
-    segments
-        .iter()
-        .map(|s| encode_path_segment(s))
-        .collect::<Vec<_>>()
-        .join("/")
+pub(crate) struct EncodedPath<'p, S>(pub(crate) &'p [S]);
+
+impl<S: AsRef<str>> Display for EncodedPath<'_, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, segment) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("/")?;
+            }
+            write!(f, "{}", encode_path_segment(segment.as_ref()))?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

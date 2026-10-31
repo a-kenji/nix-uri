@@ -1,10 +1,11 @@
+use std::borrow::Cow;
+
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
         forge::render_rev,
-        url::render_segments,
         validators::{is_sha1_hex, validated_ref_name},
     },
 };
@@ -106,11 +107,10 @@ impl Indirect {
     }
 
     /// `flake:<id>[/<ref>][/<rev>]`. `narHash` is not written.
-    pub(crate) fn render(&self) -> RenderUrl {
-        let rev = self.rev.as_deref().map(render_rev);
-        let mut segments = vec![self.id.as_str()];
-        segments.extend(self.ref_.as_deref());
-        segments.extend(rev.as_deref());
-        RenderUrl::new(format!("flake:{}", render_segments(&segments)))
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let mut segments = vec![Cow::from(&self.id)];
+        segments.extend(self.ref_.as_ref().map(Cow::from));
+        segments.extend(self.rev.as_deref().map(|rev| Cow::from(render_rev(rev))));
+        RenderUrl::from_segments("flake", segments)
     }
 }
