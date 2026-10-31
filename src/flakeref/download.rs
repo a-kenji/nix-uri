@@ -54,9 +54,7 @@ impl Download {
         ] {
             url.query.remove(key);
         }
-        if let Some((_, transport)) = url.scheme.split_once('+') {
-            url.scheme = transport.to_string();
-        }
+        url.strip_application();
         download.url = url.to_string();
         download
     }
