@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
@@ -7,68 +8,50 @@ use crate::{
     error::{NixUriError, UnsupportedReason},
 };
 
+pub(crate) mod attrs;
+pub use attrs::{AttrValue, Attrs};
+mod download;
+pub(crate) use download::DOWNLOAD_TRANSPORTS;
+pub use download::Download;
 pub(crate) mod encoding;
-pub(crate) mod fr_type;
-pub use fr_type::FlakeRefType;
-pub(crate) mod location_params;
-pub(crate) use location_params::LocationParamKeys;
-pub use location_params::LocationParameters;
-mod transport_layer;
-pub use transport_layer::TransportLayer;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
-mod resource_url;
-pub use resource_url::{ResourceType, ResourceUrl};
+pub(crate) mod fr_type;
+pub use fr_type::FlakeRefType;
+mod git;
+pub use git::GitRepo;
+mod indirect;
+pub use indirect::Indirect;
+pub(crate) use indirect::is_flake_id;
+mod mercurial;
+pub(crate) use mercurial::HG_TRANSPORTS;
+pub use mercurial::MercurialRepo;
+mod path_ref;
+pub use path_ref::PathRef;
+pub(crate) use path_ref::nul_in_path;
 #[cfg(test)]
 mod proptest;
+pub(crate) mod url;
 pub(crate) mod validators;
 
-/// Names where a ref or rev is rendered in a `FlakeRef`.
+/// A flake reference.
 ///
-/// `RefLocation` is a routing tag, not a presence flag: a `FlakeRef` whose
-/// kind has no ref and no rev still carries a `RefLocation` saying where one
-/// *would* be written if it were set. The "no ref or rev" state is encoded by
-/// `ref_ == None && rev == None` on the kind, so a `RefLocation::None`
-/// variant would be redundant and is therefore unrepresentable.
+/// The fields are Nix's attributes ([`Self::to_attrs`] is `builtins.parseFlakeRef`), and
+/// [`Display`] is `builtins.flakeRefToString`. Parsing normalises: `github:o/r?ref=main`
+/// renders as `github:o/r/main`, and `nixpkgs` as `flake:nixpkgs`.
 ///
-/// `Default` is `PathComponent` because that is the canonical form for the
-/// ref-bearing kinds (`GitForge`, `Indirect`); the parser flips this to
-/// `QueryParameter` when the value arrived via `?ref=` / `?rev=`, preserving
-/// the round-trip shape.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum RefLocation {
-    /// Rendered in the path component, e.g. `github:owner/repo/<value>`.
-    #[default]
-    PathComponent,
-    /// Rendered as a query parameter, e.g. `?ref=<value>` or `?rev=<value>`.
-    QueryParameter,
-}
-
-/// The General Flake Ref Schema
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, serde(deny_unknown_fields))]
+/// Serialises as its attribute set, the JSON of a `flake.lock` node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "Attrs", try_from = "Attrs")]
 #[non_exhaustive]
 pub struct FlakeRef {
-    /// The shape of the URL: a git forge, a resource (`git+https://...`,
-    /// `tarball+https://...`, ...), an indirect (registry) ref, or a path.
-    /// Reachable through [`Self::kind`] and the consuming [`Self::with_kind`]
-    /// builder; private so the public surface stays consistent with
-    /// `fragment` and `params`, which only expose accessors.
+    /// What the reference points to. Reachable through [`Self::kind`] and
+    /// [`Self::kind_mut`].
     pub(crate) kind: FlakeRefType,
-    fragment: Option<String>,
-    params: Box<LocationParameters>,
+    dir: Option<String>,
 }
 
 /// Identity of a git-forge flake ref: `(platform, owner, repo, domain)`.
-///
-/// Returned by [`FlakeRef::forge_identity`] for kinds that resolve to a
-/// git forge (`GitForge` always; `Resource(Git)` does not; its
-/// owner/repo/domain are extracted ad-hoc from a URL string and not
-/// guaranteed to be present, so it returns `None` for `forge_identity`).
-///
-/// `#[non_exhaustive]` reserves room for future fields without breaking
-/// downstream match arms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ForgeIdentity {
@@ -78,175 +61,250 @@ pub struct ForgeIdentity {
     pub domain: String,
 }
 
-/// Discriminates the four ref/rev presence states without forcing callers
-/// to read both [`FlakeRef::ref_`] and [`FlakeRef::rev`] and reason about
-/// the cross product.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RefKind {
-    /// Neither `ref_` nor `rev` is set.
     None,
-    /// Only `ref_` is set (a branch or tag name, not a 40-hex commit hash).
     Ref,
-    /// Only `rev` is set (pinned to a 40-hex commit hash).
     Rev,
-    /// Both `ref_` and `rev` are set (canonical Nix's three-segment Indirect
-    /// form, `flake:id/ref/rev`).
     Both,
 }
 
-impl FlakeRef {
-    /// Parse `input` as a flake reference in `context`.
-    ///
-    /// The [`FromStr`](std::str::FromStr) and `TryFrom<&str>` impls parse
-    /// with [`Context::default`] ([`Context::FlakeInput`]).
-    ///
-    /// ```
-    /// # use nix_uri::{Context, FlakeRef, NixUriError};
-    /// let installable = FlakeRef::parse("github:NixOS/nixpkgs#hello", Context::Installable)?;
-    /// assert_eq!(installable.fragment(), Some("hello"));
-    ///
-    /// // `builtins.parseFlakeRef` rejects both fragments and relative paths.
-    /// assert!(FlakeRef::parse("github:NixOS/nixpkgs#hello", Context::Standalone).is_err());
-    /// assert!(FlakeRef::parse("./foo", Context::Standalone).is_err());
-    /// assert!(FlakeRef::parse("./foo", Context::FlakeInput).is_ok());
-    /// # Ok::<(), NixUriError>(())
-    /// ```
-    pub fn parse(input: &str, context: Context) -> Result<Self, NixUriError> {
-        crate::parser::parse_nix_uri(input, context)
-    }
+#[derive(Debug)]
+pub(crate) struct RenderUrl {
+    base: String,
+    query: BTreeMap<String, String>,
+}
 
-    /// Construct a `FlakeRef` around `kind` with no fragment and an empty
-    /// [`LocationParameters`] block. Use the consuming `with_*` builders or
-    /// the `set_*` mutators to fill in the rest.
-    pub fn new(kind: FlakeRefType) -> Self {
+impl RenderUrl {
+    pub(crate) fn new(base: String) -> Self {
         Self {
-            kind,
-            ..Self::default()
+            base,
+            query: BTreeMap::new(),
         }
     }
 
-    /// Read access to the kind. Pattern-matching consumers go through
-    /// this accessor rather than the (private) field directly.
+    pub(crate) fn from_url_string(url: &str, prefix: impl Fn(&str) -> String) -> Self {
+        match url::Url::parse(url) {
+            Ok(mut parsed) => {
+                let query = std::mem::take(&mut parsed.query);
+                Self {
+                    base: format!("{}{parsed}", prefix(&parsed.scheme)),
+                    query,
+                }
+            }
+            Err(_) => Self::new(format!(
+                "{}{url}",
+                prefix(url::scheme_of(url).unwrap_or_default())
+            )),
+        }
+    }
+
+    pub(crate) fn query_opt(&mut self, key: &str, value: Option<&str>) {
+        if let Some(value) = value {
+            self.query.insert(key.to_string(), value.to_string());
+        }
+    }
+}
+
+impl Display for RenderUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.base)?;
+        if !self.query.is_empty() {
+            write!(f, "?{}", url::render_query(&self.query))?;
+        }
+        Ok(())
+    }
+}
+
+impl FlakeRef {
+    /// Parse `input` as a flake reference in `context`, as `builtins.parseFlakeRef`
+    /// ([`Context::Standalone`]) or a flake input ([`Context::FlakeInput`]) does.
+    ///
+    /// ```
+    /// # use nix_uri::{Context, FlakeRef, NixUriError};
+    /// let flake_ref = FlakeRef::parse("github:NixOS/nixpkgs?ref=nixos-25.05", Context::Standalone)?;
+    /// assert_eq!(flake_ref.to_string(), "github:NixOS/nixpkgs/nixos-25.05");
+    ///
+    /// // Only a flake input keeps a relative path.
+    /// assert!(FlakeRef::parse("./foo", Context::Standalone).is_err());
+    /// assert_eq!(FlakeRef::parse("./foo", Context::FlakeInput)?.to_string(), "path:./foo");
+    /// # Ok::<(), NixUriError>(())
+    /// ```
+    pub fn parse(input: &str, context: Context) -> Result<Self, NixUriError> {
+        let (flake_ref, fragment) = crate::parser::parse_nix_uri(input, context)?;
+        match fragment {
+            Some(fragment) => Err(NixUriError::Unsupported(UnsupportedReason::Fragment {
+                fragment,
+            })),
+            None => Ok(flake_ref),
+        }
+    }
+
+    /// Parse `<flake reference>#<attribute path>`, Nix's `parseFlakeRefWithFragment`: the
+    /// rules of [`Context::FlakeInput`], plus a percent-decoded fragment. An empty
+    /// fragment is `None`.
+    ///
+    /// ```
+    /// # use nix_uri::{FlakeRef, NixUriError};
+    /// let (flake_ref, fragment) = FlakeRef::parse_with_fragment("nixpkgs#hello")?;
+    /// assert_eq!(flake_ref.to_string(), "flake:nixpkgs");
+    /// assert_eq!(fragment.as_deref(), Some("hello"));
+    /// # Ok::<(), NixUriError>(())
+    /// ```
+    pub fn parse_with_fragment(input: &str) -> Result<(Self, Option<String>), NixUriError> {
+        crate::parser::parse_nix_uri(input, Context::FlakeInput)
+    }
+
+    /// Build a flake reference from its attributes: a node of `flake.lock`, a registry
+    /// entry, or the result of `builtins.parseFlakeRef`.
+    ///
+    /// ```
+    /// # use nix_uri::{Attrs, FlakeRef, NixUriError};
+    /// let attrs: Attrs = serde_json::from_str(
+    ///     r#"{"type": "github", "owner": "NixOS", "repo": "nixpkgs", "lastModified": 1700000000}"#,
+    /// ).unwrap();
+    /// let flake_ref = FlakeRef::from_attrs(&attrs)?;
+    /// assert_eq!(flake_ref.to_string(), "github:NixOS/nixpkgs");
+    /// assert_eq!(flake_ref.to_attrs(), attrs);
+    /// # Ok::<(), NixUriError>(())
+    /// ```
+    pub fn from_attrs(attrs: &Attrs) -> Result<Self, NixUriError> {
+        let ty = match attrs.get("type") {
+            Some(AttrValue::String(ty)) => ty.as_str(),
+            Some(_) => {
+                return Err(NixUriError::InvalidValue {
+                    field: "type",
+                    reason: "expected a string".to_string(),
+                });
+            }
+            None => {
+                return Err(NixUriError::Unsupported(
+                    UnsupportedReason::MissingParameter {
+                        ty: "flake reference".to_string(),
+                        parameter: "type".to_string(),
+                    },
+                ));
+            }
+        };
+        let forge = GitForgePlatform::from_type(ty);
+        let kind = match ty {
+            _ if let Some(platform) = forge => FlakeRefType::GitForge(GitForge::from_attrs(
+                platform,
+                attrs::AttrReader::new(platform.as_str(), attrs),
+            )?),
+            "git" => FlakeRefType::Git(GitRepo::from_attrs(attrs::AttrReader::new("git", attrs))?),
+            "hg" => FlakeRefType::Mercurial(MercurialRepo::from_attrs(attrs::AttrReader::new(
+                "hg", attrs,
+            ))?),
+            "tarball" => FlakeRefType::Tarball(Download::from_attrs(attrs::AttrReader::new(
+                "tarball", attrs,
+            ))?),
+            "file" => {
+                FlakeRefType::File(Download::from_attrs(attrs::AttrReader::new("file", attrs))?)
+            }
+            "path" => {
+                FlakeRefType::Path(PathRef::from_attrs(attrs::AttrReader::new("path", attrs))?)
+            }
+            "indirect" => FlakeRefType::Indirect(Indirect::from_attrs(attrs::AttrReader::new(
+                "indirect", attrs,
+            ))?),
+            _ => {
+                return Err(NixUriError::Unsupported(UnsupportedReason::UriType {
+                    ty: ty.to_string(),
+                }));
+            }
+        };
+        let dir = match attrs.get("dir") {
+            None => None,
+            Some(AttrValue::String(dir)) => Some(dir.clone()),
+            Some(_) => {
+                return Err(NixUriError::InvalidValue {
+                    field: "dir",
+                    reason: "expected a string".to_string(),
+                });
+            }
+        };
+        Ok(Self::new(kind).with_dir(dir))
+    }
+
+    pub fn to_attrs(&self) -> Attrs {
+        let mut attrs = Attrs::new();
+        match &self.kind {
+            FlakeRefType::GitForge(forge) => forge.write_attrs(&mut attrs),
+            FlakeRefType::Git(git) => git.write_attrs(&mut attrs),
+            FlakeRefType::Mercurial(hg) => hg.write_attrs(&mut attrs),
+            FlakeRefType::Tarball(download) => download.write_attrs("tarball", &mut attrs),
+            FlakeRefType::File(download) => download.write_attrs("file", &mut attrs),
+            FlakeRefType::Path(path) => path.write_attrs(&mut attrs),
+            FlakeRefType::Indirect(indirect) => indirect.write_attrs(&mut attrs),
+        }
+        attrs.set_opt("dir", self.dir.as_ref());
+        attrs
+    }
+
+    /// A flake reference to `kind` at the root of its source tree.
+    pub fn new(kind: FlakeRefType) -> Self {
+        Self { kind, dir: None }
+    }
+
     pub fn kind(&self) -> &FlakeRefType {
         &self.kind
     }
 
-    /// Mutable access to the kind for in-place edits. The consuming
-    /// [`Self::with_kind`] builder is the right tool when chaining;
-    /// reach for `kind_mut` only when you must rewrite a field on a
-    /// borrowed `FlakeRef`.
+    /// Mutable access to `kind`, to edit its fields in place.
     pub fn kind_mut(&mut self) -> &mut FlakeRefType {
         &mut self.kind
     }
 
-    /// The repo identifier for the kind (`repo` for `GitForge`, the trailing
-    /// path segment of a `Resource(Git)` URL); `None` otherwise.
-    pub fn id(&self) -> Option<&str> {
-        self.kind().id()
+    /// The subdirectory of the source tree that holds `flake.nix`.
+    pub fn dir(&self) -> Option<&str> {
+        self.dir.as_deref()
     }
 
-    /// Owner (organisation/user) for the kind, when applicable. Returns
-    /// `Some` for `GitForge` and for `Resource(Git)` URLs that look like
-    /// `domain/owner/repo`; `None` for `Path`, `Indirect`, and other
-    /// resources.
-    pub fn owner(&self) -> Option<&str> {
-        self.kind().owner()
+    /// The repository name of a git forge, or the second path segment of a git URL
+    /// (`host/owner/<repo>`, without `.git`).
+    pub fn repo(&self) -> Option<String> {
+        self.kind.repo()
     }
 
-    /// Repository name for the kind, when applicable. See [`Self::owner`]
-    /// for the kinds that produce `Some`.
-    pub fn repo(&self) -> Option<&str> {
-        self.kind().repo()
+    /// The owner of a git forge, or the first path segment of a git URL.
+    pub fn owner(&self) -> Option<String> {
+        self.kind.owner()
     }
 
-    /// Domain (host) for the kind, when applicable. Returns the canonical
-    /// host string for git-forge platforms (`github.com`, `gitlab.com`,
-    /// `git.sr.ht`) -- or the `?host=` override for self-hosted instances
-    /// -- and the host portion of a `Resource(Git)` URL (with `:port`
-    /// retained when the port is non-default for the scheme); `None`
-    /// otherwise.
-    ///
-    /// Matches Nix's per-scheme host resolution: the `host` attr
-    /// defaults to the canonical domain.
-    pub fn domain(&self) -> Option<&str> {
-        if matches!(self.kind(), FlakeRefType::GitForge(_))
-            && let Some(host) = self.params.host_value()
-        {
-            return Some(host);
-        }
-        self.kind().domain()
+    pub fn domain(&self) -> Option<String> {
+        self.kind.domain()
     }
 
-    /// Bundled identity for git-forge kinds. Returns `Some` only for
-    /// [`FlakeRefType::GitForge`]; `Resource(Git)` URLs do not have a
-    /// guaranteed-parseable owner/repo/domain triple, and `Path` /
-    /// `Indirect` have no identity at all.
-    ///
-    /// Honours the `?host=` override (matching Nix's per-scheme host
-    /// resolution); falls back to the platform's canonical domain when
-    /// no override is set. The `SourceHut` canonical default stays
-    /// `git.sr.ht` rather than the apex `sr.ht`, which does not serve
-    /// git over HTTPS.
+    /// Platform, owner, repository and host of a git-forge reference.
     pub fn forge_identity(&self) -> Option<ForgeIdentity> {
-        match self.kind() {
-            FlakeRefType::GitForge(forge) => {
-                let canonical = match forge.platform {
-                    GitForgePlatform::GitHub => "github.com",
-                    GitForgePlatform::GitLab => "gitlab.com",
-                    GitForgePlatform::SourceHut => "git.sr.ht",
-                };
-                let domain = self
-                    .params
-                    .host_value()
-                    .map_or_else(|| canonical.to_string(), str::to_owned);
-                Some(ForgeIdentity {
-                    platform: forge.platform.clone(),
-                    owner: forge.owner.clone(),
-                    repo: forge.repo.clone(),
-                    domain,
-                })
-            }
+        match &self.kind {
+            FlakeRefType::GitForge(forge) => Some(ForgeIdentity {
+                platform: forge.platform,
+                owner: forge.owner.clone(),
+                repo: forge.repo.clone(),
+                domain: self.kind.domain()?,
+            }),
             _ => None,
         }
     }
 
-    /// The `ref_` (branch or tag name) for kinds that carry one, borrowed.
+    /// The branch or tag name.
     pub fn ref_(&self) -> Option<&str> {
-        match self.kind() {
-            FlakeRefType::GitForge(GitForge { ref_, .. }) | FlakeRefType::Indirect { ref_, .. } => {
-                ref_.as_deref()
-            }
-            FlakeRefType::Resource(res) => res.ref_.as_deref(),
-            FlakeRefType::Path { .. } => None,
-        }
+        self.kind.ref_()
     }
 
-    /// The `rev` (40-hex commit hash) for kinds that carry one, borrowed.
+    /// The revision, as given.
     pub fn rev(&self) -> Option<&str> {
-        match self.kind() {
-            FlakeRefType::GitForge(GitForge { rev, .. })
-            | FlakeRefType::Indirect { rev, .. }
-            | FlakeRefType::Path { rev, .. } => rev.as_deref(),
-            FlakeRefType::Resource(res) => res.rev.as_deref(),
-        }
+        self.kind.rev()
     }
 
-    /// Whichever of `rev` / `ref_` is set, preferring `rev` when pinned;
-    /// the typical "what does this ref resolve to?" answer. Returns
-    /// borrowed `&str`; callers wanting an owned `String` use
-    /// `.map(str::to_owned)`.
+    /// The revision if there is one, the ref otherwise.
     pub fn ref_or_rev(&self) -> Option<&str> {
-        if self.is_pinned_to_rev() {
-            self.rev()
-        } else {
-            self.ref_().or_else(|| self.rev())
-        }
+        self.rev().or_else(|| self.ref_())
     }
 
-    /// Discriminates which of `ref_` / `rev` are populated; useful when the
-    /// caller needs to switch on the four-way combination without writing
-    /// nested `Option` matches.
     pub fn ref_kind(&self) -> RefKind {
         match (self.ref_().is_some(), self.rev().is_some()) {
             (false, false) => RefKind::None,
@@ -256,434 +314,105 @@ impl FlakeRef {
         }
     }
 
-    /// `true` when the kind has a `rev` set (canonical Nix's "pinned to a
-    /// commit"). False for refs-by-name and for kinds that don't carry
-    /// rev at all.
     pub fn is_pinned_to_rev(&self) -> bool {
-        matches!(
-            self.kind(),
+        self.rev().is_some()
+    }
+
+    /// Set or clear the branch or tag name.
+    pub fn with_ref(mut self, new_ref: Option<String>) -> Result<Self, NixUriError> {
+        let Some(new_ref) = new_ref else {
+            if let Some(slot) = self.kind.ref_slot() {
+                *slot = None;
+            }
+            return Ok(self);
+        };
+        let new_ref = match &self.kind {
+            FlakeRefType::Mercurial(_) if !validators::matches_ref_shape(&new_ref) => {
+                return Err(NixUriError::InvalidValue {
+                    field: "ref",
+                    reason: "expected a Mercurial branch or tag name".to_string(),
+                });
+            }
+            FlakeRefType::Mercurial(_) => new_ref,
+            _ => validators::validated_ref_name(&new_ref)?,
+        };
+        if matches!(
+            &self.kind,
             FlakeRefType::GitForge(GitForge { rev: Some(_), .. })
-                | FlakeRefType::Indirect { rev: Some(_), .. }
-                | FlakeRefType::Path { rev: Some(_), .. }
-        ) || matches!(
-            self.kind(),
-            FlakeRefType::Resource(res) if res.rev.is_some()
-        )
-    }
-
-    /// Where the kind's ref/rev is rendered. Reads the kind's [`RefLocation`]
-    /// directly; `Path` is fixed at `QueryParameter` because its rev has no
-    /// path-component spelling in Nix's grammar.
-    pub fn ref_source_location(&self) -> RefLocation {
-        match self.kind() {
-            FlakeRefType::GitForge(forge) => forge.location,
-            FlakeRefType::Indirect { location, .. } => *location,
-            FlakeRefType::Resource(res) => res.ref_location,
-            FlakeRefType::Path { .. } => RefLocation::QueryParameter,
+        ) {
+            return Err(NixUriError::FieldConflict {
+                left: "ref",
+                right: "rev",
+            });
         }
-    }
-
-    /// Read-only access to the query-string parameters.
-    pub fn params(&self) -> &LocationParameters {
-        &self.params
-    }
-
-    /// Trailing `#fragment` retained verbatim. Nix uses fragments to select
-    /// an attribute path inside a flake (e.g. `github:nixos/nixpkgs#hello`);
-    /// the raw string is preserved without interpretation.
-    pub fn fragment(&self) -> Option<&str> {
-        self.fragment.as_deref()
-    }
-
-    /// Write `new_ref` into the kind's typed `ref_` slot. Silently no-op for
-    /// kinds that do not carry ref/rev. For [`FlakeRefType::Resource`],
-    /// writing a non-`None` value also flips `ref_location` to
-    /// [`RefLocation::QueryParameter`]; Resource has no path-component
-    /// ref/rev representation, so leaving it as `PathComponent` would cause
-    /// `Display` to drop the value silently.
-    pub fn set_ref(&mut self, new_ref: Option<String>) {
-        let writing_some = new_ref.is_some();
-        self.kind_mut().set_ref(new_ref);
-        if writing_some && matches!(self.kind(), FlakeRefType::Resource(_)) {
-            self.kind_mut()
-                .set_ref_location(RefLocation::QueryParameter);
-        }
-    }
-
-    /// Write `new_rev` into the kind's typed `rev` slot. See [`Self::set_ref`]
-    /// for the Resource `ref_location` flip rationale.
-    pub fn set_rev(&mut self, new_rev: Option<String>) {
-        let writing_some = new_rev.is_some();
-        self.kind_mut().set_rev(new_rev);
-        if writing_some && matches!(self.kind(), FlakeRefType::Resource(_)) {
-            self.kind_mut()
-                .set_ref_location(RefLocation::QueryParameter);
-        }
-    }
-
-    /// Write `fragment` (the `#suffix`) into the typed slot.
-    pub fn set_fragment(&mut self, fragment: Option<String>) {
-        self.fragment = fragment;
-    }
-
-    /// Set [`RefLocation`] on the kind's `ref_location` slot. Renamed from
-    /// `set_location`, which was easy to misread as "modify the URL
-    /// location string"; this method writes the routing tag that controls
-    /// whether ref/rev render as `?ref=` or as a path component.
-    pub fn set_ref_location(&mut self, loc: RefLocation) {
-        self.kind_mut().set_ref_location(loc);
-    }
-
-    /// Typed mutator for the `dir` query parameter.
-    pub fn set_dir(&mut self, dir: Option<String>) {
-        self.params.set_dir(dir);
-    }
-
-    /// Typed mutator for the `host` query parameter.
-    pub fn set_host(&mut self, host: Option<String>) {
-        self.params.set_host(host);
-    }
-
-    /// Typed mutator for the `shallow` query parameter. `true` enables a
-    /// shallow clone (mapped to `?shallow=1` on Display); `false` writes
-    /// `?shallow=0`. Pass through [`LocationParameters::set_shallow`] to
-    /// clear the slot entirely.
-    pub fn set_shallow(&mut self, shallow: bool) {
-        self.params.set_shallow(Some(shallow));
-    }
-
-    /// Typed mutator for the `submodules` query parameter; behaves like
-    /// [`Self::set_shallow`].
-    pub fn set_submodules(&mut self, submodules: bool) {
-        self.params.set_submodules(Some(submodules));
-    }
-
-    /// Typed mutator for the `narHash` query parameter.
-    pub fn set_nar_hash(&mut self, hash: Option<String>) {
-        self.params.set_nar_hash(hash);
-    }
-
-    /// Typed mutator for the `lastModified` query parameter.
-    pub fn set_last_modified(&mut self, ts: Option<String>) {
-        self.params.set_last_modified(ts);
-    }
-
-    /// Typed mutator for the `revCount` query parameter.
-    pub fn set_rev_count(&mut self, count: Option<String>) {
-        self.params.set_rev_count(count);
-    }
-
-    /// Internal helper: replace the entire [`LocationParameters`] block.
-    /// Kept `pub(crate)` because batch replacement is an initialisation
-    /// pattern (the parser builds a fresh `LocationParameters` then
-    /// installs it); public consumers should reach for the typed
-    /// `set_*` mutators instead.
-    pub(crate) fn replace_params(&mut self, params: LocationParameters) {
-        *self.params = params;
-    }
-
-    /// Consuming builder variant of [`Self::set_ref`]. Silently no-ops
-    /// on kinds without a `ref_` slot ([`FlakeRefType::Path`]); see
-    /// [`Self::try_with_ref`] for the loud opt-in alternative that
-    /// surfaces a typed error instead.
-    pub fn with_ref(mut self, r: Option<String>) -> Self {
-        self.set_ref(r);
-        self
-    }
-
-    /// Consuming builder variant of [`Self::set_rev`]. See
-    /// [`Self::try_with_rev`] for the fallible variant kept for API
-    /// symmetry with [`Self::try_with_ref`].
-    pub fn with_rev(mut self, r: Option<String>) -> Self {
-        self.set_rev(r);
-        self
-    }
-
-    /// Fallible variant of [`Self::with_ref`]: returns
-    /// [`NixUriError::Unsupported`] when the kind cannot carry a ref per
-    /// Nix's per-scheme attribute rules.
-    ///
-    /// Surfaces [`UnsupportedReason::Field`] for kinds outside the
-    /// ref-bearing set ([`FlakeRefType::Path`], [`ResourceType::File`]
-    /// and [`ResourceType::Tarball`]). Setting a ref on these kinds via
-    /// [`Self::with_ref`] is a silent no-op (Path) or renders a string
-    /// the parser would reject (File/Tarball, breaking the round-trip
-    /// invariant); `try_with_ref` lets callers diagnose the mismatch at
-    /// the call site.
-    ///
-    /// `try_with_ref(None)` is always `Ok`: clearing has no Nix-level
-    /// implications.
-    pub fn try_with_ref(self, new_ref: Option<String>) -> Result<Self, NixUriError> {
-        if new_ref.is_some() && !self.kind().allows_ref() {
+        let Some(slot) = self.kind.ref_slot() else {
             return Err(NixUriError::Unsupported(UnsupportedReason::Field {
                 field: "ref".into(),
-                only_supported_by: "github, gitlab, sourcehut, flake (indirect), git+, hg+".into(),
+                only_supported_by: "github, gitlab, sourcehut, git, hg, indirect".into(),
             }));
-        }
-        Ok(self.with_ref(new_ref))
+        };
+        *slot = Some(new_ref);
+        Ok(self)
     }
 
-    /// Fallible variant of [`Self::with_rev`]. All current kinds permit
-    /// rev per Nix's per-scheme attribute rules, so this method always
-    /// returns `Ok`. It exists for API symmetry with
-    /// [`Self::try_with_ref`] so callers can write the same
-    /// fallible-builder shape regardless of which slot they are
-    /// writing.
-    pub fn try_with_rev(self, new_rev: Option<String>) -> Result<Self, NixUriError> {
-        Ok(self.with_rev(new_rev))
-    }
-
-    /// Consuming builder variant of [`Self::set_fragment`].
-    pub fn with_fragment(mut self, fragment: Option<String>) -> Self {
-        self.set_fragment(fragment);
-        self
-    }
-
-    /// Consuming builder that sets the kind in a chain.
-    pub fn with_kind(mut self, kind: FlakeRefType) -> Self {
-        *self.kind_mut() = kind;
-        self
-    }
-
-    /// Consuming builder that installs a fresh [`LocationParameters`] block.
-    /// For incremental edits, use the typed `set_*` mutators instead.
-    pub fn with_params(mut self, params: LocationParameters) -> Self {
-        self.params = Box::new(params);
-        self
-    }
-
-    /// Clear the `rev` slot (the "pin"); leaves `ref_` alone. Useful when
-    /// the caller wants the named branch/tag rather than a specific
-    /// commit.
-    pub fn without_pin(mut self) -> Self {
-        self.set_rev(None);
-        self
-    }
-
-    /// Pin to a specific commit, clearing any pre-existing `ref_` first.
-    ///
-    /// `with_rev(Some(rev))` writes only the `rev` slot, leaving any
-    /// `ref_` already on the kind in place. The `GitForge` Display arm
-    /// renders `ref_.or(rev)` when [`RefLocation::PathComponent`] is
-    /// active, so a `ref_`-bearing forge URL with a freshly written
-    /// `rev` round-trips back to the named ref and silently drops the
-    /// pinned commit. `pin_to_rev` is the atomic builder that performs
-    /// the clear-ref-then-set-rev sequence callers want.
-    ///
-    /// For kinds without a `ref_` slot ([`FlakeRefType::Path`]), this
-    /// only writes the `rev`; there is no ref to clear.
     pub fn pin_to_rev(mut self, rev: String) -> Self {
-        self.set_ref(None);
-        self.set_rev(Some(rev));
+        if let FlakeRefType::GitForge(forge) = &mut self.kind {
+            forge.ref_ = None;
+        }
+        *self.kind.rev_slot() = Some(rev);
         self
     }
 
-    /// Consume and render to a `String`; the same output as `to_string`
-    /// but without an intermediate clone when the caller already owns
-    /// `self`.
-    pub fn into_uri(self) -> String {
-        self.to_string()
+    pub fn with_rev(mut self, rev: Option<String>) -> Result<Self, NixUriError> {
+        if rev.is_some()
+            && matches!(
+                &self.kind,
+                FlakeRefType::GitForge(GitForge { ref_: Some(_), .. })
+            )
+        {
+            return Err(NixUriError::FieldConflict {
+                left: "ref",
+                right: "rev",
+            });
+        }
+        *self.kind.rev_slot() = rev;
+        Ok(self)
     }
 
-    /// Canonical wire form of this `FlakeRef`, matching the URL Nix
-    /// would emit for the same input.
-    ///
-    /// Pairs with [`Display`] (and the equivalent [`Self::into_uri`]),
-    /// which preserves the input verbatim for byte-stable round-trips.
-    /// `to_canonical_string` instead emits the form Nix would produce,
-    /// normalising every shape that Nix collapses on the way out:
-    ///
-    /// - `GitForge` (`github:` / `gitlab:` / `sourcehut:`): renders as
-    ///   `<scheme>:<owner>/<repo>[/<ref-or-rev>]` regardless of where
-    ///   the parsed value came from. `rev` wins over `ref_` when both
-    ///   are populated, matching Nix's behaviour (Nix asserts that ref
-    ///   and rev are never both set on a git-archive URL, so the
-    ///   both-set case is nonsensical for consumers). The query carries
-    ///   only `host` and `narHash` when set.
-    /// - `Resource(Git)`: emits `ref` and `rev` always when set, and
-    ///   the typed booleans (`shallow`, `lfs`, `submodules`,
-    ///   `exportIgnore`, `verifyCommit`) only for the truthy branch.
-    ///   `allRefs` is never emitted because Nix's git scheme does not
-    ///   include it on canonical output. `narHash`, `lastModified`,
-    ///   `revCount`, `dir`, `host`, and arbitrary keys are dropped.
-    /// - `Resource(Mercurial)`: emits only `ref` and `rev`.
-    /// - `Indirect`, `Path`, `Resource(File)`, `Resource(Tarball)`:
-    ///   delegated to `Display`; their existing form already matches
-    ///   Nix byte-for-byte.
-    ///
-    /// Use this when handing a string to a Nix consumer that expects
-    /// the canonical spelling; reach for `Display` / [`Self::into_uri`]
-    /// when round-tripping a user-supplied URL byte-for-byte.
-    pub fn to_canonical_string(&self) -> String {
-        use std::fmt::Write;
-
-        let mut out = String::new();
-
-        match self.kind() {
-            FlakeRefType::GitForge(forge) => {
-                let owner_out = encoding::encode_path_segment(&forge.owner);
-                write!(&mut out, "{}:{}/{}", forge.platform, owner_out, forge.repo).unwrap();
-                // ref/rev always render in the path tail. `rev` wins
-                // when both happen to be populated (Nix asserts they
-                // cannot coexist on a git-archive URL; we still pick a
-                // deterministic answer rather than silently dropping
-                // one).
-                if let Some(value) = forge.rev.as_deref().or(forge.ref_.as_deref()) {
-                    write!(&mut out, "/{value}").unwrap();
-                }
-                let mut entries: Vec<(&str, &str)> = Vec::new();
-                if let Some(host) = self.params.host_value() {
-                    entries.push(("host", host));
-                }
-                if let Some(nar) = self.params.nar_hash_value() {
-                    entries.push(("narHash", nar));
-                }
-                entries.sort_by(|a, b| a.0.cmp(b.0));
-                write_canonical_query(&mut out, &entries);
-            }
-            FlakeRefType::Resource(res) if matches!(res.res_type, ResourceType::Git) => {
-                write_resource_base(&mut out, res);
-                let mut entries: Vec<(&str, &str)> = Vec::new();
-                if let Some(r) = res.ref_.as_deref() {
-                    entries.push(("ref", r));
-                }
-                if let Some(v) = res.rev.as_deref() {
-                    entries.push(("rev", v));
-                }
-                if self.params.shallow_truthy() {
-                    entries.push(("shallow", "1"));
-                }
-                if self.params.lfs == Some(true) {
-                    entries.push(("lfs", "1"));
-                }
-                if self.params.submodules_truthy() {
-                    entries.push(("submodules", "1"));
-                }
-                if self.params.export_ignore == Some(true) {
-                    entries.push(("exportIgnore", "1"));
-                }
-                if self.params.verify_commit == Some(true) {
-                    entries.push(("verifyCommit", "1"));
-                }
-                if let Some(kt) = self.params.keytype.as_deref() {
-                    entries.push(("keytype", kt));
-                }
-                if let Some(pk) = self.params.public_key.as_deref() {
-                    entries.push(("publicKey", pk));
-                }
-                if let Some(pks) = self.params.public_keys.as_deref() {
-                    entries.push(("publicKeys", pks));
-                }
-                entries.sort_by(|a, b| a.0.cmp(b.0));
-                write_canonical_query(&mut out, &entries);
-            }
-            FlakeRefType::Resource(res) if matches!(res.res_type, ResourceType::Mercurial) => {
-                write_resource_base(&mut out, res);
-                let mut entries: Vec<(&str, &str)> = Vec::new();
-                if let Some(r) = res.ref_.as_deref() {
-                    entries.push(("ref", r));
-                }
-                if let Some(v) = res.rev.as_deref() {
-                    entries.push(("rev", v));
-                }
-                entries.sort_by(|a, b| a.0.cmp(b.0));
-                write_canonical_query(&mut out, &entries);
-            }
-            _ => {
-                // Indirect, Path, Resource(File), Resource(Tarball):
-                // the existing Display form already matches Nix's
-                // canonical output byte-for-byte.
-                return self.to_string();
-            }
-        }
-
-        if let Some(fragment) = &self.fragment {
-            write!(&mut out, "#{}", encoding::encode_fragment(fragment)).unwrap();
-        }
-        out
+    /// Set or clear the subdirectory.
+    pub fn with_dir(mut self, dir: Option<String>) -> Self {
+        self.dir = dir.filter(|dir| !dir.is_empty());
+        self
     }
 }
 
-fn write_resource_base(out: &mut String, res: &ResourceUrl) {
-    use std::fmt::Write;
-    // Git and Mercurial canonical forms keep the `<res_type>+` prefix
-    // verbatim (no Tarball/File-style stripping); they always carry a
-    // resource scheme tag.
-    write!(out, "{}", res.res_type).unwrap();
-    if let Some(transport) = &res.transport_type {
-        write!(out, "+{}", transport).unwrap();
-    }
-    write!(out, "://{}", res.location).unwrap();
-}
-
-fn write_canonical_query(out: &mut String, entries: &[(&str, &str)]) {
-    use std::fmt::Write;
-    if entries.is_empty() {
-        return;
-    }
-    out.push('?');
-    for (i, (key, value)) in entries.iter().enumerate() {
-        if i > 0 {
-            out.push('&');
-        }
-        write!(
-            out,
-            "{key}={value}",
-            key = encoding::encode_query(key),
-            value = encoding::encode_query(value)
-        )
-        .unwrap();
-    }
-}
-
+/// Mirrors `builtins.flakeRefToString`.
 impl Display for FlakeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.kind())?;
+        let mut url = match &self.kind {
+            FlakeRefType::GitForge(forge) => forge.render(),
+            FlakeRefType::Git(git) => git.render(),
+            FlakeRefType::Mercurial(hg) => hg.render(),
+            FlakeRefType::Tarball(download) | FlakeRefType::File(download) => download.render(),
+            FlakeRefType::Path(path) => path.render(),
+            FlakeRefType::Indirect(indirect) => indirect.render(),
+        };
+        url.query_opt("dir", self.dir.as_deref());
+        url.fmt(f)
+    }
+}
 
-        // Collect every query key (typed param slots, the arbitrary bag, and
-        // the kind's ref/rev when they live in the query) into one list and
-        // emit it sorted by key. Nix emits query keys in alphabetical
-        // order; matching that lets a Display string compare
-        // byte-for-byte against a Nix-emitted form.
-        let mut entries: Vec<(&str, &str)> = self.params.entries();
-        if matches!(self.ref_source_location(), RefLocation::QueryParameter) {
-            // Resource only supports the query-parameter form (Nix's
-            // git/hg schemes have no path-component ref/rev shape), so
-            // it always emits here when ref/rev are set.
-            // Path is fixed at `QueryParameter` and has no ref slot;
-            // `ref_or_rev` returns `(None, rev)` for it.
-            let (ref_, rev) = match self.kind() {
-                FlakeRefType::GitForge(GitForge { ref_, rev, .. })
-                | FlakeRefType::Indirect { ref_, rev, .. } => (ref_.as_deref(), rev.as_deref()),
-                FlakeRefType::Resource(res) => (res.ref_.as_deref(), res.rev.as_deref()),
-                FlakeRefType::Path { rev, .. } => (None, rev.as_deref()),
-            };
-            if let Some(r) = ref_ {
-                entries.push(("ref", r));
-            }
-            if let Some(v) = rev {
-                entries.push(("rev", v));
-            }
-        }
-        entries.sort_by(|a, b| a.0.cmp(b.0));
-        if !entries.is_empty() {
-            write!(f, "?")?;
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if i > 0 {
-                    write!(f, "&")?;
-                }
-                write!(
-                    f,
-                    "{key}={value}",
-                    key = encoding::encode_query(key),
-                    value = encoding::encode_query(value)
-                )?;
-            }
-        }
-        if let Some(fragment) = &self.fragment {
-            write!(f, "#{}", encoding::encode_fragment(fragment))?;
-        }
-        Ok(())
+impl From<FlakeRef> for Attrs {
+    fn from(flake_ref: FlakeRef) -> Self {
+        flake_ref.to_attrs()
+    }
+}
+
+impl TryFrom<Attrs> for FlakeRef {
+    type Error = NixUriError;
+
+    fn try_from(attrs: Attrs) -> Result<Self, Self::Error> {
+        Self::from_attrs(&attrs)
     }
 }
 
@@ -704,2451 +433,295 @@ impl std::str::FromStr for FlakeRef {
 }
 
 #[cfg(test)]
-mod tests {
-
-    use resource_url::{ResourceType, ResourceUrl};
+mod from_attrs {
+    //! `builtins.flakeRefToString` of an attribute set, in Nix 2.35.3.
     use std::assert_matches;
 
-    use super::*;
-
-    #[test]
-    fn parse_simple_uri() {
-        let uri = "github:nixos/nixpkgs";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "nixos".into(),
-            repo: "nixpkgs".into(),
-            ref_: None,
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_parsed() {
-        let uri = "github:zellij-org/zellij";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "zellij-org".into(),
-            repo: "zellij".into(),
-            ref_: None,
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_attr_with_params() {
-        let mut location_params = LocationParameters::default();
-        location_params.dir(Some("assets".into()));
-        let parsed: FlakeRef = "github:zellij-org/zellij?dir=assets".parse().unwrap();
-        assert_eq!(&location_params, parsed.params());
-        assert_eq!(parsed.ref_kind(), RefKind::None);
-    }
-
-    #[test]
-    fn parse_simple_uri_ref() {
-        let uri = "github:zellij-org/zellij?ref=main";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "zellij-org".into(),
-            repo: "zellij".into(),
-            ref_: Some("main".into()),
-            rev: None,
-            location: RefLocation::QueryParameter,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_rev() {
-        let uri = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "zellij-org".into(),
-            repo: "zellij".into(),
-            ref_: None,
-            rev: Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()),
-            location: RefLocation::QueryParameter,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_ref_or_rev() {
-        let uri = "github:zellij-org/zellij/main";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "zellij-org".into(),
-            repo: "zellij".into(),
-            ref_: Some("main".into()),
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_ref_or_rev_attr() {
-        let uri = "github:zellij-org/zellij/main?dir=assets";
-        let mut params = LocationParameters::default();
-        params.dir(Some("assets".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: Some("main".into()),
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_attr() {
-        let uri = "github:zellij-org/zellij?dir=assets";
-        let mut params = LocationParameters::default();
-        params.dir(Some("assets".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-    #[test]
-    fn parse_simple_uri_attr_nom_alt() {
-        let uri = "github:zellij-org/zellij/?dir=assets";
-        let mut params = LocationParameters::default();
-        params.dir(Some("assets".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-    #[test]
-    fn parse_simple_uri_params_nom_alt() {
-        let uri = "github:zellij-org/zellij/?dir=assets&narHash=fakeHash256";
-        let mut params = LocationParameters::default();
-        params.dir(Some("assets".into()));
-        params.nar_hash(Some("fakeHash256".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_simple_path_nom() {
-        let uri = "path:/home/kenji/.config/dotfiles/";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::Path {
-            path: "/home/kenji/.config/dotfiles/".into(),
-            rev: None,
-        });
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed, "{}", uri);
-    }
-
-    #[test]
-    fn parse_simple_path_params_nom() {
-        let uri = "path:/home/kenji/.config/dotfiles/?dir=assets";
-        let mut params = LocationParameters::default();
-        params.dir(Some("assets".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::Path {
-                path: "/home/kenji/.config/dotfiles/".into(),
-                rev: None,
-            })
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed, "{}", uri);
-    }
-
-    #[test]
-    fn parse_gitlab_simple() {
-        let uri = "gitlab:veloren/veloren";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitLab,
-            owner: "veloren".into(),
-            repo: "veloren".into(),
-            ref_: None,
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_gitlab_simple_ref_or_rev() {
-        let uri = "gitlab:veloren/veloren/master";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitLab,
-            owner: "veloren".into(),
-            repo: "veloren".into(),
-            ref_: Some("master".into()),
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_gitlab_simple_ref_or_rev_alt() {
-        let uri = "gitlab:veloren/veloren/19742bb9300fb0be9fdc92f30766c95230a8a371";
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitLab,
-            owner: "veloren".into(),
-            repo: "veloren".into(),
-            ref_: None,
-            rev: Some("19742bb9300fb0be9fdc92f30766c95230a8a371".into()),
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_gitlab_nested_subgroup() {
-        let uri = "gitlab:veloren%2Fdev/rfcs";
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        let flake_ref = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitLab,
-            owner: "veloren/dev".into(),
-            repo: "rfcs".into(),
-            ref_: None,
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-        assert_eq!(flake_ref, parsed);
-        // Display re-encodes the subgroup `/` so the wire form is byte-stable.
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    #[test]
-    fn parse_gitlab_simple_host_param() {
-        let uri = "gitlab:openldap/openldap?host=git.openldap.org";
-        let mut params = LocationParameters::default();
-        params.host(Some("git.openldap.org".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitLab,
-                owner: "openldap".into(),
-                repo: "openldap".into(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed = FlakeRef::parse(uri, Context::default()).unwrap();
-        assert_eq!(flake_ref, parsed);
-    }
-
-    #[test]
-    fn parse_git_and_https_simple() {
-        let uri = "git+https://git.somehost.tld/user/path";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::Git,
-            location: "git.somehost.tld/user/path".into(),
-            transport_type: Some(TransportLayer::Https),
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_git_and_https_params() {
-        let uri = "git+https://git.somehost.tld/user/path?ref=branch&rev=fdc8ef970de2b4634e1b3dca296e1ed918459a9e";
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    #[test]
-    fn parse_git_and_file_params() {
-        let uri = "git+file:///nix/nixpkgs?ref=upstream/nixpkgs-unstable";
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    #[test]
-    fn parse_git_and_file_simple() {
-        let uri = "git+file:///nix/nixpkgs";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::Git,
-            location: "/nix/nixpkgs".into(),
-            transport_type: Some(TransportLayer::File),
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_git_and_file_branch_query_routes_to_arbitrary() {
-        // Nix's git scheme has no `branch` key; the branch slot is
-        // `ref`. The parser absorbs the unrecognised key into the
-        // arbitrary bag rather than rejecting, matching Nix's
-        // permissive `parseFlakeRef`.
-        let uri = "git+file:///home/user/forked-flake?branch=feat/myNewFeature";
-        let parsed: FlakeRef = uri.parse().expect("unrecognised key must parse");
-        assert!(
-            parsed
-                .params()
-                .entries()
-                .iter()
-                .any(|(k, v)| *k == "branch" && *v == "feat/myNewFeature"),
-            "branch=feat/myNewFeature must land in arbitrary",
-        );
-    }
-
-    #[test]
-    fn parse_github_simple_tag_non_alphabetic_params() {
-        let uri = "github:smunix/MyST-Parser?ref=fix.hls-docutils";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "smunix".into(),
-            repo: "MyST-Parser".into(),
-            ref_: Some("fix.hls-docutils".to_owned()),
-            rev: None,
-            location: RefLocation::QueryParameter,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_github_simple_tag() {
-        let uri = "github:cachix/devenv/v0.5";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "cachix".into(),
-            repo: "devenv".into(),
-            ref_: Some("v0.5".into()),
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_gitlab_with_host_params_alt() {
-        let uri = "gitlab:fpottier/menhir/20201216?host=gitlab.inria.fr";
-        let mut params = LocationParameters::default();
-        params.set_host(Some("gitlab.inria.fr".into()));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitLab,
-                owner: "fpottier".to_owned(),
-                repo: "menhir".to_owned(),
-                ref_: Some("20201216".to_owned()),
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_git_and_https_params_submodules() {
-        let uri = "git+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
-        let mut params = LocationParameters::default();
-        params.set_submodules(Some(true));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::Git,
-                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                transport_type: Some(TransportLayer::Https),
-                ref_: None,
-                rev: None,
-                ref_location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_marcurial_and_https_simpe_uri() {
-        let uri = "hg+https://www.github.com/ocaml/ocaml-lsp";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Resource(ResourceUrl {
-            res_type: ResourceType::Mercurial,
-            location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-            transport_type: Some(TransportLayer::Https),
-            ref_: None,
-            rev: None,
-            ref_location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    #[should_panic(expected = "Unsupported(UriType { ty: \"gt+https\" })")]
-    fn parse_git_and_https_params_submodules_wrong_type() {
-        let uri = "gt+https://www.github.com/ocaml/ocaml-lsp?submodules=1";
-        let mut params = LocationParameters::default();
-        params.set_submodules(Some(true));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::Git,
-                location: "www.github.com/ocaml/ocaml-lsp".to_owned(),
-                transport_type: Some(TransportLayer::Https),
-                ref_: None,
-                rev: None,
-                ref_location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    // TODO: https://github.com/a-kenji/nix-uri/issues/157
-    #[test]
-    fn parse_git_and_file_shallow() {
-        let uri = "git+file:/path/to/repo?shallow=1";
-        let mut params = LocationParameters::default();
-        params.set_shallow(Some(true));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::Git,
-                location: "/path/to/repo".to_owned(),
-                transport_type: Some(TransportLayer::File),
-                ref_: None,
-                rev: None,
-                ref_location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_path_uri_indirect() {
-        let uri = "path:../.";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Path {
-            path: "../.".to_owned(),
-            rev: None,
-        });
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_path_uri_empty_body_is_root() {
-        // An empty `path:` is the root directory.
-        let parsed: FlakeRef = "path:".parse().unwrap();
-        assert_eq!(
-            parsed.kind,
-            FlakeRefType::Path {
-                path: "/".to_owned(),
-                rev: None,
-            }
-        );
-        // A space is not valid in a URL, and `path: ` is not absolute.
-        for uri in ["path: ", "path:  "] {
-            assert_matches!(
-                FlakeRef::parse(uri, Context::Standalone),
-                Err(NixUriError::InvalidUrl(_))
-            );
-        }
-    }
-
-    #[test]
-    fn parse_simple_path_uri_indirect_local() {
-        let uri = "path:.";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Path {
-            path: ".".to_owned(),
-            rev: None,
-        });
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_sourcehut() {
-        let uri = "sourcehut:~misterio/nix-colors";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::SourceHut,
-            owner: "~misterio".to_owned(),
-            repo: "nix-colors".to_owned(),
-            ref_: None,
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_sourcehut_rev() {
-        let uri = "sourcehut:~misterio/nix-colors/main";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::SourceHut,
-            owner: "~misterio".to_owned(),
-            repo: "nix-colors".to_owned(),
-            ref_: Some("main".to_owned()),
-            rev: None,
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_sourcehut_host_param() {
-        let uri = "sourcehut:~misterio/nix-colors?host=git.example.org";
-        let mut params = LocationParameters::default();
-        params.set_host(Some("git.example.org".into()));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::SourceHut,
-                owner: "~misterio".to_owned(),
-                repo: "nix-colors".to_owned(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_sourcehut_ref() {
-        let uri = "sourcehut:~misterio/nix-colors/182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::GitForge(GitForge {
-            platform: GitForgePlatform::SourceHut,
-            owner: "~misterio".to_owned(),
-            repo: "nix-colors".to_owned(),
-            ref_: None,
-            rev: Some("182b4b8709b8ffe4e9774a4c5d6877bf6bb9a21c".to_owned()),
-            location: RefLocation::PathComponent,
-        }));
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_uri_sourcehut_ref_params() {
-        let uri =
-            "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de?host=hg.sr.ht";
-        let mut params = LocationParameters::default();
-        params.set_host(Some("hg.sr.ht".into()));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::SourceHut,
-                owner: "~misterio".to_owned(),
-                repo: "nix-colors".to_owned(),
-                ref_: None,
-                rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn display_simple_sourcehut_uri_ref_or_rev() {
-        let expected = "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de";
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::SourceHut,
-                owner: "~misterio".to_owned(),
-                repo: "nix-colors".to_owned(),
-                ref_: None,
-                rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-                location: RefLocation::PathComponent,
-            }))
-            .to_string();
-
-        assert_eq!(expected, flake_ref);
-    }
-
-    #[test]
-    fn display_simple_sourcehut_uri_ref_or_rev_host_param() {
-        let expected =
-            "sourcehut:~misterio/nix-colors/21c1a380a6915d890d408e9f22203436a35bb2de?host=hg.sr.ht";
-        let mut params = LocationParameters::default();
-        params.set_host(Some("hg.sr.ht".into()));
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::SourceHut,
-                owner: "~misterio".to_owned(),
-                repo: "nix-colors".to_owned(),
-                ref_: None,
-                rev: Some("21c1a380a6915d890d408e9f22203436a35bb2de".to_owned()),
-                location: RefLocation::PathComponent,
-            }))
-            .with_params(params)
-            .to_string();
-
-        assert_eq!(expected, flake_ref);
-    }
-
-    #[test]
-    fn display_simple_github_uri_ref() {
-        let expected = "github:zellij-org/zellij?ref=main";
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: Some("main".into()),
-                rev: None,
-                location: RefLocation::QueryParameter,
-            }))
-            .to_string();
-
-        assert_eq!(flake_ref, expected);
-    }
-
-    #[test]
-    fn display_simple_github_uri_rev() {
-        let expected = "github:zellij-org/zellij?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let flake_ref = FlakeRef::default()
-            .with_kind(FlakeRefType::GitForge(GitForge {
-                platform: GitForgePlatform::GitHub,
-                owner: "zellij-org".into(),
-                repo: "zellij".into(),
-                ref_: None,
-                rev: Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()),
-                location: RefLocation::QueryParameter,
-            }))
-            .to_string();
-
-        assert_eq!(flake_ref, expected);
-    }
-
-    #[test]
-    fn parse_simple_path_uri_indirect_absolute_without_prefix() {
-        let uri = "/home/kenji/git";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Path {
-            path: "/home/kenji/git".to_owned(),
-            rev: None,
-        });
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_path_uri_indirect_absolute_without_prefix_with_params() {
-        let uri = "/home/kenji/git?dir=dev";
-        let mut params = LocationParameters::default();
-        params.set_dir(Some("dev".into()));
-        let expected = FlakeRef::default()
-            .with_kind(FlakeRefType::Path {
-                path: "/home/kenji/git".to_owned(),
-                rev: None,
-            })
-            .with_params(params);
-
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_simple_path_uri_indirect_local_without_prefix() {
-        let uri = ".";
-        let expected = FlakeRef::default().with_kind(FlakeRefType::Path {
-            path: ".".to_owned(),
-            rev: None,
-        });
-        let parsed: FlakeRef = uri.try_into().unwrap();
-        assert_eq!(expected, parsed);
-    }
-
-    #[test]
-    fn parse_wrong_git_uri_extension_type() {
-        assert_matches!(
-            FlakeRef::parse("git+(:z", Context::Standalone),
-            Err(NixUriError::Unsupported(
-                UnsupportedReason::RelativePath { .. }
-            ))
-        );
-        assert_matches!(
-            FlakeRef::parse("git+foo://h/r", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::TransportLayer { ty })) if "foo" == ty
-        );
-    }
-
-    #[test]
-    fn parse_github_missing_parameter_public_surface() {
-        assert_matches!(
-            FlakeRef::parse("github:", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "owner"
-        );
-    }
-
-    #[test]
-    fn parse_github_missing_parameter_repo_public_surface() {
-        assert_matches!(
-            FlakeRef::parse("github:nixos/", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "repo"
-        );
-    }
-
-    #[test]
-    fn parse_resource_missing_separator_pins_tag_variant() {
-        use crate::ParseExpected;
-
-        assert_matches!(
-            FlakeRef::parse("git:x", Context::Standalone),
-            Err(NixUriError::Parse {
-                position: 4,
-                expected: ParseExpected::Tag("//"),
-            })
-        );
-    }
-
-    #[test]
-    fn parse_github_starts_with_whitespace() {
-        // Not a URL with a leading space, so a relative path.
-        assert_matches!(
-            FlakeRef::parse(" github:nixos/nixpkgs", Context::Standalone),
-            Err(NixUriError::Unsupported(
-                UnsupportedReason::RelativePath { .. }
-            ))
-        );
-    }
-
-    #[test]
-    fn parse_github_ends_with_whitespace() {
-        assert_matches!(
-            FlakeRef::parse("github:nixos/nixpkgs ", Context::Standalone),
-            Err(NixUriError::InvalidUrl(_))
-        );
-    }
-
-    #[test]
-    fn parse_empty_invalid_url() {
-        let uri = "";
-        assert_matches!(
-            uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri) if uri.is_empty()
-        );
-    }
-
-    #[test]
-    fn parse_empty_trim_invalid_url() {
-        let uri = "  ";
-        assert_matches!(
-            uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri_match) if uri_match == uri
-        );
-    }
-
-    #[test]
-    fn parse_slash_trim_invalid_url() {
-        assert_matches!(
-            FlakeRef::parse("   /   ", Context::Standalone),
-            Err(NixUriError::Unsupported(
-                UnsupportedReason::RelativePath { .. }
-            ))
-        );
-    }
-
-    #[test]
-    fn parse_double_trim_invalid_url() {
-        assert_matches!(
-            FlakeRef::parse("   :   ", Context::Standalone),
-            Err(NixUriError::Unsupported(
-                UnsupportedReason::RelativePath { .. }
-            ))
-        );
-    }
-
-    #[test]
-    fn indirect_display_emits_flake_prefix() {
-        // Indirect Display now emits `flake:` unconditionally; the bare-input
-        // form parses but Display canonicalises to the explicit prefix.
-        let parsed: FlakeRef = "flake:nixpkgs/release-23.05".parse().unwrap();
-        assert_eq!(parsed.to_string(), "flake:nixpkgs/release-23.05");
-
-        let parsed: FlakeRef = "nixpkgs".parse().unwrap();
-        assert_eq!(parsed.to_string(), "flake:nixpkgs");
-    }
-
-    #[test]
-    fn path_display_emits_path_prefix() {
-        // Same canonicalisation for Path: the `path:` prefix is always
-        // emitted, even when the input form was bare.
-        let parsed: FlakeRef = "path:./foo".parse().unwrap();
-        assert_eq!(parsed.to_string(), "path:./foo");
-
-        let parsed: FlakeRef = "/abs/path".parse().unwrap();
-        assert_eq!(parsed.to_string(), "path:/abs/path");
-    }
-
-    #[test]
-    fn indirect_explicit_three_segment_round_trip() {
-        // Canonical Nix's indirect form supports id/ref/rev as three path
-        // segments; round-trip preserves both.
-        let uri = "flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567";
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    #[test]
-    fn fragment_round_trip_github() {
-        // The trailing `#fragment` is preserved on `FlakeRef.fragment`
-        // and re-emitted by Display.
-        let uri = "github:nixos/nixpkgs#default";
-        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
-        assert_eq!(parsed.fragment.as_deref(), Some("default"));
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    #[test]
-    fn fragment_round_trip_with_params() {
-        let uri = "github:nixos/nixpkgs?dir=foo#bar";
-        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
-        assert_eq!(parsed.fragment.as_deref(), Some("bar"));
-        assert_eq!(parsed.to_string(), uri);
-    }
-
-    /// Nix's bare-flake-id form matches `id[/ref[/rev]]` and routes it
-    /// through the same indirect scheme as `flake:id/...`. So
-    /// `nixos/nixpkgs` parses as
-    /// `Indirect { id: "nixos", ref_: Some("nixpkgs"), .. }`.
-    #[test]
-    fn bare_two_segment_parses_as_indirect() {
-        let parsed: FlakeRef = "nixos/nixpkgs".parse().unwrap();
-        assert_eq!(
-            *parsed.kind(),
-            FlakeRefType::Indirect {
-                id: "nixos".to_string(),
-                ref_: Some("nixpkgs".to_string()),
-                rev: None,
-                location: RefLocation::PathComponent,
-            },
-        );
-        assert_eq!(parsed.to_string(), "flake:nixos/nixpkgs");
-    }
-
-    /// Three-segment bare with a 40-hex final segment routes through the
-    /// indirect grammar's `id/ref/rev` form, matching Nix.
-    #[test]
-    fn bare_three_segment_with_hex_parses_as_indirect() {
-        let rev = "abc1234567890123456789012345678901234567";
-        let uri = format!("nixos/nixpkgs/{rev}");
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(
-            *parsed.kind(),
-            FlakeRefType::Indirect {
-                id: "nixos".to_string(),
-                ref_: Some("nixpkgs".to_string()),
-                rev: Some(rev.to_string()),
-                location: RefLocation::PathComponent,
-            },
-        );
-    }
-
-    /// The bare flake-id shorthand takes at most three segments, like
-    /// `flake:`. Nix rejects `nixos/nixpkgs/extra/parts` outright rather
-    /// than reading it as a path.
-    #[test]
-    fn bare_four_segment_rejected() {
-        let err = "nixos/nixpkgs/extra/parts"
-            .parse::<FlakeRef>()
-            .expect_err("bare four-segment must not parse");
-        assert_matches!(err, NixUriError::TooManyIndirectSegments { count: 4 });
-    }
-
-    /// Nix requires the third indirect segment to be a 40-hex commit
-    /// hash and throws otherwise. Without the check,
-    /// `release-23.05/notahex` was silently folded into a
-    /// slash-containing ref.
-    #[test]
-    fn flake_three_segment_non_hex_rejects() {
-        let err = FlakeRef::parse("flake:nixpkgs/release-23.05/notahex", Context::Standalone)
-            .expect_err("non-hex third segment must reject");
-        assert_matches!(err, NixUriError::InvalidValue { field: "rev", .. },);
-    }
-
-    /// Nix's `flake:` URL form skips empty segments when splitting the
-    /// path, so `flake:nixpkgs//main` collapses to `flake:nixpkgs/main`.
-    #[test]
-    fn flake_double_slash_collapses_skipempty() {
-        let parsed: FlakeRef = "flake:nixpkgs//main".parse().unwrap();
-        assert_eq!(
-            *parsed.kind(),
-            FlakeRefType::Indirect {
-                id: "nixpkgs".to_string(),
-                ref_: Some("main".to_string()),
-                rev: None,
-                location: RefLocation::PathComponent,
-            },
-        );
-
-        let parsed: FlakeRef = "flake:nixpkgs///main".parse().unwrap();
-        assert_eq!(
-            *parsed.kind(),
-            FlakeRefType::Indirect {
-                id: "nixpkgs".to_string(),
-                ref_: Some("main".to_string()),
-                rev: None,
-                location: RefLocation::PathComponent,
-            },
-        );
-    }
-
-    /// Bare `//host/path` is not a URL (it has no scheme), so it is read
-    /// as an absolute path. It is stored verbatim, so its Display,
-    /// `path://host/path`, reads as a `path:` URL with an authority and
-    /// does not round-trip.
-    #[test]
-    fn bare_double_slash_is_an_absolute_path() {
-        let parsed = FlakeRef::parse("//host/path", Context::Standalone).unwrap();
-        assert_eq!(
-            parsed.kind,
-            FlakeRefType::Path {
-                path: "//host/path".to_owned(),
-                rev: None,
-            }
-        );
-        assert_eq!(parsed.to_string(), "path://host/path");
-    }
-
-    /// Sanity: the legitimate bare-path shapes still round-trip after
-    /// the bare-`//` guard. `path:` prefix is added on Display per the
-    /// canonicalisation rule pinned in `path_display_emits_path_prefix`.
-    #[test]
-    fn bare_legitimate_paths_round_trip() {
-        for (input, displayed) in [
-            ("./relative", "path:./relative"),
-            ("/abs/path", "path:/abs/path"),
-        ] {
-            let parsed: FlakeRef = input.parse().unwrap();
-            assert!(matches!(parsed.kind(), FlakeRefType::Path { .. }));
-            assert_eq!(parsed.to_string(), displayed);
-        }
-    }
-
-    /// Pins Nix's three-segment cap on the indirect form. Without the
-    /// check the trailing segments collapse into `ref_` verbatim,
-    /// producing a ref name that contains `/`.
-    #[test]
-    fn flake_scheme_four_segment_rejected() {
-        let err = FlakeRef::parse("flake:nixpkgs/main/abc/extra", Context::Standalone)
-            .expect_err("flake: 4+ segments must not parse");
-        assert_matches!(err, NixUriError::TooManyIndirectSegments { count: 4 });
-    }
-
-    #[test]
-    fn bare_single_segment_still_parses() {
-        let parsed: FlakeRef = "nixpkgs".parse().unwrap();
-        assert_eq!(
-            *parsed.kind(),
-            FlakeRefType::Indirect {
-                id: "nixpkgs".to_string(),
-                ref_: None,
-                rev: None,
-                location: RefLocation::PathComponent,
-            },
-        );
-    }
-}
-
-#[cfg(test)]
-mod ref_rev_methods {
-    //! Exercises the typed ref/rev API on `FlakeRef`. The "no ref/rev" state
-    //! is `ref_or_rev() == None`; there is no `RefLocation::None` variant,
-    //! so `ref_source_location()` returns the kind's default `PathComponent`
-    //! for kinds that simply have no value set.
-    //!
-    //! `Resource` kinds carry typed ref/rev slots and only support the
-    //! query-parameter form; `set_ref`/`set_rev` write through and also flip
-    //! `ref_location` to `QueryParameter` so the value round-trips through
-    //! `Display`.
-    use super::*;
     use rstest::rstest;
+
+    use crate::{Attrs, FlakeRef, NixUriError, UnsupportedReason};
+
+    fn attrs(json: &str) -> Attrs {
+        serde_json::from_str(json).unwrap()
+    }
 
     #[rstest]
     #[case(
-        "github:nixos/nixpkgs/release-23.05",
-        Some("release-23.05"),
-        RefLocation::PathComponent
+        "{\"dir\":\"lib\",\"lastModified\":1700000000,\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"owner\":\"NixOS\",\"repo\":\"nixpkgs\",\"rev\":\"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293\",\"type\":\"github\"}",
+        "github:NixOS/nixpkgs/a3a3dda3bacf61e8a39258a0ed9c924eeca8e293?dir=lib&narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D"
     )]
     #[case(
-        "github:nixos/nixpkgs?ref=release-23.05",
-        Some("release-23.05"),
-        RefLocation::QueryParameter
+        "{\"lastModified\":1,\"ref\":\"main\",\"rev\":\"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293\",\"revCount\":5,\"submodules\":true,\"type\":\"git\",\"url\":\"https://h.org/r\"}",
+        "git+https://h.org/r?ref=main&rev=a3a3dda3bacf61e8a39258a0ed9c924eeca8e293&submodules=1"
     )]
     #[case(
-        "github:nixos/nixpkgs?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298",
-        Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298"),
-        RefLocation::QueryParameter
+        "{\"lastModified\":1,\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"path\":\"/nix/store/abc-source\",\"type\":\"path\"}",
+        "path:/nix/store/abc-source?lastModified=1&narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D"
     )]
-    #[case("flake:nixpkgs/unstable", Some("unstable"), RefLocation::PathComponent)]
-    #[case("github:nixos/nixpkgs", None, RefLocation::PathComponent)]
-    fn typed_ref_or_rev_round_trip(
-        #[case] url: &str,
-        #[case] expected_ref: Option<&str>,
-        #[case] expected_location: RefLocation,
-    ) {
-        let parsed: FlakeRef = url.parse().unwrap();
-        assert_eq!(
-            parsed.ref_or_rev(),
-            expected_ref,
-            "ref_or_rev mismatch for {url}",
-        );
-        assert_eq!(
-            parsed.ref_source_location(),
-            expected_location,
-            "ref_source_location mismatch for {url}",
-        );
+    #[case(
+        "{\"lastModified\":1,\"owner\":\"o\",\"repo\":\"r\",\"treeHash\":\"abc\",\"type\":\"github\"}",
+        "github:o/r"
+    )]
+    #[case(
+        "{\"id\":\"nixpkgs\",\"ref\":\"nixos-25.05\",\"type\":\"indirect\"}",
+        "flake:nixpkgs/nixos-25.05"
+    )]
+    #[case(
+        "{\"path\":\"github:NixOS/nixpkgs\",\"type\":\"path\"}",
+        "path:github:NixOS/nixpkgs"
+    )]
+    #[case(
+        "{\"__final\":true,\"allRefs\":true,\"dirtyRev\":\"x-dirty\",\"dirtyShortRev\":\"x-dirty\",\"exportIgnore\":true,\"lfs\":true,\"name\":\"n\",\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"shallow\":false,\"type\":\"git\",\"url\":\"https://h.org/r\"}",
+        "git+https://h.org/r?exportIgnore=1&lfs=1"
+    )]
+    #[case(
+        "{\"type\":\"git\",\"url\":\"git@github.com:o/r\"}",
+        "git+ssh://git@github.com/o/r"
+    )]
+    #[case("{\"type\":\"git\",\"url\":\"/local/x\"}", "git+file:///local/x")]
+    #[case(
+        "{\"rev\":\"A3A3DDA3BACF61E8A39258A0ED9C924EECA8E293\",\"type\":\"git\",\"url\":\"https://h/r?b=1&a=2\"}",
+        "git+https://h/r?a=2&b=1&rev=a3a3dda3bacf61e8a39258a0ed9c924eeca8e293"
+    )]
+    #[case(
+        "{\"name\":\"x\",\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"ref\":\"default\",\"rev\":\"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293\",\"revCount\":1,\"type\":\"hg\",\"url\":\"https://h/r\"}",
+        "hg+https://h/r?ref=default&rev=a3a3dda3bacf61e8a39258a0ed9c924eeca8e293"
+    )]
+    #[case(
+        "{\"lastModified\":2,\"name\":\"n\",\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"rev\":\"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293\",\"revCount\":1,\"type\":\"tarball\",\"unpack\":true,\"url\":\"https://h/x\"}",
+        "https://h/x?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D"
+    )]
+    #[case("{\"type\":\"file\",\"url\":\"https://h/x.json\"}", "https://h/x.json")]
+    #[case("{\"type\":\"file\",\"url\":\"file:./x\"}", "file:./x")]
+    #[case(
+        "{\"id\":\"nixpkgs\",\"narHash\":\"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\",\"ref\":\"a/b\",\"rev\":\"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293\",\"type\":\"indirect\"}",
+        "flake:nixpkgs/a%2Fb/a3a3dda3bacf61e8a39258a0ed9c924eeca8e293"
+    )]
+    #[case("{\"path\":\"/a/b/\",\"type\":\"path\"}", "path:/a/b//")]
+    #[case("{\"path\":\"\",\"type\":\"path\"}", "path:")]
+    #[case("{\"path\":\"./a b\",\"type\":\"path\"}", "path:./a%20b")]
+    #[case(
+        "{\"host\":\"git.example.org\",\"owner\":\"o/sub\",\"ref\":\"feature/x\",\"repo\":\"r\",\"type\":\"gitlab\"}",
+        "gitlab:o%2Fsub/r/feature%2Fx?host=git.example.org"
+    )]
+    fn renders_like_flake_ref_to_string(#[case] json: &str, #[case] display: &str) {
+        let flake_ref = FlakeRef::from_attrs(&attrs(json)).unwrap();
+        assert_eq!(flake_ref.to_string(), display);
     }
 
     #[test]
-    fn set_ref_preserves_path_component_location() {
-        let url = "github:nixos/nixpkgs/release-23.05";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
-        assert_eq!(parsed.ref_or_rev(), Some("release-23.05"));
-
-        parsed.set_ref(Some("release-24.05".to_string()));
-
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
-        assert_eq!(parsed.ref_or_rev(), Some("release-24.05"));
-        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs/release-24.05");
-    }
-
-    #[test]
-    fn set_ref_preserves_query_parameter_location() {
-        let url = "github:nixos/nixpkgs?ref=release-23.05";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
-        assert_eq!(parsed.ref_or_rev(), Some("release-23.05"));
-
-        parsed.set_ref(Some("release-24.05".to_string()));
-
-        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
-        assert_eq!(parsed.ref_or_rev(), Some("release-24.05"));
-        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs?ref=release-24.05");
-    }
-
-    #[test]
-    fn set_ref_on_resource_writes_to_typed_slot_and_flips_location() {
-        // Resource kinds carry typed `ref_` / `rev` slots and only emit
-        // those slots through the query string. set_ref / set_rev
-        // therefore flip ref_location to QueryParameter so Display
-        // preserves the form.
-        let url = "git+https://github.com/nixos/nixpkgs";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        parsed.set_ref(Some("v1.0.0".to_string()));
-        assert_eq!(parsed.ref_or_rev(), Some("v1.0.0"));
-        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
-        match parsed.kind() {
-            FlakeRefType::Resource(res) => {
-                assert_eq!(res.ref_.as_deref(), Some("v1.0.0"));
-            }
-            other => panic!("expected Resource, got {other:?}"),
-        }
-        // The full round-trip works now: Display renders ?ref=...
+    fn keeps_the_attributes() {
+        let json = r#"{"dir":"lib","lastModified":1700000000,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","owner":"NixOS","repo":"nixpkgs","rev":"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293","type":"github"}"#;
         assert_eq!(
-            parsed.to_string(),
-            "git+https://github.com/nixos/nixpkgs?ref=v1.0.0",
+            FlakeRef::from_attrs(&attrs(json)).unwrap().to_attrs(),
+            attrs(json)
         );
     }
 
     #[test]
-    fn set_ref_on_github_without_existing_ref_uses_path_component() {
-        let url = "github:nixos/nixpkgs";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        // Default (no ref present) reports PathComponent; that's where a
-        // value would be rendered if set.
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
-
-        parsed.set_ref(Some("release-23.05".to_string()));
-
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
-        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs/release-23.05");
+    fn empty_dir_is_no_dir() {
+        let flake_ref =
+            FlakeRef::from_attrs(&attrs(r#"{"type":"path","path":"/x","dir":""}"#)).unwrap();
+        assert_eq!(flake_ref.dir(), None);
+        assert_eq!(flake_ref.to_string(), "path:/x");
     }
 
     #[test]
-    fn set_rev_preserves_location() {
-        // Path-based 40-hex rev.
-        let url = "github:nixos/nixpkgs/b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        parsed.set_rev(Some("c3ee5f5f91f15dcb44b461g98828g5ce7251e399".to_string()));
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
+    fn final_is_ignored() {
+        let flake_ref =
+            FlakeRef::from_attrs(&attrs(r#"{"type":"path","path":"/x","__final":true}"#)).unwrap();
         assert_eq!(
-            parsed.to_string(),
-            "github:nixos/nixpkgs/c3ee5f5f91f15dcb44b461g98828g5ce7251e399",
-        );
-
-        // Query-parameter rev.
-        let url2 = "github:nixos/nixpkgs?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let mut parsed2: FlakeRef = url2.parse().unwrap();
-
-        parsed2.set_rev(Some("c3ee5f5f91f15dcb44b461g98828g5ce7251e399".to_string()));
-        assert_eq!(parsed2.ref_source_location(), RefLocation::QueryParameter);
-        assert_eq!(
-            parsed2.to_string(),
-            "github:nixos/nixpkgs?rev=c3ee5f5f91f15dcb44b461g98828g5ce7251e399",
+            flake_ref.to_attrs(),
+            attrs(r#"{"type":"path","path":"/x"}"#)
         );
     }
 
-    #[test]
-    fn remove_ref_clears_value_and_drops_path_segment() {
-        // Path-based.
-        let url = "github:nixos/nixpkgs/release-23.05";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        parsed.set_ref(None);
-        assert_eq!(parsed.ref_or_rev(), None);
-        assert_eq!(parsed.to_string(), "github:nixos/nixpkgs");
-
-        // Query-parameter.
-        let url2 = "github:nixos/nixpkgs?ref=release-23.05";
-        let mut parsed2: FlakeRef = url2.parse().unwrap();
-
-        parsed2.set_ref(None);
-        assert_eq!(parsed2.ref_or_rev(), None);
-        assert_eq!(parsed2.to_string(), "github:nixos/nixpkgs");
-    }
-
-    #[test]
-    fn indirect_set_ref_uses_path_component() {
-        let url = "flake:nixpkgs";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        parsed.set_ref(Some("unstable".to_string()));
-        assert_eq!(parsed.ref_source_location(), RefLocation::PathComponent);
-        assert_eq!(parsed.to_string(), "flake:nixpkgs/unstable");
-    }
-
-    #[test]
-    fn round_trip_path_component_ref() {
-        let original = "github:nixos/nixpkgs/release-23.05";
-        let parsed: FlakeRef = original.parse().unwrap();
-        assert_eq!(parsed.to_string(), original);
-    }
-
-    #[test]
-    fn round_trip_query_parameter_ref() {
-        let original = "github:nixos/nixpkgs?ref=release-23.05";
-        let parsed: FlakeRef = original.parse().unwrap();
-        assert_eq!(parsed.to_string(), original);
-    }
-
-    #[test]
-    fn round_trip_path_component_rev() {
-        let original = "github:nixos/nixpkgs/b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let parsed: FlakeRef = original.parse().unwrap();
-        assert_eq!(parsed.to_string(), original);
-        // The 40-hex value classified as a rev, not a ref.
-        match parsed.kind() {
-            FlakeRefType::GitForge(forge) => {
-                assert!(forge.ref_.is_none());
-                assert_eq!(
-                    forge.rev.as_deref(),
-                    Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298"),
-                );
-            }
-            _ => panic!("expected GitForge"),
-        }
-    }
-
-    #[test]
-    fn resource_set_ref_none_keeps_ref_location_when_rev_remains() {
-        // Clearing one slot must not silently flip ref_location.
-        // While rev is still Some, the kind's ref_location is
-        // load-bearing for `Display` (it is what makes ?rev=... appear).
-        let url = "git+https://github.com/owner/repo?ref=main&rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-        assert_eq!(parsed.ref_source_location(), RefLocation::QueryParameter);
-
-        parsed.set_ref(None);
-        assert_eq!(parsed.ref_(), None);
-        assert_eq!(
-            parsed.rev(),
-            Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298"),
-        );
-        assert_eq!(
-            parsed.ref_source_location(),
-            RefLocation::QueryParameter,
-            "clearing ref must not flip ref_location while rev is still set",
-        );
-
-        // Clearing the remaining rev now reaches the (None, None) state. The
-        // location slot is informational at that point; what matters is that
-        // we did not see a spurious flip on the way here.
-        parsed.set_rev(None);
-        assert_eq!(parsed.ref_(), None);
-        assert_eq!(parsed.rev(), None);
-        assert_eq!(
-            parsed.ref_source_location(),
-            RefLocation::QueryParameter,
-            "clearing rev must not flip ref_location either",
-        );
-    }
-
-    #[test]
-    fn set_ref_and_rev_independently_on_gitforge() {
-        let url = "github:owner/repo";
-        let mut parsed: FlakeRef = url.parse().unwrap();
-
-        parsed.set_ref(Some("main".to_string()));
-        match parsed.kind() {
-            FlakeRefType::GitForge(forge) => {
-                assert_eq!(forge.ref_.as_deref(), Some("main"));
-                assert!(forge.rev.is_none());
-            }
-            _ => panic!("expected GitForge"),
-        }
-
-        // Setting rev does not clear ref; the typed slots are independent.
-        parsed.set_rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".to_string()));
-        match parsed.kind() {
-            FlakeRefType::GitForge(forge) => {
-                assert_eq!(forge.ref_.as_deref(), Some("main"));
-                assert_eq!(
-                    forge.rev.as_deref(),
-                    Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298"),
-                );
-            }
-            _ => panic!("expected GitForge"),
-        }
-    }
-}
-
-#[cfg(test)]
-mod canonical_round_trip {
-    //! Round-trip property: every URI listed here parses and `Display`s back
-    //! to the original string, byte-for-byte. Each case pins a distinct
-    //! grammar shape (typed Resource ref/rev, Indirect 3-segment,
-    //! Path/Indirect prefix normalisation, fragment retention, canonical
-    //! query keys).
-    use super::*;
-    use rstest::rstest;
-
+    /// The forms Nix normalises a git `url` attribute into.
     #[rstest]
-    #[case("github:nixos/nixpkgs/release-23.05")]
-    #[case("github:nixos/nixpkgs?ref=release-23.05")]
-    #[case("git+https://github.com/owner/repo?ref=v1.0.0")]
-    #[case("flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567")]
-    #[case("path:./foo")]
-    #[case("github:nixos/nixpkgs#default")]
-    // GitHub's URL parser narrows query keys to `ref/rev/host/narHash`;
-    // the lastModified+revCount+narHash mix below rides the Git scheme
-    // where all three are recognised.
-    #[case("git+https://example.com/repo?lastModified=12345&narHash=sha256-abc&revCount=42")]
-    fn round_trip(#[case] uri: &str) {
-        let parsed = FlakeRef::parse(uri, Context::Installable).unwrap();
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch");
-    }
-
-    #[test]
-    fn query_keys_emit_alphabetical_across_typed_and_arbitrary() {
-        // `name` is in Nix's git-scheme attribute set but does not have
-        // a typed slot on `LocationParameters`, so it lands in the
-        // arbitrary bag while `dir` and `narHash` ride typed slots.
-        // The Display merge sorts alphabetically across both:
-        // dir < name < narHash.
-        let input = "git+https://example.com/repo?narHash=sha256-x&dir=foo&name=my-flake";
-        let parsed: FlakeRef = input.parse().unwrap();
+    #[case("git@github.com:o/r", "ssh://git@github.com/o/r")]
+    #[case("/local/x", "file:///local/x")]
+    #[case("git+https://h/a*b", "https://h/a%2Ab")]
+    fn git_url_is_normalised(#[case] url: &str, #[case] normalised: &str) {
+        let json = format!(r#"{{"type":"git","url":"{url}"}}"#);
+        let flake_ref = FlakeRef::from_attrs(&attrs(&json)).unwrap();
         assert_eq!(
-            parsed.to_string(),
-            "git+https://example.com/repo?dir=foo&name=my-flake&narHash=sha256-x"
+            flake_ref.to_attrs(),
+            attrs(&format!(r#"{{"type":"git","url":"{normalised}"}}"#))
         );
-
-        let reparsed: FlakeRef = parsed.to_string().parse().unwrap();
-        assert_eq!(parsed, reparsed);
-        assert_eq!(reparsed.to_string(), parsed.to_string());
-    }
-}
-
-#[cfg(test)]
-mod resource_prefix_strip {
-    //! `tarball+` and `file+` are accepted on parse but stripped on Display.
-    //! This matches Nix's canonical output for the curl-based fetcher,
-    //! so a Display string handed to Nix's parser stays string-equal to
-    //! what Nix would emit itself.
-    use std::assert_matches;
-
-    use super::*;
-    use crate::{ResourceType, TransportLayer, flakeref::resource_url::ResourceUrl};
-
-    #[test]
-    fn tarball_explicit_prefix_strips_on_display() {
-        let parsed: FlakeRef = "tarball+https://example.com/foo.tar.gz".parse().unwrap();
-        assert_eq!(parsed.to_string(), "https://example.com/foo.tar.gz");
     }
 
-    #[test]
-    fn tarball_bare_https_round_trips() {
-        let input = "https://example.com/foo.tar.gz";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn file_explicit_prefix_strips_on_display() {
-        let parsed: FlakeRef = "file+https://example.com/data.bin".parse().unwrap();
-        assert_eq!(parsed.to_string(), "https://example.com/data.bin");
-    }
-
-    #[test]
-    fn file_bare_https_round_trips() {
-        let input = "https://example.com/data.bin";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn bare_file_with_tarball_extension_parses_as_tarball() {
-        // Nix accepts a bare `file://...tar.gz` as a tarball because the
-        // tarball-extension classifier matches; the file scheme rejects
-        // it for the same reason. nix-uri must match that decision so
-        // the round-trip from the explicit `tarball+file://` shape is
-        // stable across parse -> Display -> parse.
-        let parsed: FlakeRef = "file:///tmp/foo.tar.gz".parse().unwrap();
+    /// Each type takes its own attributes. Rejections checked against
+    /// `builtins.flakeRefToString` in Nix 2.35.3.
+    #[rstest]
+    #[case(r#"{"type":"github","owner":"o","repo":"r","name":"x"}"#)]
+    #[case(r#"{"type":"github","owner":"o","repo":"r","extra":1}"#)]
+    #[case(r#"{"type":"git","url":"https://h.org/r","treeHash":"abc"}"#)]
+    #[case(r#"{"type":"git","url":"https://h.org/r","host":"x"}"#)]
+    fn unsupported_attribute(#[case] json: &str) {
         assert_matches!(
-            *parsed.kind(),
-            FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::Tarball,
-                transport_type: Some(TransportLayer::File),
+            FlakeRef::from_attrs(&attrs(json)),
+            Err(NixUriError::Unsupported(UnsupportedReason::Param { .. }))
+        );
+    }
+
+    #[test]
+    fn wrong_attribute_type() {
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(
+                r#"{"type":"github","owner":"o","repo":"r","lastModified":"1"}"#
+            )),
+            Err(NixUriError::InvalidValue {
+                field: "lastModified",
                 ..
             })
         );
     }
 
     #[test]
-    fn bare_file_no_extension_parses_as_file() {
-        // Nix's file scheme accepts a bare `file://` URL with no
-        // tarball extension; the tarball scheme rejects it for the same
-        // reason. nix-uri's extension-based `is_tarball` classifier
-        // matches that decision.
-        let parsed: FlakeRef = "file:///tmp/data.bin".parse().unwrap();
+    fn forge_takes_a_ref_or_a_rev() {
         assert_matches!(
-            *parsed.kind(),
-            FlakeRefType::Resource(ResourceUrl {
-                res_type: ResourceType::File,
-                transport_type: Some(TransportLayer::File),
-                ..
-            })
+            FlakeRef::from_attrs(&attrs(
+                r#"{"type":"github","owner":"o","repo":"r","ref":"main","rev":"a3a3dda3bacf61e8a39258a0ed9c924eeca8e293"}"#
+            )),
+            Err(NixUriError::FieldConflict { .. })
+        );
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(
+                r#"{"type":"github","owner":"o","repo":"r","ref":"a b"}"#
+            )),
+            Err(NixUriError::InvalidValue { field: "ref", .. })
         );
     }
 
     #[test]
-    fn tarball_plus_file_round_trips() {
-        // Parsing `tarball+file:///path/to/file.tar.gz` produces
-        // `Resource(Tarball, File)`; Display strips the `tarball+`
-        // prefix to `file:///path/to/file.tar.gz`; re-parse must land
-        // on the same `Resource(Tarball, File)` variant so the
-        // round-trip is stable.
-        let input = "tarball+file:///x/y.tar.gz";
-        let parsed: FlakeRef = input.parse().unwrap();
-        let displayed = parsed.to_string();
-        assert_eq!(displayed, "file:///x/y.tar.gz");
-        let reparsed: FlakeRef = displayed.parse().unwrap();
-        assert_eq!(parsed, reparsed);
-        assert_eq!(reparsed.to_string(), displayed);
+    fn missing_or_unknown_type() {
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(r#"{"owner":"o"}"#)),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::MissingParameter { .. }
+            ))
+        );
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(r#"{"type":"mercurial","url":"https://h/r"}"#)),
+            Err(NixUriError::Unsupported(UnsupportedReason::UriType { .. }))
+        );
+        assert_matches!(
+            FlakeRef::from_attrs(&attrs(r#"{"type":"github","owner":"o"}"#)),
+            Err(NixUriError::Unsupported(
+                UnsupportedReason::MissingParameter { .. }
+            ))
+        );
     }
-}
 
-#[cfg(test)]
-mod accessors {
-    //! Identity (owner / repo / domain / `forge_identity`) and ref/rev
-    //! accessors on `FlakeRef`: the public surface that replaces
-    //! triple-pattern-matches at the call site.
-    use super::*;
-    use rstest::rstest;
-
+    /// `FlakeRef` serialises as its attributes.
     #[test]
-    fn forge_identity_for_github() {
-        let parsed: FlakeRef = "github:nixos/nixpkgs".parse().unwrap();
-        let id = parsed.forge_identity().unwrap();
-        assert_eq!(id.platform, GitForgePlatform::GitHub);
-        assert_eq!(id.owner, "nixos");
-        assert_eq!(id.repo, "nixpkgs");
-        assert_eq!(id.domain, "github.com");
-    }
-
-    #[test]
-    fn forge_identity_for_sourcehut() {
-        // Nix uses `git.sr.ht` for SourceHut clone URLs; the apex
-        // `sr.ht` does not serve git over HTTPS, so a downstream that
-        // hands the returned `domain` to a fetcher would 404.
-        let parsed: FlakeRef = "sourcehut:~owner/repo".parse().unwrap();
-        let id = parsed.forge_identity().unwrap();
-        assert_eq!(id.platform, GitForgePlatform::SourceHut);
-        assert_eq!(id.owner, "~owner");
-        assert_eq!(id.repo, "repo");
-        assert_eq!(id.domain, "git.sr.ht");
-    }
-
-    #[test]
-    fn sourcehut_round_trips() {
-        let uri = "sourcehut:nix-community/foo";
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch");
-        assert_eq!(parsed.domain(), Some("git.sr.ht"));
-    }
-
-    #[test]
-    fn gitlab_with_host_override_returns_overridden_domain() {
-        // Self-hosted GitLab via `?host=` mirrors Nix's host-attr
-        // resolution: the host attr overrides the canonical domain.
-        // Without the override, fetch URLs target gitlab.com and
-        // silently break for self-hosted instances.
-        let parsed: FlakeRef = "gitlab:openldap/openldap?host=git.openldap.org"
-            .parse()
-            .unwrap();
-        let id = parsed.forge_identity().unwrap();
-        assert_eq!(id.domain, "git.openldap.org");
-        assert_eq!(parsed.domain(), Some("git.openldap.org"));
-    }
-
-    #[test]
-    fn github_without_host_returns_canonical_domain() {
-        let parsed: FlakeRef = "github:o/r".parse().unwrap();
-        let id = parsed.forge_identity().unwrap();
-        assert_eq!(id.domain, "github.com");
-        assert_eq!(parsed.domain(), Some("github.com"));
-    }
-
-    #[test]
-    fn sourcehut_without_host_returns_git_sr_ht() {
-        // SourceHut's canonical clone host is `git.sr.ht`; the apex
-        // `sr.ht` does not serve git over HTTPS.
-        let parsed: FlakeRef = "sourcehut:~user/repo".parse().unwrap();
-        let id = parsed.forge_identity().unwrap();
-        assert_eq!(id.domain, "git.sr.ht");
-        assert_eq!(parsed.domain(), Some("git.sr.ht"));
-    }
-
-    #[test]
-    fn forge_identity_none_for_path_indirect_resource() {
-        // Resource(Git) URLs do not have a guaranteed owner/repo/domain
-        // triple; those are extracted ad hoc from the URL string and not
-        // part of the kind's structure, so forge_identity returns None.
-        for uri in [
-            "path:./foo",
-            "flake:nixpkgs",
-            "git+https://example.com/owner/repo",
-        ] {
-            let parsed: FlakeRef = uri.parse().unwrap();
-            assert!(parsed.forge_identity().is_none(), "expected None for {uri}",);
-        }
-    }
-
-    #[rstest]
-    #[case(
-        "github:nixos/nixpkgs",
-        Some("nixos"),
-        Some("nixpkgs"),
-        Some("github.com")
-    )]
-    #[case("gitlab:owner/repo", Some("owner"), Some("repo"), Some("gitlab.com"))]
-    #[case(
-        "sourcehut:user/project",
-        Some("user"),
-        Some("project"),
-        Some("git.sr.ht")
-    )]
-    #[case(
-        "git+https://example.com/a/b",
-        Some("a"),
-        Some("b"),
-        Some("example.com")
-    )]
-    #[case("path:./foo", None, None, None)]
-    #[case("flake:nixpkgs", None, None, None)]
-    fn identity_accessors(
-        #[case] uri: &str,
-        #[case] owner: Option<&str>,
-        #[case] repo: Option<&str>,
-        #[case] domain: Option<&str>,
-    ) {
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(parsed.owner(), owner, "owner mismatch for {uri}");
-        assert_eq!(parsed.repo(), repo, "repo mismatch for {uri}");
-        assert_eq!(parsed.domain(), domain, "domain mismatch for {uri}");
-    }
-
-    #[rstest]
-    #[case("github:nixos/nixpkgs", RefKind::None, false)]
-    #[case("github:nixos/nixpkgs/release-23.05", RefKind::Ref, false)]
-    #[case(
-        "github:nixos/nixpkgs/abc1234567890123456789012345678901234567",
-        RefKind::Rev,
-        true
-    )]
-    #[case(
-        "flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567",
-        RefKind::Both,
-        true
-    )]
-    #[case(
-        "github:nixos/nixpkgs?rev=abc1234567890123456789012345678901234567",
-        RefKind::Rev,
-        true
-    )]
-    fn ref_kind_and_pinning(
-        #[case] uri: &str,
-        #[case] expected_kind: RefKind,
-        #[case] pinned: bool,
-    ) {
-        let parsed: FlakeRef = uri.parse().unwrap();
+    fn serde_is_the_lock_file_shape() {
+        let flake_ref: FlakeRef = "github:NixOS/nixpkgs/nixos-25.05?dir=lib".parse().unwrap();
+        let json = serde_json::to_string(&flake_ref).unwrap();
         assert_eq!(
-            parsed.ref_kind(),
-            expected_kind,
-            "ref_kind mismatch for {uri}"
+            json,
+            r#"{"dir":"lib","owner":"NixOS","ref":"nixos-25.05","repo":"nixpkgs","type":"github"}"#
         );
-        assert_eq!(
-            parsed.is_pinned_to_rev(),
-            pinned,
-            "is_pinned_to_rev mismatch for {uri}",
-        );
-    }
-
-    #[test]
-    fn ref_or_rev_prefers_rev_when_pinned() {
-        let parsed: FlakeRef =
-            "flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567"
-                .parse()
-                .unwrap();
-        // When both are populated, the "what does this resolve to?" answer
-        // is the pinned rev; that's the canonical lookup.
-        assert_eq!(
-            parsed.ref_or_rev(),
-            Some("abc1234567890123456789012345678901234567"),
-        );
-        assert_eq!(parsed.ref_(), Some("release-23.05"));
-        assert_eq!(
-            parsed.rev(),
-            Some("abc1234567890123456789012345678901234567")
-        );
+        assert_eq!(serde_json::from_str::<FlakeRef>(&json).unwrap(), flake_ref);
     }
 }
 
 #[cfg(test)]
 mod builders {
-    //! Consuming builders (`with_*`, `without_pin`, `into_uri`) collapse the
-    //! parse -> set -> `to_string` pattern into a single expression.
-    use super::*;
-
-    #[test]
-    fn with_ref_round_trip_path_component() {
-        let updated = "github:nixos/nixpkgs"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_ref(Some("release-23.05".into()))
-            .into_uri();
-        assert_eq!(updated, "github:nixos/nixpkgs/release-23.05");
-    }
-
-    #[test]
-    fn with_rev_promotes_path_component_to_three_segment_for_indirect() {
-        // Adding a rev to an Indirect that already has a ref produces the
-        // canonical Nix three-segment form.
-        let updated = "flake:nixpkgs/release-23.05"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_rev(Some("abc1234567890123456789012345678901234567".into()))
-            .into_uri();
-        assert_eq!(
-            updated,
-            "flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567",
-        );
-    }
-
-    #[test]
-    fn without_pin_clears_rev_keeps_ref() {
-        let updated = "flake:nixpkgs/release-23.05/abc1234567890123456789012345678901234567"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .without_pin()
-            .into_uri();
-        assert_eq!(updated, "flake:nixpkgs/release-23.05");
-    }
-
-    #[test]
-    fn with_rev_on_resource_flips_to_query_parameter() {
-        let updated = "git+https://github.com/owner/repo"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_rev(Some("abc1234567890123456789012345678901234567".into()))
-            .into_uri();
-        assert_eq!(
-            updated,
-            "git+https://github.com/owner/repo?rev=abc1234567890123456789012345678901234567",
-        );
-    }
-
-    #[test]
-    fn with_fragment_round_trip() {
-        let updated = "github:nixos/nixpkgs"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_fragment(Some("hello".into()))
-            .into_uri();
-        assert_eq!(updated, "github:nixos/nixpkgs#hello");
-    }
-
-    #[test]
-    fn with_ref_then_with_rev_chains_on_gitforge() {
-        // Both setters compose: each writes to its own typed slot, neither
-        // clobbers the other's. `Display` for `GitForge` in `PathComponent`
-        // form renders ref preferentially, so this asserts on the typed
-        // slots (the source of truth) rather than on the rendered URI.
-        let updated = "github:nixos/nixpkgs"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_ref(Some("release-23.05".into()))
-            .with_rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()));
-
-        assert_eq!(updated.ref_(), Some("release-23.05"));
-        assert_eq!(
-            updated.rev(),
-            Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298")
-        );
-    }
-
-    #[test]
-    fn with_ref_then_with_rev_chains_on_indirect() {
-        // Indirect renders both via the three-segment `flake:id/ref/rev`
-        // form.
-        let updated = "flake:nixpkgs"
-            .parse::<FlakeRef>()
-            .unwrap()
-            .with_ref(Some("release-23.05".into()))
-            .with_rev(Some("b2df4e4e80e04cbb33a350f87717f4bd6140d298".into()))
-            .into_uri();
-
-        assert_eq!(
-            updated,
-            "flake:nixpkgs/release-23.05/b2df4e4e80e04cbb33a350f87717f4bd6140d298",
-        );
-    }
-}
-
-#[cfg(test)]
-mod https_github_classification {
-    //! Plain `https://github.com/...` URLs do NOT auto-promote to
-    //! `GitForge(GitHub)`. They classify through the same
-    //! tarball-extension auto-classifier that any other `https://` URL
-    //! does. Matches Nix's behaviour: the github scheme is gated on
-    //! `url.scheme == "github"`, so a bare HTTPS URL only ever reaches
-    //! the curl-based opaque-tarball/file path.
-    //!
-    //! Regression: a `flake.lock` whose `original` is
-    //! `{ type = "tarball"; url = "https://github.com/NixOS/nixpkgs/pull/483360.diff"; }`
-    //! must NOT round-trip through nix-uri as a github forge: Nix
-    //! cannot fetch back a `github:NixOS/nixpkgs/pull/483360.diff`
-    //! shape.
-    use super::*;
-
-    #[test]
-    fn https_github_with_pull_path_does_not_reclassify_to_github_forge() {
-        let url = "https://github.com/NixOS/nixpkgs/pull/483360.diff";
-        let parsed: FlakeRef = url.parse().unwrap();
-        assert!(
-            !matches!(parsed.kind(), FlakeRefType::GitForge(_)),
-            "expected non-GitForge classification for {url}, got {:?}",
-            *parsed.kind(),
-        );
-        assert_eq!(parsed.to_string(), url);
-    }
-
-    #[test]
-    fn https_github_owner_repo_is_resource_not_gitforge() {
-        let url = "https://github.com/nixos/nixpkgs";
-        let parsed: FlakeRef = url.parse().unwrap();
-        assert!(
-            !matches!(parsed.kind(), FlakeRefType::GitForge(_)),
-            "bare https://github.com/<o>/<r> must not auto-promote to GitForge, got {:?}",
-            *parsed.kind(),
-        );
-        assert_eq!(parsed.to_string(), url);
-    }
-
-    #[test]
-    fn https_github_archive_tarball_remains_resource() {
-        let url = "https://github.com/user/repo/archive/main.tar.gz";
-        let parsed: FlakeRef = url.parse().unwrap();
-        assert!(matches!(parsed.kind(), FlakeRefType::Resource(_)));
-        assert_eq!(parsed.to_string(), url);
-    }
-}
-
-#[cfg(test)]
-mod ref_rev_validation {
-    //! Public-surface coverage for two `GitForge` / query-rev validation
-    //! contracts:
-    //!
-    //! - `GitForge` (`github` / `gitlab` / `sourcehut`) inputs that combine
-    //!   `ref` and `rev` in any path-component or query-string combination
-    //!   are rejected with `FieldConflict { left: "ref", right: "rev" }`,
-    //!   matching Nix's rejection of the same shape on git-archive URLs.
-    //!   Indirect's three-segment form and `Resource(Git)`'s
-    //!   `?ref=&rev=` shape stay legitimate.
-    //! - A `?rev=` value that is not exactly 40 ASCII hex digits is
-    //!   rejected with `InvalidValue { field: "rev", .. }`. The
-    //!   path-component side already validated via `looks_like_rev`; the
-    //!   query side was the unguarded ingestion path.
-    use super::*;
-    use crate::error::NixUriError;
-    use rstest::rstest;
     use std::assert_matches;
 
-    const HEX40: &str = "b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-
-    #[rstest]
-    #[case::github_both_in_query(
-        "github:owner/repo?ref=main&rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::github_ref_path_rev_query(
-        "github:owner/repo/main?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::github_rev_path_ref_query(
-        "github:owner/repo/b2df4e4e80e04cbb33a350f87717f4bd6140d298?ref=main"
-    )]
-    #[case::gitlab_both_in_query(
-        "gitlab:owner/repo?ref=main&rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::gitlab_ref_path_rev_query(
-        "gitlab:owner/repo/main?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::gitlab_rev_path_ref_query(
-        "gitlab:owner/repo/b2df4e4e80e04cbb33a350f87717f4bd6140d298?ref=main"
-    )]
-    #[case::sourcehut_both_in_query(
-        "sourcehut:~owner/repo?ref=main&rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::sourcehut_ref_path_rev_query(
-        "sourcehut:~owner/repo/main?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d298"
-    )]
-    #[case::sourcehut_rev_path_ref_query(
-        "sourcehut:~owner/repo/b2df4e4e80e04cbb33a350f87717f4bd6140d298?ref=main"
-    )]
-    fn gitforge_rejects_ref_and_rev_together(#[case] uri: &str) {
-        // Matches Nix's rejection of git-archive URLs that combine ref
-        // and rev. FieldConflict surfaces the structural relationship
-        // (two mutually exclusive fields were both populated), distinct
-        // from a value-shape failure.
-        assert_matches!(
-            FlakeRef::parse(uri, Context::Standalone),
-            Err(NixUriError::FieldConflict {
-                left: "ref",
-                right: "rev",
-            }),
-            "expected mutual-exclusion rejection for {uri}",
-        );
-    }
-
-    #[rstest]
-    #[case::github("github:owner/repo?rev=not-a-hash")]
-    #[case::gitlab("gitlab:owner/repo?rev=not-a-hash")]
-    #[case::sourcehut("sourcehut:~owner/repo?rev=not-a-hash")]
-    #[case::short_hex("github:owner/repo?rev=abc123")]
-    #[case::between_40_and_64_hex(
-        "github:owner/repo?rev=b2df4e4e80e04cbb33a350f87717f4bd6140d29800000"
-    )]
-    #[case::sha256_hex(
-        "github:owner/repo?rev=0000000000000000000000000000000000000000000000000000000000000000"
-    )]
-    fn gitforge_query_rev_must_be_sha1(#[case] uri: &str) {
-        // A git forge parses `?rev=` as a SHA-1 hash, and a failure is
-        // final in every context.
-        for context in [Context::Standalone, Context::FlakeInput] {
-            assert_matches!(
-                FlakeRef::parse(uri, context),
-                Err(NixUriError::InvalidValue { field: "rev", .. }),
-                "expected hash rejection for {uri} in {context:?}",
-            );
-        }
-    }
-
-    #[rstest]
-    #[case::git_https("git+https://example.com/owner/repo?rev=not-a-hash")]
-    #[case::hg_https("hg+https://example.com/repo?rev=zzzz")]
-    #[case::indirect("flake:nixpkgs?rev=main")]
-    #[case::tarball("https://example.com/x.tar.gz?rev=abc")]
-    #[case::path("path:/foo?rev=abc")]
-    fn query_rev_is_not_validated_elsewhere(#[case] uri: &str) {
-        // Only git forges check the revision when parsing.
-        FlakeRef::parse(uri, Context::Standalone)
-            .unwrap_or_else(|e| panic!("{uri}: expected accept, got {e:?}"));
-    }
-
-    // GitLab and SourceHut `?ref=...` (the ref-only query shape) have no
-    // existing positive coverage; the github/git+ siblings are already
-    // pinned by `set_ref_preserves_query_parameter_location`,
-    // `set_rev_preserves_location`, and the `canonical_round_trip`
-    // rstest. Pin the two missing forges here so the new check is shown
-    // not to over-reject them.
-    #[rstest]
-    #[case::gitlab_query_ref("gitlab:owner/repo?ref=main")]
-    #[case::sourcehut_query_ref("sourcehut:~owner/repo?ref=main")]
-    fn ref_only_query_still_parses_for_each_forge(#[case] uri: &str) {
-        let parsed = uri
-            .parse::<FlakeRef>()
-            .expect("input must continue to parse cleanly");
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch for {uri}");
-    }
-
-    #[test]
-    fn indirect_path_component_three_segment_still_parses() {
-        // Nix's `flake:id/ref/rev` form populates BOTH ref and rev
-        // legitimately; the GitForge exclusion does not extend to
-        // Indirect. Pin that.
-        let uri = format!("flake:nixpkgs/release-23.05/{HEX40}");
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(parsed.ref_(), Some("release-23.05"));
-        assert_eq!(parsed.rev(), Some(HEX40));
-    }
-
-    #[test]
-    fn resource_git_with_ref_and_rev_still_parses() {
-        // Resource(Git) explicitly supports `?ref=branch&rev=hex` (you
-        // can pin a rev and remember which branch it came from). This
-        // is NOT the GitForge case; do not reject.
-        let uri = "git+https://git.somehost.tld/user/path?ref=branch&rev=fdc8ef970de2b4634e1b3dca296e1ed918459a9e";
-        let parsed: FlakeRef = uri.parse().unwrap();
-        assert_eq!(parsed.to_string(), uri);
-    }
-}
-
-#[cfg(test)]
-mod path_authority_and_rev {
-    //! Public-surface coverage for the `Path` arm:
-    //!
-    //! - `path://...` is a malformed shape Nix rejects with a
-    //!   "path URL should not have an authority" diagnostic; nix-uri
-    //!   refuses any `path:` input where the body begins with `//`.
-    //! - `?rev=<40hex>` on a `path:` input routes into the typed `rev`
-    //!   slot and Display re-emits it; locked store-path inputs of the
-    //!   form `path:/nix/store/...?rev=...` round-trip cleanly.
-    use super::*;
-    use crate::error::{NixUriError, UnsupportedReason};
-    use rstest::rstest;
-    use std::assert_matches;
-
-    const HEX40: &str = "b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-
-    #[rstest]
-    #[case::host("path://somehost/abs/path")]
-    #[case::host_no_path("path://x")]
-    fn path_authority_rejected(#[case] uri: &str) {
-        assert_matches!(
-            uri.parse::<FlakeRef>(),
-            Err(NixUriError::Unsupported(UnsupportedReason::Authority {
-                scheme: "path",
-            })),
-            "expected authority rejection for {uri}",
-        );
-    }
-
-    /// Nix rejects `path://` only when the URL authority's host is
-    /// non-empty. An empty authority (the body literally begins `///`
-    /// or is just `//`) is accepted and decodes to the trailing path.
-    /// Pin both the parse acceptance and the Display round-trip.
-    #[rstest]
-    #[case::triple_slash("path:///abs/path")]
-    #[case::quad_slash("path:////a")]
-    fn path_triple_slash_parses_as_absolute_path(#[case] uri: &str) {
-        let parsed: FlakeRef = uri
-            .parse()
-            .unwrap_or_else(|e| panic!("empty-authority path must parse: {uri} -> {e}"));
-        assert_matches!(parsed.kind(), FlakeRefType::Path { rev: None, .. });
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch for {uri}");
-        let reparsed: FlakeRef = parsed.to_string().parse().unwrap();
-        assert_eq!(parsed, reparsed, "parse-Display-parse not stable for {uri}");
-    }
-
-    #[test]
-    fn path_with_authority_host_rejects() {
-        assert_matches!(
-            "path://host/abs".parse::<FlakeRef>(),
-            Err(NixUriError::Unsupported(UnsupportedReason::Authority {
-                scheme: "path",
-            })),
-        );
-    }
-
-    #[rstest]
-    #[case::abs("path:/foo/bar")]
-    #[case::abs_trailing("path:/home/kenji/.config/dotfiles/")]
-    #[case::cwd("path:./relative")]
-    #[case::parent("path:..")]
-    #[case::single_dot("path:.")]
-    fn path_non_authority_still_parses(#[case] uri: &str) {
-        let parsed: FlakeRef = uri
-            .parse()
-            .unwrap_or_else(|e| panic!("path body must continue to parse: {uri} -> {e}"));
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch for {uri}");
-    }
-
-    #[rstest]
-    #[case::store_path(&format!("path:/nix/store/abc?rev={HEX40}"))]
-    #[case::abs(&format!("path:/var/cache?rev={HEX40}"))]
-    #[case::with_trailing_slash(&format!("path:/home/kenji/?rev={HEX40}"))]
-    fn path_rev_query_round_trips(#[case] uri: &str) {
-        let parsed: FlakeRef = uri.parse().expect("path with ?rev= must parse");
-        assert_eq!(parsed.rev(), Some(HEX40), "rev not stored for {uri}");
-        assert_eq!(parsed.to_string(), uri, "round-trip mismatch for {uri}");
-        let reparsed: FlakeRef = parsed.to_string().parse().unwrap();
-        assert_eq!(parsed, reparsed, "parse-Display-parse not stable for {uri}");
-    }
-
-    #[test]
-    fn path_rev_with_dir_keeps_alphabetical_query() {
-        // `dir` typed slot + `rev` from kind both land in the alphabetical
-        // query block; dir < rev lexicographically.
-        let uri = format!("path:/abs/path?dir=sub&rev={HEX40}");
-        let parsed: FlakeRef = uri.parse().expect("must parse");
-        assert_eq!(parsed.to_string(), uri);
-    }
-}
-
-#[cfg(test)]
-mod percent_encoding_round_trip {
-    //! Pin the encoder/decoder pair against Nix's two encoding contracts:
-    //! query strings keep `unreserved + ":@/?"` raw, while the fragment
-    //! encodes the four extra bytes `:@/?` too. The tests cover both
-    //! sides plus the strict-decode contract (a stray `%` not followed
-    //! by two hex digits rejects rather than passing through).
-    use crate::{Context, FlakeRef, NixUriError};
     use rstest::rstest;
 
-    #[rstest]
-    #[case::space("github:o/r?dir=foo%20bar", "foo bar")]
-    #[case::percent("github:o/r?dir=foo%25bar", "foo%bar")]
-    #[case::semicolon("github:o/r?dir=foo%3Bbar", "foo;bar")]
-    #[case::plus("github:o/r?dir=foo%2Bbar", "foo+bar")]
-    #[case::ampersand("github:o/r?dir=foo%26bar", "foo&bar")]
-    #[case::equals("github:o/r?dir=foo%3Dbar", "foo=bar")]
-    #[case::hash("github:o/r?dir=foo%23bar", "foo#bar")]
-    #[case::non_ascii("github:o/r?dir=f%C3%96%C3%B6", "fÖö")]
-    fn query_value_round_trips_for_encoded_byte(#[case] input: &str, #[case] decoded: &str) {
-        let parsed: FlakeRef = input.parse().expect("input must parse");
-        let dir_value = parsed
-            .params()
-            .entries()
-            .into_iter()
-            .find(|(k, _)| *k == "dir")
-            .map(|(_, v)| v.to_string());
-        assert_eq!(dir_value, Some(decoded.to_string()));
-        assert_eq!(parsed.to_string(), input);
+    use crate::{Context, FlakeRef, NixUriError, RefKind, UnsupportedReason};
+
+    fn parse(s: &str) -> FlakeRef {
+        FlakeRef::parse(s, Context::FlakeInput).unwrap()
     }
 
-    #[rstest]
-    #[case::colon_in_value("github:o/r?dir=foo:bar")]
-    #[case::at_in_value("github:o/r?dir=foo@bar")]
-    #[case::slash_in_value("github:o/r?dir=foo/bar")]
-    fn allowed_query_chars_remain_unencoded(#[case] input: &str) {
-        let parsed: FlakeRef = input.parse().expect("input must parse");
-        assert_eq!(parsed.to_string(), input);
+    const REV: &str = "a3a3dda3bacf61e8a39258a0ed9c924eeca8e293";
+
+    #[test]
+    fn with_ref() {
+        let flake_ref = parse("github:o/r").with_ref(Some("main".into())).unwrap();
+        assert_eq!(flake_ref.to_string(), "github:o/r/main");
+        assert_eq!(flake_ref.ref_kind(), RefKind::Ref);
+        let flake_ref = flake_ref.with_ref(None).unwrap();
+        assert_eq!(flake_ref.to_string(), "github:o/r");
     }
 
-    #[rstest]
-    #[case::space("github:o/r#default%20package", "default package")]
-    #[case::percent("github:o/r#a%25b", "a%b")]
-    #[case::non_ascii("github:o/r#f%C3%96%C3%B6", "fÖö")]
-    #[case::question_mark_in_fragment("github:o/r#a%3Fb", "a?b")]
-    #[case::slash_in_fragment("github:o/r#a%2Fb", "a/b")]
-    fn fragment_round_trips_for_encoded_byte(#[case] input: &str, #[case] decoded: &str) {
-        let parsed = FlakeRef::parse(input, Context::Installable).expect("input must parse");
-        assert_eq!(parsed.fragment(), Some(decoded));
-        assert_eq!(parsed.to_string(), input);
+    #[test]
+    fn with_ref_checks_the_name() {
+        assert_matches!(
+            parse("github:o/r").with_ref(Some("a..b".into())),
+            Err(NixUriError::InvalidValue { field: "ref", .. })
+        );
+        assert_matches!(
+            parse("hg+https://h/r").with_ref(Some("-x".into())),
+            Err(NixUriError::InvalidValue { field: "ref", .. })
+        );
     }
 
     #[rstest]
-    #[case::truncated_one_hex("github:o/r?dir=%2")]
-    #[case::truncated_no_hex("github:o/r?dir=%")]
-    #[case::non_hex("github:o/r?dir=%XY")]
-    #[case::non_hex_partial("github:o/r?dir=%2Z")]
-    fn malformed_query_value_percent_encoding_rejected(#[case] input: &str) {
-        match input.parse::<FlakeRef>() {
-            Err(NixUriError::InvalidUrl(_)) => {}
-            other => panic!("expected InvalidUrl for {input}, got {other:?}"),
-        }
-    }
-
-    #[rstest]
-    #[case::truncated("github:o/r#a%2")]
-    #[case::non_hex("github:o/r#a%XY")]
-    fn malformed_fragment_percent_encoding_rejected(#[case] input: &str) {
-        match input.parse::<FlakeRef>() {
-            Err(NixUriError::InvalidUrl(_)) => {}
-            other => panic!("expected InvalidUrl for {input}, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn arbitrary_param_value_round_trips_with_space() {
-        // `name` is a real Git allowedAttr (no typed slot in
-        // `LocationParameters`), so it lands in the arbitrary bag where
-        // the encoder pair is exercised end-to-end.
-        let input = "git+https://example.com/repo?name=hello%20world";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_string(), input);
-    }
-}
-
-#[cfg(test)]
-mod ref_rev_builders {
-    //! Tests for the `pin_to_rev` and `try_with_ref` / `try_with_rev`
-    //! ergonomic builders. The `pin_to_rev` shape exists because
-    //! `with_rev(Some(_))` on a `RefLocation::PathComponent` `GitForge`
-    //! that already carries a `ref_` silently drops the rev (see the
-    //! `ref_.or(rev)` Display arm in `fr_type.rs`). The `try_*` shape
-    //! is the loud opt-in alternative to the silent no-op `with_*`
-    //! builders for callers who want the round-trip mismatch surfaced
-    //! at the call site.
-    use super::*;
-    use crate::{NixUriError, UnsupportedReason};
-
-    const HEX40: &str = "b2df4e4e80e04cbb33a350f87717f4bd6140d298";
-
-    #[test]
-    fn pin_to_rev_clears_path_component_ref() {
-        // Regression: with_rev(Some(rev)) on a parsed `github:foo/bar/main`
-        // (which carries ref_=Some("main")) leaves both ref_ and rev set;
-        // the GitForge Display arm at fr_type.rs renders `ref_.or(rev)` for
-        // RefLocation::PathComponent, so the rev silently disappears from
-        // the round-trip string. `pin_to_rev` clears the ref slot first so
-        // the rev wins.
-        let parsed: FlakeRef = "github:foo/bar/main".parse().unwrap();
-        let pinned = parsed.pin_to_rev(HEX40.to_string());
-        assert_eq!(pinned.ref_(), None);
-        assert_eq!(pinned.rev(), Some(HEX40));
-        let rendered = pinned.to_string();
-        assert!(rendered.contains(HEX40), "expected rev in {rendered}");
-        assert!(!rendered.contains("main"), "ref leaked into {rendered}");
-    }
-
-    #[test]
-    fn pin_to_rev_replaces_query_param_ref() {
-        let parsed: FlakeRef = "github:foo/bar?ref=main".parse().unwrap();
-        let pinned = parsed.pin_to_rev(HEX40.to_string());
-        assert_eq!(pinned.ref_(), None);
-        assert_eq!(pinned.rev(), Some(HEX40));
-        let rendered = pinned.to_string();
-        assert!(rendered.contains(HEX40), "expected rev in {rendered}");
-        assert!(!rendered.contains("ref="), "ref= leaked into {rendered}");
-    }
-
-    #[test]
-    fn pin_to_rev_sets_rev_on_path() {
-        // `Path` has a typed `rev` slot (`Path { path, rev }`), so pinning
-        // is meaningful: it writes the rev. There is no ref slot to clear.
-        let parsed: FlakeRef = "path:/x/y".parse().unwrap();
-        let pinned = parsed.pin_to_rev(HEX40.to_string());
-        assert_eq!(pinned.rev(), Some(HEX40));
-    }
-
-    #[test]
-    fn try_with_ref_path_returns_unsupported() {
-        // Nix's path scheme does not accept `ref`; setting one would
-        // render a string the parser would reject (round-trip break).
-        // The loud opt-in surfaces this as a typed error.
-        let parsed: FlakeRef = "path:/x/y".parse().unwrap();
-        let result = parsed.try_with_ref(Some("main".into()));
-        match result {
-            Err(NixUriError::Unsupported(UnsupportedReason::Field { field, .. })) => {
-                assert_eq!(field, "ref");
-            }
-            other => panic!("expected Unsupported(Field {{ field: \"ref\" }}), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn try_with_ref_tarball_returns_unsupported() {
-        // Nix's tarball/file schemes do not accept `ref`.
-        let parsed: FlakeRef = "tarball+https://example.com/foo.tar.gz".parse().unwrap();
-        let result = parsed.try_with_ref(Some("v1".into()));
-        match result {
-            Err(NixUriError::Unsupported(UnsupportedReason::Field { field, .. })) => {
-                assert_eq!(field, "ref");
-            }
-            other => panic!("expected Unsupported(Field {{ field: \"ref\" }}), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn try_with_ref_github_succeeds() {
-        let parsed: FlakeRef = "github:foo/bar".parse().unwrap();
-        let updated = parsed
-            .try_with_ref(Some("main".into()))
-            .expect("github accepts ref");
-        assert_eq!(updated.ref_(), Some("main"));
-    }
-
-    #[test]
-    fn try_with_ref_clear_is_always_ok() {
-        // Clearing has no Nix-level implications, so try_with_ref(None)
-        // succeeds even on kinds without a ref slot.
-        let parsed: FlakeRef = "path:/x/y".parse().unwrap();
-        let cleared = parsed.try_with_ref(None).expect("clear is a no-op");
-        assert_eq!(cleared.ref_(), None);
-    }
-
-    #[test]
-    fn try_with_rev_path_succeeds() {
-        // Nix's path scheme accepts `rev`, so try_with_rev surfaces
-        // no error.
-        let parsed: FlakeRef = "path:/x/y".parse().unwrap();
-        let pinned = parsed
-            .try_with_rev(Some(HEX40.into()))
-            .expect("path accepts rev");
-        assert_eq!(pinned.rev(), Some(HEX40));
-    }
-
-    #[test]
-    fn with_ref_silent_noop_path() {
-        // Regression guard for the existing infallible builder: setting
-        // a ref on Path is silently dropped today (set_ref's Path arm is
-        // a no-op). The try_* variant is the loud opt-in alternative.
-        let parsed: FlakeRef = "path:/x/y".parse().unwrap();
-        let updated = parsed.with_ref(Some("main".into()));
-        assert_eq!(updated.ref_(), None, "with_ref must remain a no-op on Path");
-    }
-}
-
-#[cfg(test)]
-mod canonical_string {
-    //! Tests for [`FlakeRef::to_canonical_string`].
-    //!
-    //! Pins the per-scheme canonicalisation rules and guards `Display`
-    //! from drifting along with them.
-
-    use super::*;
-
-    const HEX40: &str = "0000000000000000000000000000000000000000";
-
-    /// Round-trip helper: every canonical string this library produces
-    /// must re-parse as a `FlakeRef`. (It need not equal the input
-    /// `FlakeRef` byte-for-byte; canonical-form may drop fields like
-    /// `?ref=` location or `?allRefs=1`.)
-    fn assert_canonical_reparses(input: &str) {
-        let parsed: FlakeRef = input.parse().expect("input parses");
-        let canonical = parsed.to_canonical_string();
-        let _: FlakeRef = canonical
-            .parse()
-            .unwrap_or_else(|e| panic!("canonical {canonical:?} failed to re-parse: {e}"));
-    }
-
-    // GitForge `?ref=` / `?rev=` canonicalises to path-component form.
-
-    #[test]
-    fn github_ref_query_canonicalises_to_path_component() {
-        let input = "github:nixos/nixpkgs?ref=nixos-23.11";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(
-            parsed.to_canonical_string(),
-            "github:nixos/nixpkgs/nixos-23.11"
-        );
-        // Display-unchanged regression guard.
-        assert_eq!(parsed.to_string(), input);
-        assert_canonical_reparses(input);
-    }
-
-    #[test]
-    fn github_rev_query_canonicalises_to_path_component() {
-        let input = "github:nixos/nixpkgs?rev=0000000000000000000000000000000000000000";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(
-            parsed.to_canonical_string(),
-            "github:nixos/nixpkgs/0000000000000000000000000000000000000000"
-        );
-        assert_eq!(parsed.to_string(), input);
-        assert_canonical_reparses(input);
-    }
-
-    #[test]
-    fn github_path_component_ref_unchanged() {
-        // Already-canonical input survives canonicalisation as-is.
-        let input = "github:nixos/nixpkgs/main";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn gitlab_ref_query_canonicalises() {
-        let input = "gitlab:foo/bar?ref=v1.0";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), "gitlab:foo/bar/v1.0");
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn sourcehut_ref_query_canonicalises() {
-        let input = "sourcehut:~user/repo?ref=branch";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), "sourcehut:~user/repo/branch");
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn github_canonical_keeps_host_and_nar_hash() {
-        // `host` and `narHash` are the two query keys Nix emits on a
-        // canonical git-archive URL. Everything else (dir,
-        // lastModified, revCount, arbitrary) is dropped.
-        let input = "github:nixos/nixpkgs/main?host=ghe.example.com&narHash=sha256-abc";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(
-            parsed.to_canonical_string(),
-            "github:nixos/nixpkgs/main?host=ghe.example.com&narHash=sha256-abc"
+    #[case("https://h/x.tar.gz")]
+    #[case("/foo")]
+    #[case("file+https://h/x")]
+    fn with_ref_on_a_kind_without_one(#[case] input: &str) {
+        assert_matches!(
+            parse(input).with_ref(Some("main".into())),
+            Err(NixUriError::Unsupported(UnsupportedReason::Field { .. }))
         );
     }
 
     #[test]
-    fn github_canonical_picks_rev_over_ref() {
-        // Construct a pathological state where both ref and rev are
-        // populated. Nix asserts they cannot coexist on a git-archive
-        // URL, so this is nonsensical, but we need a deterministic
-        // answer if a caller ever wires both via the builder; pick rev
-        // (rev is the more-specific pin).
-        let mut forge = GitForge {
-            platform: GitForgePlatform::GitHub,
-            owner: "nixos".into(),
-            repo: "nixpkgs".into(),
-            ref_: Some("main".into()),
-            rev: Some(HEX40.into()),
-            location: RefLocation::PathComponent,
-        };
-        // The proptest generator deliberately avoids this shape; we
-        // synthesise it directly.
-        forge.location = RefLocation::PathComponent;
-        let f = FlakeRef::default().with_kind(FlakeRefType::GitForge(forge));
-        assert_eq!(
-            f.to_canonical_string(),
-            format!("github:nixos/nixpkgs/{HEX40}")
+    fn forge_takes_a_ref_or_a_rev() {
+        assert_matches!(
+            parse(&format!("github:o/r/{REV}")).with_ref(Some("main".into())),
+            Err(NixUriError::FieldConflict { .. })
         );
-    }
-
-    // Typed Git booleans only emit on the truthy branch, and
-    // `allRefs` is never emitted.
-
-    #[test]
-    fn git_all_refs_dropped_on_canonical() {
-        let input = "git+https://github.com/nixos/nixpkgs?allRefs=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        // Nix's canonical git URL does not include allRefs in the
-        // serialised query.
-        assert_eq!(
-            parsed.to_canonical_string(),
-            "git+https://github.com/nixos/nixpkgs"
+        assert_matches!(
+            parse("github:o/r/main").with_rev(Some(REV.into())),
+            Err(NixUriError::FieldConflict { .. })
         );
-        // Display still preserves the round-trip.
-        assert_eq!(parsed.to_string(), input);
-        assert_canonical_reparses(input);
+        let pinned = parse("github:o/r/main").pin_to_rev(REV.into());
+        assert_eq!(pinned.to_string(), format!("github:o/r/{REV}"));
     }
 
     #[test]
-    fn git_lfs_truthy_kept() {
-        let input = "git+https://example.com/repo?lfs=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn git_lfs_falsy_dropped() {
-        let input = "git+https://example.com/repo?lfs=0";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), "git+https://example.com/repo");
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn git_submodules_truthy_kept() {
-        let input = "git+https://example.com/repo?submodules=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn git_shallow_truthy_kept() {
-        let input = "git+https://example.com/repo?shallow=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-        assert_eq!(parsed.to_string(), input);
-    }
-
-    #[test]
-    fn git_export_ignore_truthy_kept() {
-        let input = "git+https://example.com/repo?exportIgnore=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-    }
-
-    #[test]
-    fn git_verify_commit_truthy_kept() {
-        let input = "git+https://example.com/repo?verifyCommit=1";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-    }
-
-    #[test]
-    fn git_locked_attrs_dropped() {
-        // narHash, lastModified, revCount are not part of Nix's
-        // canonical git URL output; canonical drops them.
-        let input = "git+https://example.com/repo?lastModified=42&narHash=sha256-x&revCount=7";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), "git+https://example.com/repo");
-    }
-
-    #[test]
-    fn git_ref_and_rev_canonical_alphabetised() {
-        // Nix emits both ref and rev on the same canonical git URL
-        // when set; canonical sort keeps ref before rev.
-        let input = format!("git+https://example.com/repo?ref=main&rev={HEX40}");
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-    }
-
-    // Resource(Mercurial): only ref/rev survive canonicalisation.
-
-    #[test]
-    fn hg_canonical_keeps_only_ref_and_rev() {
-        let input = "hg+https://example.com/repo?ref=main";
-        let parsed: FlakeRef = input.parse().unwrap();
-        assert_eq!(parsed.to_canonical_string(), input);
-    }
-
-    // Indirect / Path / File / Tarball: canonical delegates to Display.
-
-    #[test]
-    fn indirect_canonical_matches_display() {
-        for input in ["flake:nixpkgs", "flake:nixpkgs/main", "flake:nixos/nixpkgs"] {
-            let parsed: FlakeRef = input.parse().unwrap();
-            assert_eq!(parsed.to_canonical_string(), parsed.to_string(), "{input}");
-            assert_eq!(parsed.to_canonical_string(), input);
-        }
-    }
-
-    #[test]
-    fn path_canonical_matches_display() {
-        for input in ["path:./foo", "path:/abs/path"] {
-            let parsed: FlakeRef = input.parse().unwrap();
-            assert_eq!(parsed.to_canonical_string(), parsed.to_string(), "{input}");
-            assert_eq!(parsed.to_canonical_string(), input);
-        }
-    }
-
-    #[test]
-    fn fragment_survives_canonicalisation() {
-        let input = "github:nixos/nixpkgs/main#hello";
-        let parsed = FlakeRef::parse(input, Context::Installable).unwrap();
+    fn git_keeps_the_ref_when_pinned() {
+        let pinned = parse("git+https://h/r?ref=main").pin_to_rev(REV.into());
         assert_eq!(
-            parsed.to_canonical_string(),
-            "github:nixos/nixpkgs/main#hello"
+            pinned.to_string(),
+            format!("git+https://h/r?ref=main&rev={REV}")
         );
-        assert_eq!(parsed.to_string(), input);
-    }
-}
-
-#[cfg(test)]
-mod historical_seed_round_trip {
-    //! Round-trip pins for shapes once captured in
-    //! `proptest-regressions/flakeref/proptest.txt`. Each test builds
-    //! the value and asserts the round-trip property
-    //! `flake_ref.to_string().parse() == Ok(flake_ref)`.
-    use super::*;
-
-    fn assert_round_trip(value: &FlakeRef) {
-        let displayed = value.to_string();
-        let parsed: FlakeRef = displayed
-            .parse()
-            .unwrap_or_else(|e| panic!("Display output {displayed:?} failed to parse: {e}"));
-        assert_eq!(*value, parsed, "round-trip mismatch for {displayed:?}");
+        assert_eq!(pinned.ref_kind(), RefKind::Both);
+        let unpinned = pinned.with_rev(None).unwrap();
+        assert_eq!(unpinned.to_string(), "git+https://h/r?ref=main");
     }
 
-    /// `path://` with an empty authority parses to a `Path` whose body
-    /// is the literal `//`. Nix's URL parser admits the empty-authority
-    /// form (it only rejects an authority with a non-empty host). The
-    /// internal byte-for-byte round-trip must hold so a value
-    /// constructed this way comes back identical.
     #[test]
-    fn path_double_slash_round_trips() {
-        let value = FlakeRef::new(FlakeRefType::Path {
-            path: "//".to_string(),
-            rev: None,
-        });
-        assert_eq!(value.to_string(), "path://");
-        assert_round_trip(&value);
+    fn with_dir() {
+        let flake_ref = parse("path:/x").with_dir(Some("sub dir".into()));
+        assert_eq!(flake_ref.dir(), Some("sub dir"));
+        assert_eq!(flake_ref.to_string(), "path:/x?dir=sub%20dir");
+    }
+
+    #[test]
+    fn with_empty_dir() {
+        let flake_ref = parse("path:/x?dir=a").with_dir(Some(String::new()));
+        assert_eq!(flake_ref.dir(), None);
+        assert_eq!(flake_ref.to_string(), "path:/x");
+    }
+
+    #[test]
+    fn forge_identity_uses_the_host() {
+        let identity = parse("gitlab:o/r?host=git.example.org")
+            .forge_identity()
+            .unwrap();
+        assert_eq!(identity.domain, "git.example.org");
+        assert_eq!(
+            parse("sourcehut:~o/r").forge_identity().unwrap().domain,
+            "git.sr.ht"
+        );
+        assert!(parse("git+https://h/o/r").forge_identity().is_none());
     }
 }

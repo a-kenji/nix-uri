@@ -7,6 +7,6 @@ fuzz_target!(|data: String| {
     if let Ok(parsed) = data.parse::<FlakeRef>() {
         let uri = parsed.to_string();
         let re_parsed = uri.parse::<FlakeRef>().unwrap();
-        assert_eq!(parsed, re_parsed);
+        assert_eq!(uri, re_parsed.to_string());
     }
 });

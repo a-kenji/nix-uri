@@ -6,30 +6,36 @@ fn main() {
     let mut args = std::env::args().skip(1);
 
     let Some(input) = args.next() else {
-        println!("Usage: cli <uri> [standalone|input|installable]");
+        println!("Usage: cli <uri> [standalone|input|fragment]");
         return;
     };
 
-    let context = match args.next().as_deref() {
-        None | Some("input") => Context::FlakeInput,
-        Some("standalone") => Context::Standalone,
-        Some("installable") => Context::Installable,
+    let parsed = match args.next().as_deref() {
+        None | Some("standalone") => {
+            FlakeRef::parse(&input, Context::Standalone).map(|r| (r, None))
+        }
+        Some("input") => FlakeRef::parse(&input, Context::FlakeInput).map(|r| (r, None)),
+        Some("fragment") => FlakeRef::parse_with_fragment(&input),
         Some(other) => {
-            eprintln!("Unknown context `{other}`, expected standalone, input or installable.");
+            eprintln!("Unknown context `{other}`, expected standalone, input or fragment.");
             return;
         }
     };
 
-    match FlakeRef::parse(&input, context) {
-        Ok(flake_ref) => {
+    match parsed {
+        Ok((flake_ref, fragment)) => {
             println!(
-                "The parsed representation of the uri is the following:\n{:#?}",
-                flake_ref
+                "{}",
+                serde_json::to_string(&flake_ref.to_attrs()).expect("attributes serialise")
             );
-            println!("This is the flake_ref:\n{}", flake_ref);
+            println!("{flake_ref}");
+            if let Some(fragment) = fragment {
+                println!("#{fragment}");
+            }
         }
         Err(e) => {
-            eprintln!("Parsing error on input: {}\nError: {}", input, e);
+            eprintln!("Parsing error on input: {input}\nError: {e}");
+            std::process::exit(1);
         }
     }
 }

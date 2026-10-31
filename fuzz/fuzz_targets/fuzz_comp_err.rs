@@ -1,13 +1,14 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use nix_uri::{Context, FlakeRef, NixUriResult};
+use nix_uri::{FlakeRef, NixUriResult};
 
 // Check if the errors are the same.
 
 fuzz_target!(|data: String| {
-    // `nix flake check <ref>` parses its argument as an installable.
-    let parsed: NixUriResult<FlakeRef> = FlakeRef::parse(&data, Context::Installable);
+    // `nix flake check <ref>` reads a flake reference with a fragment.
+    let parsed: NixUriResult<FlakeRef> =
+        FlakeRef::parse_with_fragment(&data).map(|(flake_ref, _)| flake_ref);
     let nix_cmd = check_ref(&data);
     match parsed {
         Err(err) => {

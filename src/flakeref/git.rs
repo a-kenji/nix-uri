@@ -1,0 +1,192 @@
+use crate::{
+    error::NixUriResult,
+    flakeref::{
+        RenderUrl,
+        attrs::{AttrReader, Attrs},
+        forge::render_rev,
+        url::Url,
+        validators::{query_bool, validated_ref_name},
+    },
+};
+
+/// A Git repository (`git+https://`, `git+ssh://`, `git+file:`, `git://`, any `git+<transport>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct GitRepo {
+    pub url: String,
+    pub ref_: Option<String>,
+    pub rev: Option<String>,
+    pub shallow: Option<bool>,
+    pub submodules: Option<bool>,
+    pub lfs: Option<bool>,
+    pub export_ignore: Option<bool>,
+    pub all_refs: Option<bool>,
+    pub verify_commit: Option<bool>,
+    pub keytype: Option<String>,
+    pub public_key: Option<String>,
+    pub public_keys: Option<String>,
+    pub nar_hash: Option<String>,
+    pub rev_count: Option<u64>,
+    pub last_modified: Option<u64>,
+    pub name: Option<String>,
+    pub dirty_rev: Option<String>,
+    pub dirty_short_rev: Option<String>,
+}
+
+impl GitRepo {
+    pub fn new(url: String) -> Self {
+        Self {
+            url,
+            ref_: None,
+            rev: None,
+            shallow: None,
+            submodules: None,
+            lfs: None,
+            export_ignore: None,
+            all_refs: None,
+            verify_commit: None,
+            keytype: None,
+            public_key: None,
+            public_keys: None,
+            nar_hash: None,
+            rev_count: None,
+            last_modified: None,
+            name: None,
+            dirty_rev: None,
+            dirty_short_rev: None,
+        }
+    }
+
+    pub(crate) fn from_url(mut url: Url) -> NixUriResult<Self> {
+        let mut take = |key: &str| url.query.remove(key);
+        let mut git = Self::new(String::new());
+        git.ref_ = take("ref").map(|r| validated_ref_name(&r)).transpose()?;
+        git.rev = take("rev");
+        git.keytype = take("keytype");
+        git.public_key = take("publicKey");
+        git.public_keys = take("publicKeys");
+        git.shallow = take("shallow").map(|v| query_bool(&v));
+        git.submodules = take("submodules").map(|v| query_bool(&v));
+        git.lfs = take("lfs").map(|v| query_bool(&v));
+        git.export_ignore = take("exportIgnore").map(|v| query_bool(&v));
+        git.all_refs = take("allRefs").map(|v| query_bool(&v));
+        git.verify_commit = take("verifyCommit").map(|v| query_bool(&v));
+        if url.scheme != "git" {
+            url.scheme = url
+                .scheme
+                .strip_prefix("git+")
+                .unwrap_or(&url.scheme)
+                .to_string();
+        }
+        git.url = url.to_string();
+        Ok(git)
+    }
+
+    pub(crate) fn from_attrs(mut attrs: AttrReader<'_>) -> NixUriResult<Self> {
+        let url = attrs.required_string("url")?;
+        let git = Self {
+            url: fix_git_url(&url)?,
+            ref_: attrs
+                .string("ref")?
+                .map(|r| validated_ref_name(&r))
+                .transpose()?,
+            rev: attrs.string("rev")?,
+            shallow: attrs.bool("shallow")?,
+            submodules: attrs.bool("submodules")?,
+            lfs: attrs.bool("lfs")?,
+            export_ignore: attrs.bool("exportIgnore")?,
+            all_refs: attrs.bool("allRefs")?,
+            verify_commit: attrs.bool("verifyCommit")?,
+            keytype: attrs.string("keytype")?,
+            public_key: attrs.string("publicKey")?,
+            public_keys: attrs.string("publicKeys")?,
+            nar_hash: attrs.string("narHash")?,
+            rev_count: attrs.int("revCount")?,
+            last_modified: attrs.int("lastModified")?,
+            name: attrs.string("name")?,
+            dirty_rev: attrs.string("dirtyRev")?,
+            dirty_short_rev: attrs.string("dirtyShortRev")?,
+        };
+        attrs.finish()?;
+        Ok(git)
+    }
+
+    pub(crate) fn write_attrs(&self, attrs: &mut Attrs) {
+        attrs.insert("type", "git");
+        attrs.insert("url", &self.url);
+        attrs.set_opt("ref", self.ref_.as_ref());
+        attrs.set_opt("rev", self.rev.as_ref());
+        attrs.set_opt("shallow", self.shallow);
+        attrs.set_opt("submodules", self.submodules);
+        attrs.set_opt("lfs", self.lfs);
+        attrs.set_opt("exportIgnore", self.export_ignore);
+        attrs.set_opt("allRefs", self.all_refs);
+        attrs.set_opt("verifyCommit", self.verify_commit);
+        attrs.set_opt("keytype", self.keytype.as_ref());
+        attrs.set_opt("publicKey", self.public_key.as_ref());
+        attrs.set_opt("publicKeys", self.public_keys.as_ref());
+        attrs.set_opt("narHash", self.nar_hash.as_ref());
+        attrs.set_opt("revCount", self.rev_count);
+        attrs.set_opt("lastModified", self.last_modified);
+        attrs.set_opt("name", self.name.as_ref());
+        attrs.set_opt("dirtyRev", self.dirty_rev.as_ref());
+        attrs.set_opt("dirtyShortRev", self.dirty_short_rev.as_ref());
+    }
+
+    pub(crate) fn render(&self) -> RenderUrl {
+        let prefix = |scheme: &str| {
+            if scheme == "git" {
+                String::new()
+            } else {
+                "git+".to_string()
+            }
+        };
+        let mut out = RenderUrl::from_url_string(&self.url, prefix);
+        out.query_opt("ref", self.ref_.as_deref());
+        out.query_opt("rev", self.rev.as_deref().map(render_rev).as_deref());
+        for (key, value) in [
+            ("shallow", self.shallow),
+            ("lfs", self.lfs),
+            ("submodules", self.submodules),
+            ("exportIgnore", self.export_ignore),
+            ("verifyCommit", self.verify_commit),
+        ] {
+            if value == Some(true) {
+                out.query_opt(key, Some("1"));
+            }
+        }
+        out.query_opt("keytype", self.keytype.as_deref());
+        out.query_opt("publicKey", self.public_key.as_deref());
+        out.query_opt("publicKeys", self.public_keys.as_deref());
+        out
+    }
+}
+
+/// Nix's normalisation of a git `url` attribute.
+fn fix_git_url(url: &str) -> NixUriResult<String> {
+    if url.starts_with('/') {
+        return Ok(format!("file://{}", super::path_ref::render_fs_path(url)));
+    }
+    if let Some(ssh) = scp_to_ssh(url) {
+        return Ok(ssh);
+    }
+    let mut parsed = Url::parse(url)?;
+    if let Some(transport) = parsed.scheme.strip_prefix("git+") {
+        parsed.scheme = transport.to_string();
+    }
+    Ok(parsed.to_string())
+}
+
+/// `[user@]host:path`, where the part before `:` has no `/`.
+fn scp_to_ssh(url: &str) -> Option<String> {
+    if url.contains("://") {
+        return None;
+    }
+    let (authority, path) = url.split_once(':')?;
+    if authority.is_empty() || authority.contains('/') || !authority.contains('@') {
+        return None;
+    }
+    Url::parse(&format!("ssh://{authority}/{path}"))
+        .ok()
+        .map(|u| u.to_string())
+}

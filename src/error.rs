@@ -6,23 +6,11 @@ pub type NixUriResult<T> = Result<T, NixUriError>;
 
 /// Failures the parser may produce.
 ///
-/// Variants are stable categories: callers can match `Parse` for a syntactic
-/// failure with a byte position, `Unsupported` for a recognised input that
-/// asks for something the library does not implement, `InvalidUrl` for input
-/// that fails the high-level URL shape, and `InvalidValue` for a field that
-/// passed parsing but failed validation. Structural failures that involve a
-/// relationship between fields (rather than a single value's literal shape)
-/// surface as named variants such as `FieldConflict`, `DuplicateField`, or
-/// `TooManyIndirectSegments`.
+/// Variants are stable categories: callers can match `Unsupported` for a recognised input
+/// that asks for something the library does not implement.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum NixUriError {
-    /// Parser failed at the given byte offset, expecting `expected`.
-    #[error("parse error at byte {position}: expected {expected}")]
-    Parse {
-        position: usize,
-        expected: ParseExpected,
-    },
     /// The input parsed but requests an unsupported operation, parameter,
     /// type, or transport layer.
     #[error("{0}")]
@@ -38,9 +26,8 @@ pub enum NixUriError {
     /// fields surface as [`Self::FieldConflict`].
     #[error("invalid value for `{field}`: {reason}")]
     InvalidValue { field: &'static str, reason: String },
-    /// Two fields were populated that the grammar treats as mutually
-    /// exclusive. The canonical case is a `GitForge` input that supplies
-    /// both `ref` and `rev`; Nix rejects the same shape.
+    /// Two fields were populated that the grammar treats as mutually exclusive. The
+    /// canonical case is a `GitForge` input that supplies both `ref` and `rev`.
     #[error("`{left}` and `{right}` are mutually exclusive")]
     FieldConflict {
         left: &'static str,
@@ -57,27 +44,11 @@ pub enum NixUriError {
     TooManyIndirectSegments { count: usize },
 }
 
-/// What the parser was looking for when it failed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ParseExpected {
-    /// A specific literal token, e.g. the `//` after `hg+https:`.
-    Tag(&'static str),
-}
-
-impl fmt::Display for ParseExpected {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Tag(t) => write!(f, "tag `{t}`"),
-        }
-    }
-}
-
 /// Categorised reason an `Unsupported` URI was rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum UnsupportedReason {
-    /// A query parameter is not supported by the flakeref type.
+    /// A query parameter or attribute is not supported by the flakeref type.
     Param { name: String },
     /// A field is recognised but only valid on a different set of types.
     Field {
@@ -90,13 +61,11 @@ pub enum UnsupportedReason {
     TransportLayer { ty: String },
     /// A required parameter for the type is missing.
     MissingParameter { ty: String, parameter: String },
-    /// The scheme does not accept a URL authority (`//host`). Nix rejects
-    /// the same shape; `path://host/...` is malformed even though it
-    /// superficially looks like a URL.
+    /// The scheme does not accept a URL authority (`//host`).
     Authority { scheme: &'static str },
-    /// A `#fragment` in a [`Context`](crate::Context) that does not take
-    /// one. Only [`Context::Installable`](crate::Context::Installable)
-    /// allows a fragment.
+    /// A non-empty `#fragment` given to [`FlakeRef::parse`](crate::FlakeRef::parse). A
+    /// fragment names an attribute path, see
+    /// [`FlakeRef::parse_with_fragment`](crate::FlakeRef::parse_with_fragment).
     Fragment { fragment: String },
     /// A relative path in a [`Context`](crate::Context) that only takes
     /// absolute paths ([`Context::Standalone`](crate::Context::Standalone)).
@@ -115,7 +84,7 @@ impl fmt::Display for UnsupportedReason {
             Self::Param { name } => {
                 write!(
                     f,
-                    "the parameter `{name}` is not supported by the flakeref type"
+                    "the parameter or attribute `{name}` is not supported by the flakeref type"
                 )
             }
             Self::Field {
@@ -131,10 +100,9 @@ impl fmt::Display for UnsupportedReason {
             Self::Authority { scheme } => {
                 write!(f, "the `{scheme}:` scheme does not accept a URL authority")
             }
-            Self::Fragment { fragment } => write!(
-                f,
-                "unexpected fragment `{fragment}`, only installables take a `#fragment`"
-            ),
+            Self::Fragment { fragment } => {
+                write!(f, "unexpected fragment `{fragment}` in a flake reference")
+            }
             Self::RelativePath { path } => write!(
                 f,
                 "`{path}` is not an absolute path or a valid flake reference URL"
@@ -143,24 +111,6 @@ impl fmt::Display for UnsupportedReason {
                 f,
                 "`{url}` is an SCP-style git location, write it as `git+ssh://<user>@<host>/<path>`"
             ),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_position_reports_missing_authority() {
-        // `hg+https:` must be followed by `//`.
-        let err = crate::FlakeRef::parse("hg+https:x", crate::Context::Standalone).unwrap_err();
-        match err {
-            NixUriError::Parse { position, expected } => {
-                assert_eq!(position, 9, "expected offset 9, got {position}");
-                assert_eq!(expected, ParseExpected::Tag("//"));
-            }
-            other => panic!("expected NixUriError::Parse, got {other:?}"),
         }
     }
 }

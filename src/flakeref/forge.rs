@@ -1,13 +1,18 @@
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
+use crate::{
+    error::{NixUriError, NixUriResult},
+    flakeref::{
+        RenderUrl,
+        attrs::{AttrReader, Attrs},
+        url::render_segments,
+        validators::{sha1_to_base16, validated_ref_name},
+    },
+};
 
-use crate::flakeref::RefLocation;
-
-/// Which git-forge scheme a `GitForge` reference uses. Spelled in the URL as
-/// the leading `github:`, `gitlab:`, or `sourcehut:` token; also drives the
-/// canonical-domain lookup in [`super::ForgeIdentity`].
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Which git-forge scheme a `GitForge` reference uses: the Nix type `github`, `gitlab` or
+/// `sourcehut`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum GitForgePlatform {
     GitHub,
@@ -15,19 +20,43 @@ pub enum GitForgePlatform {
     SourceHut,
 }
 
-/// A reference into a git forge (`github:`, `gitlab:`, `sourcehut:`).
-///
-/// Ref and rev are stored as separate typed slots; the parser splits a
-/// path-component value (`github:owner/repo/<x>`) into `rev` if `<x>` is
-/// 40-hex, otherwise into `ref_`. The
-/// `location` field records where the value would be rendered on `Display`,
-/// so round-trips preserve `?ref=` vs `/ref` form. The "no ref and no rev"
-/// state is encoded by both fields being `None`; `location` still defaults
-/// to `PathComponent` for that case.
-///
-/// `#[non_exhaustive]` reserves room for future fields (e.g. `host`,
-/// `submodules`) to land here without breaking match arms downstream.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+impl GitForgePlatform {
+    pub(crate) fn from_type(ty: &str) -> Option<Self> {
+        match ty {
+            "github" => Some(Self::GitHub),
+            "gitlab" => Some(Self::GitLab),
+            "sourcehut" => Some(Self::SourceHut),
+            _ => None,
+        }
+    }
+
+    /// The Nix type name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GitHub => "github",
+            Self::GitLab => "gitlab",
+            Self::SourceHut => "sourcehut",
+        }
+    }
+
+    /// The host Nix fetches from when no `host` is given.
+    pub fn default_host(self) -> &'static str {
+        match self {
+            Self::GitHub => "github.com",
+            Self::GitLab => "gitlab.com",
+            Self::SourceHut => "git.sr.ht",
+        }
+    }
+}
+
+impl Display for GitForgePlatform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A repository on a git forge (`github:`, `gitlab:`, `sourcehut:`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct GitForge {
     pub platform: GitForgePlatform,
@@ -35,27 +64,89 @@ pub struct GitForge {
     pub repo: String,
     pub ref_: Option<String>,
     pub rev: Option<String>,
-    pub location: RefLocation,
+    /// A self-hosted instance, such as `git.example.org` for GitLab.
+    pub host: Option<String>,
+    pub nar_hash: Option<String>,
+    pub last_modified: Option<u64>,
+    pub tree_hash: Option<String>,
 }
 
-impl Display for GitForgePlatform {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::GitHub => "github",
-                Self::GitLab => "gitlab",
-                Self::SourceHut => "sourcehut",
-            }
-        )
+impl GitForge {
+    pub fn new(platform: GitForgePlatform, owner: String, repo: String) -> Self {
+        Self {
+            platform,
+            owner,
+            repo,
+            ref_: None,
+            rev: None,
+            host: None,
+            nar_hash: None,
+            last_modified: None,
+            tree_hash: None,
+        }
     }
+
+    pub(crate) fn from_attrs(
+        platform: GitForgePlatform,
+        mut attrs: AttrReader<'_>,
+    ) -> NixUriResult<Self> {
+        let forge = Self {
+            platform,
+            owner: attrs.required_string("owner")?,
+            repo: attrs.required_string("repo")?,
+            ref_: attrs
+                .string("ref")?
+                .map(|r| validated_ref_name(&r))
+                .transpose()?,
+            rev: attrs.string("rev")?,
+            host: attrs.string("host")?,
+            nar_hash: attrs.string("narHash")?,
+            last_modified: attrs.int("lastModified")?,
+            tree_hash: attrs.string("treeHash")?,
+        };
+        attrs.finish()?;
+        if forge.ref_.is_some() && forge.rev.is_some() {
+            return Err(NixUriError::FieldConflict {
+                left: "ref",
+                right: "rev",
+            });
+        }
+        Ok(forge)
+    }
+
+    pub(crate) fn write_attrs(&self, attrs: &mut Attrs) {
+        attrs.insert("type", self.platform.as_str());
+        attrs.insert("owner", &self.owner);
+        attrs.insert("repo", &self.repo);
+        attrs.set_opt("ref", self.ref_.as_ref());
+        attrs.set_opt("rev", self.rev.as_ref());
+        attrs.set_opt("host", self.host.as_ref());
+        attrs.set_opt("narHash", self.nar_hash.as_ref());
+        attrs.set_opt("lastModified", self.last_modified);
+        attrs.set_opt("treeHash", self.tree_hash.as_ref());
+    }
+
+    /// `<type>:<owner>/<repo>[/<ref or rev>]?host=&narHash=`.
+    pub(crate) fn render(&self) -> RenderUrl {
+        let rev = self.rev.as_deref().map(render_rev);
+        let mut segments = vec![self.owner.as_str(), self.repo.as_str()];
+        segments.extend(self.ref_.as_deref().or(rev.as_deref()));
+        let mut url = RenderUrl::new(format!("{}:{}", self.platform, render_segments(&segments)));
+        url.query_opt("host", self.host.as_deref());
+        url.query_opt("narHash", self.nar_hash.as_deref());
+        url
+    }
+}
+
+pub(crate) fn render_rev(rev: &str) -> String {
+    sha1_to_base16(rev).unwrap_or_else(|| rev.to_string())
 }
 
 #[cfg(test)]
 mod owner_repo {
-    //! Git-forge owners and repos are not validated beyond URL syntax, and
-    //! each segment is percent-decoded after splitting on `/`.
+    //! Git-forge owners and repos are not validated beyond URL syntax, and each segment
+    //! is percent-decoded after splitting on `/`. The expected `Display` is
+    //! `builtins.flakeRefToString` in Nix 2.35.3.
     use rstest::rstest;
     use std::assert_matches;
 
@@ -82,7 +173,12 @@ mod owner_repo {
     #[case("github:.dotted/repo", ".dotted", "repo", "github:.dotted/repo")]
     #[case("github:owner/.dotrepo", "owner", ".dotrepo", "github:owner/.dotrepo")]
     #[case("github:-dashed/repo", "-dashed", "repo", "github:-dashed/repo")]
-    #[case("github:bad!owner/repo", "bad!owner", "repo", "github:bad!owner/repo")]
+    #[case(
+        "github:bad!owner/repo",
+        "bad!owner",
+        "repo",
+        "github:bad%21owner/repo"
+    )]
     #[case("github:~tilde/repo", "~tilde", "repo", "github:~tilde/repo")]
     #[case("gitlab:~owner/repo", "~owner", "repo", "gitlab:~owner/repo")]
     #[case(
@@ -153,7 +249,8 @@ mod owner_repo {
     fn missing_repo() {
         assert_matches!(
             FlakeRef::parse("github:owner", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "repo"
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. }))
+                if parameter == "repo"
         );
     }
 
