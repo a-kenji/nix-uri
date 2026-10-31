@@ -71,10 +71,10 @@ impl MercurialRepo {
     }
 
     /// `hg+<url>` with `ref` and `rev`.
-    pub(crate) fn render(&self) -> RenderUrl {
-        let mut out = RenderUrl::from_url_string(&self.url, |_| "hg+".to_string());
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let mut out = RenderUrl::from_url_string(&self.url, |_| "hg+");
         out.query_opt("ref", self.ref_.as_deref());
-        out.query_opt("rev", self.rev.as_deref().map(render_rev).as_deref());
+        out.query_opt("rev", self.rev.as_deref().map(render_rev));
         out
     }
 }

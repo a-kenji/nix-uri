@@ -4,7 +4,7 @@ use crate::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
         forge::render_rev,
-        url::Url,
+        url::{EncodedPath, Url},
         validators::{query_bool, validated_ref_name},
     },
 };
@@ -127,17 +127,11 @@ impl GitRepo {
         attrs.set_opt("dirtyShortRev", self.dirty_short_rev.as_ref());
     }
 
-    pub(crate) fn render(&self) -> RenderUrl {
-        let prefix = |scheme: &str| {
-            if scheme == "git" {
-                String::new()
-            } else {
-                "git+".to_string()
-            }
-        };
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let prefix = |scheme: &str| if scheme == "git" { "" } else { "git+" };
         let mut out = RenderUrl::from_url_string(&self.url, prefix);
         out.query_opt("ref", self.ref_.as_deref());
-        out.query_opt("rev", self.rev.as_deref().map(render_rev).as_deref());
+        out.query_opt("rev", self.rev.as_deref().map(render_rev));
         for (key, value) in [
             ("shallow", self.shallow),
             ("lfs", self.lfs),
@@ -159,7 +153,8 @@ impl GitRepo {
 /// Nix's normalisation of a git `url` attribute.
 fn fix_git_url(url: &str) -> NixUriResult<String> {
     if url.starts_with('/') {
-        return Ok(format!("file://{}", super::path_ref::render_fs_path(url)));
+        let path = super::path_ref::fs_path_segments(url);
+        return Ok(format!("file://{}", EncodedPath(&path)));
     }
     if let Some(ssh) = scp_to_ssh(url) {
         return Ok(ssh);

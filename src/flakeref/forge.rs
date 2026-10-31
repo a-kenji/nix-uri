@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Display;
 
 use crate::{
@@ -5,7 +6,6 @@ use crate::{
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
-        url::render_segments,
         validators::{render_nar_hash, rev_to_base16, validated_ref_name},
     },
 };
@@ -127,14 +127,16 @@ impl GitForge {
     }
 
     /// `<type>:<owner>/<repo>[/<ref or rev>]?host=&narHash=`.
-    pub(crate) fn render(&self) -> RenderUrl {
-        let rev = self.rev.as_deref().map(render_rev);
-        let mut segments = vec![self.owner.as_str(), self.repo.as_str()];
-        segments.extend(self.ref_.as_deref().or(rev.as_deref()));
-        let mut url = RenderUrl::new(format!("{}:{}", self.platform, render_segments(&segments)));
+    pub(crate) fn render(&self) -> RenderUrl<'_> {
+        let mut segments = vec![Cow::from(&self.owner), Cow::from(&self.repo)];
+        match (&self.ref_, &self.rev) {
+            (Some(ref_), _) => segments.push(Cow::from(ref_)),
+            (None, Some(rev)) => segments.push(Cow::from(render_rev(rev))),
+            (None, None) => {}
+        }
+        let mut url = RenderUrl::from_segments(self.platform.as_str(), segments);
         url.query_opt("host", self.host.as_deref());
-        let nar_hash = self.nar_hash.as_deref().map(render_nar_hash);
-        url.query_opt("narHash", nar_hash.as_deref());
+        url.query_opt("narHash", self.nar_hash.as_deref().map(render_nar_hash));
         url
     }
 }
