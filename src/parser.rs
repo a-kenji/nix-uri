@@ -246,7 +246,7 @@ fn parse_path(head: &str, context: Context) -> NixUriResult<FlakeRef> {
     if path.contains('\0') {
         return Err(nul_in_path(path));
     }
-    let mut path = PathRef::from_bare(path);
+    let mut path = PathRef::from_bare(if path.is_empty() { "/" } else { path });
     let mut query = match query {
         Some(query) => parse_query(query)?,
         None => Default::default(),
