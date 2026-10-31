@@ -3,8 +3,8 @@ use crate::{
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
+        hash::render_nar_hash,
         url::Url,
-        validators::render_nar_hash,
     },
 };
 

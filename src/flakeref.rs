@@ -18,6 +18,7 @@ pub(crate) mod encoding;
 mod forge;
 pub use forge::{GitForge, GitForgePlatform};
 pub(crate) mod fr_type;
+pub(crate) mod hash;
 pub use fr_type::FlakeRefType;
 mod git;
 pub use git::GitRepo;
