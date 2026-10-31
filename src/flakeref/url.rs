@@ -1,0 +1,323 @@
+//! A URL, parsed and rendered.
+//!
+//! URLs are parsed against RFC 3986, keeping the path as a list of decoded segments and
+//! the query as a map from decoded key to decoded value (sorted, the first of a repeated
+//! key wins), and rendered back percent-encoded.
+
+use std::collections::BTreeMap;
+use std::fmt::{self, Display};
+
+use crate::{
+    error::{NixUriError, NixUriResult, UnsupportedReason},
+    flakeref::encoding::{
+        check_percent_escapes, decode_percent, encode_ip_literal, encode_path_segment,
+        encode_query, encode_unreserved, is_query_char, is_reg_name_char, is_url_path_char,
+        is_userinfo_char,
+    },
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Url {
+    pub(crate) scheme: String,
+    pub(crate) authority: Option<Authority>,
+    /// Decoded path segments. An absolute path starts with an empty segment, so `/a/b` is
+    /// `["", "a", "b"]`.
+    pub(crate) path: Vec<String>,
+    pub(crate) query: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Authority {
+    pub(crate) user: Option<String>,
+    pub(crate) password: Option<String>,
+    pub(crate) host: Host,
+    pub(crate) port: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Host {
+    /// A registered name or IPv4 address, decoded.
+    Name(String),
+    /// The text between the brackets of an IP literal.
+    Literal(String),
+}
+
+/// The application and transport of a scheme: `git+https` is `git` over `https`, `https`
+/// is plain `https`.
+pub(crate) fn split_scheme(scheme: &str) -> (Option<&str>, &str) {
+    match scheme.split_once('+') {
+        Some((application, transport)) => (Some(application), transport),
+        None => (None, scheme),
+    }
+}
+
+/// The scheme of `input`, if it starts with one: a letter followed by letters, digits,
+/// `+`, `-` or `.`, then `:`.
+pub(crate) fn scheme_of(input: &str) -> Option<&str> {
+    let (scheme, _) = input.split_once(':')?;
+    let mut chars = scheme.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    valid.then_some(scheme)
+}
+
+/// Split a query into its decoded `key=value` pairs. A pair without `=` is ignored, and
+/// of a repeated key the first one wins. Unescaped spaces and `"` are tolerated. The
+/// escapes of the whole query must be well-formed, including those of ignored pairs.
+pub(crate) fn parse_query(query: &str) -> NixUriResult<BTreeMap<String, String>> {
+    if !query.chars().all(is_query_char) {
+        return Err(NixUriError::InvalidUrl(query.into()));
+    }
+    check_percent_escapes(query)?;
+    let mut pairs = BTreeMap::new();
+    for pair in query.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let key = decode_percent(key)?.into_owned();
+        let value = decode_percent(value)?.into_owned();
+        pairs.entry(key).or_insert(value);
+    }
+    Ok(pairs)
+}
+
+pub(crate) fn render_query(query: &BTreeMap<String, String>) -> String {
+    query
+        .iter()
+        .map(|(key, value)| format!("{}={}", encode_query(key), encode_query(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+impl Url {
+    pub(crate) fn parse(input: &str) -> NixUriResult<Self> {
+        let invalid = || NixUriError::InvalidUrl(input.into());
+        let scheme = scheme_of(input).ok_or_else(invalid)?;
+        let rest = &input[scheme.len() + 1..];
+        let (rest, query) = match rest.split_once('?') {
+            Some((rest, query)) => (rest, parse_query(query)?),
+            None => (rest, BTreeMap::new()),
+        };
+        let (_, transport) = split_scheme(scheme);
+        let (authority, mut encoded_path) = match rest.strip_prefix("//") {
+            Some(after) => {
+                let end = after.find('/').unwrap_or(after.len());
+                let authority = Authority::parse(&after[..end], transport)?;
+                if transport == "file" && authority.host != Host::Name(String::new()) {
+                    return Err(invalid());
+                }
+                (Some(authority), &after[end..])
+            }
+            None => (None, rest),
+        };
+        if !encoded_path.chars().all(is_url_path_char) {
+            return Err(invalid());
+        }
+        if transport == "file" && encoded_path.is_empty() {
+            encoded_path = "/";
+        }
+        let path = encoded_path
+            .split('/')
+            .map(|segment| decode_percent(segment).map(std::borrow::Cow::into_owned))
+            .collect::<NixUriResult<Vec<_>>>()?;
+        Ok(Self {
+            scheme: scheme.to_string(),
+            authority,
+            path,
+            query,
+        })
+    }
+
+    pub(crate) fn non_empty_segments(&self) -> impl Iterator<Item = &str> {
+        self.path
+            .iter()
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+    }
+}
+
+impl Authority {
+    fn parse(input: &str, transport: &str) -> NixUriResult<Self> {
+        let invalid = || NixUriError::InvalidUrl(input.into());
+        let (userinfo, host_port) = match input.split_once('@') {
+            Some((userinfo, host_port)) => (Some(userinfo), host_port),
+            None => (None, input),
+        };
+        let (user, password) = match userinfo {
+            Some(userinfo) => {
+                if !userinfo.chars().all(is_userinfo_char) {
+                    return Err(invalid());
+                }
+                let (user, password) = match userinfo.split_once(':') {
+                    Some((user, password)) => (user, Some(password)),
+                    None => (userinfo, None),
+                };
+                let password = password
+                    .map(|p| decode_percent(p).map(std::borrow::Cow::into_owned))
+                    .transpose()?;
+                (Some(decode_percent(user)?.into_owned()), password)
+            }
+            None => (None, None),
+        };
+        let (host, port) = if let Some(literal) = host_port.strip_prefix('[') {
+            let (literal, after) = literal.split_once(']').ok_or_else(invalid)?;
+            let valid = !literal.is_empty()
+                && literal
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.' | 'v' | 'V'));
+            if !valid {
+                return Err(invalid());
+            }
+            let port = match after {
+                "" => None,
+                _ => Some(after.strip_prefix(':').ok_or_else(invalid)?),
+            };
+            (Host::Literal(literal.to_string()), port)
+        } else {
+            let (host, port) = match host_port.split_once(':') {
+                Some((host, port)) => (host, Some(port)),
+                None => (host_port, None),
+            };
+            if !host.chars().all(is_reg_name_char) {
+                return Err(invalid());
+            }
+            (Host::Name(decode_percent(host)?.into_owned()), port)
+        };
+        let port = match port {
+            None | Some("") => None,
+            Some(port) if port.chars().all(|c| c.is_ascii_digit()) => match port.parse::<u16>() {
+                Ok(n) if n > 0 => Some(n),
+                _ => return Err(invalid()),
+            },
+            // An SCP-style location (`git@host:owner/repo`) written after `ssh://` reads
+            // its path as the port.
+            Some(_) if transport == "ssh" => {
+                return Err(NixUriError::Unsupported(UnsupportedReason::ScpStyleUrl {
+                    url: input.into(),
+                }));
+            }
+            Some(_) => return Err(invalid()),
+        };
+        Ok(Self {
+            user,
+            password,
+            host,
+            port,
+        })
+    }
+
+    pub(crate) fn host_str(&self) -> String {
+        match &self.host {
+            Host::Name(name) => encode_unreserved(name).into_owned(),
+            Host::Literal(literal) => format!("[{}]", encode_ip_literal(literal)),
+        }
+    }
+}
+
+impl Display for Authority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(user) = &self.user {
+            write!(f, "{}", encode_unreserved(user))?;
+            if let Some(password) = &self.password {
+                write!(f, ":{}", encode_unreserved(password))?;
+            }
+            write!(f, "@")?;
+        }
+        write!(f, "{}", self.host_str())?;
+        if let Some(port) = self.port {
+            write!(f, ":{port}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for Url {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:", self.scheme)?;
+        if let Some(authority) = &self.authority {
+            write!(f, "//{authority}")?;
+        }
+        let path: Vec<_> = self.path.iter().map(|s| encode_path_segment(s)).collect();
+        write!(f, "{}", path.join("/"))?;
+        if !self.query.is_empty() {
+            write!(f, "?{}", render_query(&self.query))?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn render_segments(segments: &[&str]) -> String {
+    segments
+        .iter()
+        .map(|s| encode_path_segment(s))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    /// Each `input` renders as `rendered`, as Nix 2.35.3 renders the `url` attribute of
+    /// `builtins.parseFlakeRef "<input>"`.
+    #[rstest]
+    #[case(
+        "https://flakehub.com/f/NixOS/nixpkgs/*",
+        "https://flakehub.com/f/NixOS/nixpkgs/%2A"
+    )]
+    #[case("https://H.Org/A/b/../c", "https://H.Org/A/b/../c")]
+    #[case("https://h/a%2Fb", "https://h/a%2Fb")]
+    #[case(
+        "https://h/a!$&()+,;=:@~b",
+        "https://h/a%21%24%26%28%29%2B%2C%3B%3D:@~b"
+    )]
+    #[case("https://h/a'b", "https://h/a%27b")]
+    #[case("https://u:p@h:8080/x", "https://u:p@h:8080/x")]
+    #[case("https://u%40x@h/x", "https://u%40x@h/x")]
+    #[case("https://h:443/x", "https://h:443/x")]
+    #[case("https://h:/x", "https://h/x")]
+    #[case("https://[::1]/x", "https://[::1]/x")]
+    #[case("https://h/x/", "https://h/x/")]
+    #[case("https://h", "https://h")]
+    #[case("file:.", "file:.")]
+    #[case("file:///abs/x", "file:///abs/x")]
+    #[case("file:/abs", "file:/abs")]
+    #[case("https://h/a%7Eb", "https://h/a~b")]
+    #[case("https://h/a%41", "https://h/aA")]
+    #[case("https://h/%e2%82%ac", "https://h/%E2%82%AC")]
+    #[case("https://h/x?b=1&a=2", "https://h/x?a=2&b=1")]
+    #[case("https://h/x?a=1&a=2", "https://h/x?a=1")]
+    #[case("https://h/x?a", "https://h/x")]
+    #[case("https://h/x?x=a%20b", "https://h/x?x=a%20b")]
+    // A pair without `=` is ignored, but its escapes must still be well-formed. They need not
+    // decode to UTF-8.
+    #[case("https://h/x?a%41", "https://h/x")]
+    #[case("https://h/x?%C3", "https://h/x")]
+    // A query may hold `[` and `]` unescaped, and they render escaped.
+    #[case("https://h/x?x=[1]", "https://h/x?x=%5B1%5D")]
+    #[case("https://h/x?a]=b", "https://h/x?a%5D=b")]
+    #[case("https://h/x?[", "https://h/x")]
+    fn renders_like_nix(#[case] input: &str, #[case] rendered: &str) {
+        assert_eq!(Url::parse(input).unwrap().to_string(), rendered);
+    }
+
+    #[rstest]
+    #[case("https://h/r^x")]
+    #[case("https://h/r{x")]
+    #[case("https://h/r%zz")]
+    #[case("https://h/r x")]
+    #[case("https://h/r[x")]
+    #[case("https://h/r|x")]
+    #[case("https://h/r\"x")]
+    #[case("file://localhost/x")]
+    #[case("https://h:0/x")]
+    #[case("https://h:65536/x")]
+    #[case("https://h:x/y")]
+    #[case("https://h/x?a%")]
+    #[case("https://h/x?a%zz")]
+    #[case("https://h/x?%2p&b=1")]
+    fn rejects_out_of_grammar(#[case] input: &str) {
+        assert!(Url::parse(input).is_err(), "{input}");
+    }
+}

@@ -1,20 +1,17 @@
 //!
-//! [nix-uri](https://crates.io/crates/nix-uri) is a rust crate that parses
-//! the [nix-uri-scheme](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax)
-//! into a [`flakeref::FlakeRef`] struct.
+//! [nix-uri](https://crates.io/crates/nix-uri) parses [flake references](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake#url-like-syntax) into a [`FlakeRef`].
 //!
-//! Also allows for building a `nix-uri` through the [`flakeref::FlakeRef`]
-//! struct.
+//! A [`FlakeRef`] carries Nix's attributes: [`FlakeRef::to_attrs`] and
+//! [`FlakeRef::from_attrs`] reads a node of `flake.lock` or a registry entry.
+//! Its `Display` tries to mirror how Nix would render these attributes, which means
+//! they are not necessarily round-trip stable.
 //!
-//! Convenience functionality for working with nix `flake.nix` references (flakerefs).
-//! Provides types for the generic attribute set representation, but does not parse it:
+//! Example:
 //!
-//! ``` markdown
-//!    {
-//!      type = "github";
-//!      owner = "NixOS";
-//!      repo = "nixpkgs";
-//!    }
+//! ```
+//! # use nix_uri::FlakeRef;
+//! let flake_ref: FlakeRef = "github:NixOS/nixpkgs?dir=lib&ref=nixos-25.05".parse().unwrap();
+//! assert_eq!(flake_ref.to_string(), "github:NixOS/nixpkgs/nixos-25.05?dir=lib");
 //! ```
 //!
 //! ## Installation
@@ -40,52 +37,44 @@
 //! cargo run --example cli github:nixos/nixpkgs
 //! ```
 //!
-//! The uri syntax representation is parsed by this library:
-//! ## Example: Parsing from `github:nixos/nixpkgs`:
+//! ## Example: Parsing `github:nixos/nixpkgs`
 //!
-//!  ```
-//!   # use nix_uri::{FlakeRef, FlakeRefType, GitForgePlatform};
-//!   let uri = "github:nixos/nixpkgs";
-//!   let parsed: FlakeRef = uri.parse().unwrap();
-//!   match parsed.kind() {
-//!       FlakeRefType::GitForge(forge) => {
-//!           assert_eq!(forge.platform, GitForgePlatform::GitHub);
-//!           assert_eq!(forge.owner, "nixos");
-//!           assert_eq!(forge.repo, "nixpkgs");
-//!           assert!(forge.ref_.is_none() && forge.rev.is_none());
-//!       }
-//!       _ => panic!("expected GitForge"),
-//!   }
-//!   ```
+//! ```
+//! # use nix_uri::{FlakeRef, FlakeRefType, GitForgePlatform};
+//! let parsed: FlakeRef = "github:nixos/nixpkgs".parse().unwrap();
+//! match parsed.kind() {
+//!     FlakeRefType::GitForge(forge) => {
+//!         assert_eq!(forge.platform, GitForgePlatform::GitHub);
+//!         assert_eq!(forge.owner, "nixos");
+//!         assert_eq!(forge.repo, "nixpkgs");
+//!         assert!(forge.ref_.is_none() && forge.rev.is_none());
+//!     }
+//!     _ => panic!("expected GitForge"),
+//! }
+//! ```
 //!
-//!   ## Parse context
+//! ## Parse context
 //!
-//!   Which flake references are accepted depends on where they appear,
-//!   see [`FlakeRef::parse`] and [`Context`]. `FromStr` and `TryFrom`
-//!   parse as a flake input ([`Context::FlakeInput`]).
+//! Which flake references are accepted and how they are parsed depends on
+//! the context they are in.
+//! [`FlakeRef::parse`] and [`Context`].
+//! `FromStr` and `TryFrom` parse as `builtins.parseFlakeRef` would do
+//! ([`Context::Standalone`]). If you want to parse flake references from the CLI,
+//! they should be parsed through: [`FlakeRef::parse_with_fragment`].
 //!
-//!   ```
-//!   # use nix_uri::{Context, FlakeRef, FlakeRefType};
-//!   // `inputs.<name>.url` keeps relative paths.
-//!   let input = FlakeRef::parse("./vendor/foo", Context::FlakeInput).unwrap();
-//!   assert!(matches!(input.kind(), FlakeRefType::Path { .. }));
+//! ```
+//! # use nix_uri::{Context, FlakeRef, FlakeRefType};
+//! // `inputs.<name>.url` keeps relative paths.
+//! let input = FlakeRef::parse("./vendor/foo", Context::FlakeInput).unwrap();
+//! assert!(matches!(input.kind(), FlakeRefType::Path(_)));
 //!
-//!   // On its own, a flake reference takes only absolute paths and no fragment.
-//!   assert!(FlakeRef::parse("./vendor/foo", Context::Standalone).is_err());
+//! // A pure flake reference would error on a relative path.
+//! assert!(FlakeRef::parse("./vendor/foo", Context::Standalone).is_err());
 //!
-//!   // A command-line installable may name an attribute after `#`.
-//!   let installable = FlakeRef::parse("nixpkgs#hello", Context::Installable).unwrap();
-//!   assert_eq!(installable.fragment(), Some("hello"));
-//!   ```
-//!
-//!   The `Display` round-trip preserves the original form:
-//!   ## Example: Round-tripping `github:nixos/nixpkgs`:
-//!   ```
-//!   # use nix_uri::FlakeRef;
-//!   let uri = "github:nixos/nixpkgs";
-//!   let parsed: FlakeRef = uri.parse().unwrap();
-//!   assert_eq!(uri, parsed.to_string());
-//!   ```
+//! let (flake_ref, attr) = FlakeRef::parse_with_fragment("nixpkgs#hello").unwrap();
+//! assert_eq!(flake_ref.to_string(), "flake:nixpkgs");
+//! assert_eq!(attr.as_deref(), Some("hello"));
+//! ```
 
 mod context;
 mod error;
@@ -93,8 +82,8 @@ mod flakeref;
 pub(crate) mod parser;
 
 pub use context::Context;
-pub use error::{NixUriError, NixUriResult, ParseExpected, UnsupportedReason};
+pub use error::{NixUriError, NixUriResult, UnsupportedReason};
 pub use flakeref::{
-    FlakeRef, FlakeRefType, ForgeIdentity, GitForge, GitForgePlatform, LocationParameters, RefKind,
-    RefLocation, ResourceType, ResourceUrl, TransportLayer,
+    AttrValue, Attrs, Download, FlakeRef, FlakeRefType, ForgeIdentity, GitForge, GitForgePlatform,
+    GitRepo, Indirect, MercurialRepo, PathRef, RefKind,
 };

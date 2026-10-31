@@ -1,68 +1,66 @@
-//! Recursive proptest generator + round-trip property for [`FlakeRef`].
+//! Recursive proptest generators and properties for [`FlakeRef`].
 //!
-//! Bottom-up shape: small string strategies feed into the typed structs
-//! ([`GitForge`], [`FlakeRefType::Indirect`], [`FlakeRefType::Path`],
-//! [`ResourceUrl`]), which feed into [`FlakeRefType`], which feeds into
-//! [`FlakeRef`] alongside the fragment and [`LocationParameters`] strategies.
-//!
-//! The generator is constrained to values whose `Display` round-trips
-//! through `FromStr` cleanly. Where the parser/`Display` pair makes a
-//! shape unrepresentable post-round-trip (e.g. a `GitForge` with both
-//! `ref_` and `rev` in the path-component form, where `Display` drops one),
-//! the generator avoids producing it. Each constraint is documented at
-//! its point of use.
+//! Every generated value is one Nix accepts: legal ref names, SHA-1 revisions where a
+//! forge or indirect reference needs them, URLs in the form Nix stores them, and only the
+//! attributes each type takes.
+
+use std::collections::BTreeMap;
 
 use proptest::prelude::*;
 
 use super::{
-    FlakeRef, FlakeRefType, GitForge, GitForgePlatform, LocationParameters, RefLocation,
-    ResourceType, ResourceUrl, TransportLayer,
+    Download, FlakeRef, FlakeRefType, GitForge, GitForgePlatform, GitRepo, Indirect, MercurialRepo,
+    PathRef,
+    url::{Authority, Host, Url},
+    validators::{is_legal_ref_name, is_sha1_hex, matches_ref_shape},
 };
 use crate::Context;
 
-/// A ref-name string. Bounded length, no `/` or other URL-special
-/// characters, legal as a Git branch name (no `..`, no trailing `.`, no
-/// `.lock` suffix), and explicitly excludes 40-hex (SHA-1) and 64-hex
-/// (SHA-256) strings, which `looks_like_rev` would classify as `rev`.
-fn ref_string_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z][a-zA-Z0-9_.\\-]{0,15}".prop_filter(
-        "ref must be a legal ref name and not look like a rev",
-        |s: &String| {
-            super::validators::is_legal_ref_name(s) && !super::validators::looks_like_rev(s)
-        },
-    )
-}
-
-/// A revision string accepted by [`super::validators::looks_like_rev`]:
-/// 40-hex (SHA-1) or 64-hex (SHA-256). Both lengths must round-trip, so
-/// the generator covers each.
-fn rev_string_strategy() -> impl Strategy<Value = String> {
-    prop_oneof!["[0-9a-f]{40}", "[0-9a-f]{64}"]
-}
-
-/// A 40-hex SHA-1 revision, the only revision git forges and indirect
-/// references take in every position.
-fn sha1_rev_strategy() -> impl Strategy<Value = String> {
-    "[0-9a-f]{40}"
-}
-
-fn ref_location_strategy() -> impl Strategy<Value = RefLocation> {
+fn ref_strategy() -> impl Strategy<Value = String> {
     prop_oneof![
-        Just(RefLocation::PathComponent),
-        Just(RefLocation::QueryParameter),
+        3 => "[a-zA-Z][a-zA-Z0-9_.\\-]{0,15}",
+        1 => "[a-zA-Z][a-zA-Z0-9_\\-]{0,7}/[a-zA-Z][a-zA-Z0-9_\\-]{0,7}",
     ]
+    .prop_filter("legal ref, not a rev", |s: &String| {
+        is_legal_ref_name(s) && matches_ref_shape(s) && !is_sha1_hex(s)
+    })
 }
 
-fn opt_ref_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![Just(None), ref_string_strategy().prop_map(Some)]
+fn rev_strategy(expressible: bool) -> BoxedStrategy<String> {
+    if expressible {
+        "[0-9a-f]{40}".boxed()
+    } else {
+        prop_oneof!["[0-9a-f]{40}", "[0-9A-F]{40}"].boxed()
+    }
 }
 
-fn opt_rev_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![Just(None), rev_string_strategy().prop_map(Some)]
+fn opt<T: std::fmt::Debug + Clone + 'static>(
+    strategy: impl Strategy<Value = T> + 'static,
+) -> BoxedStrategy<Option<T>> {
+    prop_oneof![Just(None), strategy.prop_map(Some)].boxed()
 }
 
-fn opt_sha1_rev_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![Just(None), sha1_rev_strategy().prop_map(Some)]
+fn lock_only<T: std::fmt::Debug + Clone + 'static>(
+    expressible: bool,
+    strategy: impl Strategy<Value = T> + 'static,
+) -> BoxedStrategy<Option<T>> {
+    if expressible {
+        Just(None).boxed()
+    } else {
+        opt(strategy)
+    }
+}
+
+fn nar_hash_strategy() -> impl Strategy<Value = String> {
+    "sha256-[A-Za-z0-9+/]{43}="
+}
+
+fn query_value_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        4 => "[a-zA-Z0-9._\\-]{0,16}",
+        1 => proptest::string::string_regex("[a-zA-Z0-9 %&=#+;<>/:@?Öö\u{e9}\u{65e5}]{1,16}")
+            .expect("regex must compile"),
+    ]
 }
 
 fn platform_strategy() -> impl Strategy<Value = GitForgePlatform> {
@@ -73,474 +71,279 @@ fn platform_strategy() -> impl Strategy<Value = GitForgePlatform> {
     ]
 }
 
-fn owner_or_repo_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z][a-zA-Z0-9_-]{0,15}"
+fn owner_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => "[a-zA-Z~][a-zA-Z0-9_.!*-]{0,15}",
+        1 => proptest::collection::vec("[a-zA-Z][a-zA-Z0-9_-]{0,7}", 2..=3)
+            .prop_map(|segments| segments.join("/")),
+    ]
 }
 
-/// GitLab-only owner: a 1..=4 segment subgroup path. The single-segment
-/// case keeps coverage of the plain owner shape; the multi-segment cases
-/// exercise the encode-decode pair on `Display`/parse round-trip
-/// (`encode_path_segment` re-emits decoded `/` as `%2F`).
-fn gitlab_owner_strategy() -> impl Strategy<Value = String> {
-    proptest::collection::vec("[a-zA-Z][a-zA-Z0-9_-]{0,7}", 1..=4).prop_map(|segs| segs.join("/"))
-}
-
-fn id_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_-]{0,15}"
-}
-
-/// `RefLocation` is a routing tag that names where a *present* value would be
-/// rendered. When neither `ref_` nor `rev` is set, the tag is informational;
-/// the parser always emits `PathComponent` in that case, so the generator
-/// pins it the same way to keep equality.
-fn normalise_location(
-    ref_: Option<String>,
-    rev: Option<String>,
-    location: RefLocation,
-) -> (Option<String>, Option<String>, RefLocation) {
-    if ref_.is_none() && rev.is_none() {
-        (ref_, rev, RefLocation::PathComponent)
-    } else {
-        (ref_, rev, location)
-    }
-}
-
-fn git_forge_strategy() -> impl Strategy<Value = GitForge> {
+fn git_forge_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
     (
         platform_strategy(),
-        owner_or_repo_strategy(),
-        gitlab_owner_strategy(),
-        owner_or_repo_strategy(),
-        opt_ref_strategy(),
-        opt_sha1_rev_strategy(),
-        ref_location_strategy(),
+        owner_strategy(),
+        "[a-zA-Z][a-zA-Z0-9_.-]{0,15}",
+        prop_oneof![
+            Just((None, None)),
+            ref_strategy().prop_map(|r| (Some(r), None)),
+            rev_strategy(expressible).prop_map(|r| (None, Some(r))),
+        ],
+        opt("[a-zA-Z0-9.\\-]{1,16}"),
+        opt(nar_hash_strategy()),
+        lock_only(expressible, 0..2_000_000_000u64),
+        lock_only(expressible, "[0-9a-f]{40}"),
     )
         .prop_map(
-            |(platform, plain_owner, gitlab_owner, repo, ref_, rev, location)| {
-                // Subgroup-form (`/`-bearing) owners are a GitLab
-                // concept. Generate them for GitLab only, which is enough
-                // to exercise the encode-decode pair.
-                let owner = match platform {
-                    GitForgePlatform::GitLab => gitlab_owner,
-                    _ => plain_owner,
-                };
-                // A git forge takes a ref or a rev, not both, so a value
-                // with both would Display to a string the parser refuses.
-                // Collapse to ref-only in that case. The rev-only and
-                // ref-only branches exercise the surviving shapes.
-                let (ref_, rev) = if ref_.is_some() && rev.is_some() {
-                    (ref_, None)
-                } else {
-                    (ref_, rev)
-                };
-                let (ref_, rev, location) = normalise_location(ref_, rev, location);
-                GitForge {
-                    platform,
-                    owner,
-                    repo,
-                    ref_,
-                    rev,
-                    location,
-                }
+            |(platform, owner, repo, (ref_, rev), host, nar_hash, last_modified, tree_hash)| {
+                let mut forge = GitForge::new(platform, owner, repo);
+                forge.ref_ = ref_;
+                forge.rev = rev;
+                forge.host = host;
+                forge.nar_hash = nar_hash;
+                forge.last_modified = last_modified;
+                forge.tree_hash = tree_hash;
+                FlakeRefType::GitForge(forge)
             },
         )
 }
 
-fn indirect_strategy() -> impl Strategy<Value = FlakeRefType> {
+fn indirect_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
     (
-        id_strategy(),
-        opt_ref_strategy(),
-        opt_sha1_rev_strategy(),
-        ref_location_strategy(),
+        "[a-zA-Z][a-zA-Z0-9_-]{0,15}",
+        opt(ref_strategy()),
+        opt("[0-9a-f]{40}"),
+        lock_only(expressible, nar_hash_strategy()),
     )
-        .prop_map(|(id, ref_, rev, location)| {
-            let (ref_, rev, location) = normalise_location(ref_, rev, location);
-            FlakeRefType::Indirect {
-                id,
-                ref_,
-                rev,
-                location,
-            }
+        .prop_map(|(id, ref_, rev, nar_hash)| {
+            let mut indirect = Indirect::new(id);
+            indirect.ref_ = ref_;
+            indirect.rev = rev;
+            indirect.nar_hash = nar_hash;
+            FlakeRefType::Indirect(indirect)
         })
 }
 
-/// Path content: avoid `[`, `]`, `?`, `#` (which the parser explicitly
-/// rejects in `path:` `rest_input`). All ASCII, no controls. The absolute
-/// form pins the first character after the leading `/` to a non-slash
-/// so the body never collapses into `path://...`, the URL-authority
-/// shape Nix rejects.
-///
-/// Each generated value carries an optional `?rev=<40hex>` pin so the
-/// round-trip property exercises locked store-path inputs.
 fn path_strategy() -> impl Strategy<Value = FlakeRefType> {
-    let body = prop_oneof![
-        "/[a-zA-Z0-9._-][a-zA-Z0-9._/-]{0,15}",
-        r"\.\.?/[a-zA-Z0-9._/-]{1,16}",
-        Just(".".to_string()),
-        Just("..".to_string()),
-    ];
-    (body, opt_rev_strategy()).prop_map(|(path, rev)| FlakeRefType::Path { path, rev })
-}
-
-fn transport_strategy() -> impl Strategy<Value = TransportLayer> {
-    prop_oneof![
-        Just(TransportLayer::Http),
-        Just(TransportLayer::Https),
-        Just(TransportLayer::Ssh),
-        Just(TransportLayer::File),
-    ]
-}
-
-/// Resource location: a `host/path` shape. The host part avoids `?`/`#`/`@`/`:`
-/// which would either end the location early or read as a port.
-fn resource_location_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9.]{0,15}/[a-zA-Z0-9._\\-/]{1,32}"
-}
-
-/// Tarball location: any host/path that ends with a Nix-recognised tarball
-/// extension so `parser::is_tarball` re-classifies it as `Tarball` after
-/// `Display` strips the `tarball+` application prefix.
-fn tarball_location_strategy() -> impl Strategy<Value = String> {
-    (
-        "[a-z][a-z0-9.]{0,15}/[a-zA-Z0-9._\\-/]{1,16}",
-        prop_oneof![
-            Just(".zip"),
-            Just(".tar"),
-            Just(".tgz"),
-            Just(".tar.gz"),
-            Just(".tar.xz"),
-            Just(".tar.bz2"),
-            Just(".tar.zst"),
-        ],
+    let segment = proptest::string::string_regex("[a-zA-Z0-9._ %?#:@\u{e9}-]{1,8}")
+        .expect("regex must compile");
+    let path = (
+        prop_oneof![Just(""), Just("/"), Just("./")],
+        proptest::collection::vec(segment, 1..4),
+        any::<bool>(),
     )
-        .prop_map(|(base, ext)| format!("{base}{ext}"))
-}
-
-/// File location: any host/path that does NOT end with a tarball extension,
-/// keeping `parser::is_tarball` from re-routing the auto-classified parse
-/// back into `Tarball`.
-fn file_location_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9.]{0,15}/[a-zA-Z0-9._\\-/]{1,32}"
-        .prop_filter("must not collide with a tarball extension", |s: &String| {
-            !crate::parser::is_tarball(s)
+        .prop_map(|(lead, segments, trailing)| {
+            let mut path = format!("{lead}{}", segments.join("/"));
+            if trailing {
+                path.push('/');
+            }
+            path
+        });
+    (
+        path,
+        opt(query_value_strategy()),
+        opt(0..1_000_000u64),
+        opt(0..2_000_000_000u64),
+        opt(nar_hash_strategy()),
+    )
+        .prop_map(|(path, rev, rev_count, last_modified, nar_hash)| {
+            let mut path = PathRef::new(path);
+            path.rev = rev;
+            path.rev_count = rev_count;
+            path.last_modified = last_modified;
+            path.nar_hash = nar_hash;
+            FlakeRefType::Path(path)
         })
 }
 
-/// Tarball/File transport: only `http`/`https` survive `Display`'s
-/// prefix-strip canonicalisation, since the bare-URL re-parse path
-/// (`FlakeRefType::parse_plain_url`) only matches those two schemes.
-fn curl_transport_strategy() -> impl Strategy<Value = TransportLayer> {
-    prop_oneof![Just(TransportLayer::Http), Just(TransportLayer::Https)]
+fn url_strategy(schemes: &'static [&'static str]) -> impl Strategy<Value = String> {
+    (
+        proptest::sample::select(schemes),
+        opt("[a-z]{1,8}"),
+        "[a-z][a-z0-9.-]{0,11}",
+        opt(1..=65535u16),
+        proptest::collection::vec(
+            proptest::string::string_regex("[a-zA-Z0-9._~*!$ -]{0,8}").expect("regex must compile"),
+            0..4,
+        ),
+        proptest::collection::btree_map("x[a-zA-Z]{0,6}", query_value_strategy(), 0..3),
+    )
+        .prop_map(|(scheme, user, host, port, segments, query)| {
+            let local = scheme == "file";
+            let mut path = vec![String::new()];
+            path.extend(segments);
+            let url = Url {
+                scheme: scheme.to_string(),
+                authority: Some(Authority {
+                    user: if local { None } else { user },
+                    password: None,
+                    host: Host::Name(if local { String::new() } else { host }),
+                    port: if local { None } else { port },
+                }),
+                path,
+                query: query.into_iter().collect::<BTreeMap<_, _>>(),
+            };
+            // Rendering is not yet the normal form (`file://` stores as `file:///`), parsing the rendering is.
+            Url::parse(&url.to_string()).unwrap().to_string()
+        })
 }
 
-fn make_resource(
-    res_type: ResourceType,
-    location: String,
-    transport_type: Option<TransportLayer>,
-    ref_: Option<String>,
-    rev: Option<String>,
-) -> FlakeRefType {
-    // Resource has no path-component ref/rev form; the parser
-    // unconditionally flips `ref_location` to `QueryParameter` whenever it
-    // routes a value out of the query string. Match that.
-    let ref_location = if ref_.is_some() || rev.is_some() {
-        RefLocation::QueryParameter
+fn flag_strategy(expressible: bool) -> BoxedStrategy<Option<bool>> {
+    if expressible {
+        prop_oneof![Just(None), Just(Some(true))].boxed()
     } else {
-        RefLocation::PathComponent
-    };
-    FlakeRefType::Resource(ResourceUrl {
-        res_type,
-        location,
-        transport_type,
-        ref_,
-        rev,
-        ref_location,
-    })
+        opt(any::<bool>())
+    }
 }
 
-fn git_resource_strategy() -> impl Strategy<Value = FlakeRefType> {
-    // Git is the only Resource scheme that round-trips with a transport-less
-    // form (`git://...`); the Display branch keeps the `git` prefix.
+fn git_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
     (
-        resource_location_strategy(),
-        prop_oneof![
-            Just(None::<TransportLayer>),
-            transport_strategy().prop_map(Some),
-        ],
-        opt_ref_strategy(),
-        opt_rev_strategy(),
-    )
-        .prop_map(|(location, transport_type, ref_, rev)| {
-            make_resource(ResourceType::Git, location, transport_type, ref_, rev)
-        })
-}
-
-fn mercurial_resource_strategy() -> impl Strategy<Value = FlakeRefType> {
-    // Mercurial is only spellable as `hg+<transport>://`; Display keeps the
-    // `hg+` prefix so any TransportLayer round-trips.
-    (
-        resource_location_strategy(),
-        transport_strategy(),
-        opt_ref_strategy(),
-        opt_rev_strategy(),
-    )
-        .prop_map(|(location, transport_type, ref_, rev)| {
-            make_resource(
-                ResourceType::Mercurial,
-                location,
-                Some(transport_type),
-                ref_,
-                rev,
-            )
-        })
-}
-
-fn tarball_resource_strategy() -> impl Strategy<Value = FlakeRefType> {
-    // After Display strips `tarball+`, only the `<http|https>://...tar.ext`
-    // shape survives the round-trip: the bare URL is auto-classified as
-    // `Tarball` by `is_tarball(location)`. Other transports / extensions
-    // would re-parse to `File` or fail to resolve.
-    //
-    // `ref_` is pinned to `None`: Nix's curl-based fetcher excludes
-    // `ref`, so the per-scheme allow-list rejects `?ref=` on Tarball.
-    // Display emitting a populated `ref_` would produce a string the
-    // parser refuses, breaking round-trip.
-    (
-        tarball_location_strategy(),
-        curl_transport_strategy(),
-        opt_rev_strategy(),
-    )
-        .prop_map(|(location, transport, rev)| {
-            make_resource(ResourceType::Tarball, location, Some(transport), None, rev)
-        })
-}
-
-fn file_resource_strategy() -> impl Strategy<Value = FlakeRefType> {
-    // Mirror of `tarball_resource_strategy`. The location must NOT end in a
-    // tarball extension, otherwise auto-classification would route the bare
-    // URL into `Tarball` after Display. `ref_` is `None` for the same
-    // reason as Tarball: Nix's curl-based fetcher excludes `ref`.
-    (
-        file_location_strategy(),
-        curl_transport_strategy(),
-        opt_rev_strategy(),
-    )
-        .prop_map(|(location, transport, rev)| {
-            make_resource(ResourceType::File, location, Some(transport), None, rev)
-        })
-}
-
-fn resource_strategy() -> impl Strategy<Value = FlakeRefType> {
-    prop_oneof![
-        git_resource_strategy(),
-        mercurial_resource_strategy(),
-        tarball_resource_strategy(),
-        file_resource_strategy(),
-    ]
-}
-
-fn kind_strategy() -> impl Strategy<Value = FlakeRefType> {
-    prop_oneof![
-        git_forge_strategy().prop_map(FlakeRefType::GitForge),
-        indirect_strategy(),
-        path_strategy(),
-        resource_strategy(),
-    ]
-}
-
-/// Free-form value strategy that occasionally produces reserved-in-query
-/// chars (space, `%`, `&`, `=`, `#`, `+`, `;`, `<`, `>`) and non-ASCII
-/// bytes (`Ö`, `ö`, `é`, `日`). Display percent-encodes these, parse
-/// percent-decodes them back; the round-trip property is what exercises
-/// the encoder pair end-to-end.
-fn percent_encoded_value_strategy() -> impl Strategy<Value = String> {
-    prop_oneof![
-        // Original tame shape stays in the mix at higher weight so most
-        // generated FlakeRefs still cover the no-encoding-needed path.
-        4 => "[a-zA-Z0-9._\\-]{0,16}",
-        // Wider shape: lets the round-trip property hit `%`, ` `, etc.
-        1 => proptest::string::string_regex("[a-zA-Z0-9 %&=#+;<>Öö\u{e9}\u{65e5}]{1,16}")
-            .expect("regex must compile"),
-    ]
-}
-
-fn fragment_strategy() -> impl Strategy<Value = Option<String>> {
-    prop_oneof![
-        Just(None),
-        "[a-zA-Z][a-zA-Z0-9._\\-]{0,15}".prop_map(Some),
-        // Fragment-specific: the fragment AsciiSet additionally encodes
-        // `:@/?` beyond the query set, so include those alongside the
-        // wide-value chars to cover the divergent encoding rules.
-        proptest::string::string_regex("[a-zA-Z0-9 %&=#+;<>:@/?Öö\u{e9}\u{65e5}]{1,16}")
-            .expect("regex must compile")
-            .prop_map(Some),
-    ]
-}
-
-// The free-form `arbitrary_kv_strategy` was retired when the per-scheme
-// query-key allow-list landed: the only keys the parser now lets through
-// to `LocationParameters::arbitrary` are scheme-specific (`name` on Git
-// and Mercurial, `unpack` on Tarball/File, ...), so a scheme-agnostic
-// `x...` strategy would generate inputs that the per-scheme allow-list
-// rejects and the round-trip property would fail. Future work: feed the
-// chosen `FlakeRefType` into `location_parameters_strategy` and emit
-// scheme-allowed extension keys from a per-scheme bag.
-
-/// Per-field strategy for the seven Git-typed params. Bools are
-/// represented `Option<bool>` because the parser surfaces typed bools
-/// for `lfs`/`exportIgnore`/`allRefs`/`verifyCommit`; the three
-/// signature-key params (`keytype`, `publicKey`, `publicKeys`) stay
-/// free-form `Option<String>` because Nix does not enumerate valid
-/// values.
-type GitTypedParams = (
-    Option<bool>,
-    Option<bool>,
-    Option<bool>,
-    Option<bool>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
-
-fn git_typed_params_strategy() -> impl Strategy<Value = GitTypedParams> {
-    let key_value = "[a-zA-Z0-9._\\-]{1,16}";
-    (
-        prop::option::of(any::<bool>()),
-        prop::option::of(any::<bool>()),
-        prop::option::of(any::<bool>()),
-        prop::option::of(any::<bool>()),
-        prop::option::of(key_value),
-        prop::option::of(key_value),
-        prop::option::of(key_value),
-    )
-}
-
-/// Param generator: every typed slot may be set. [`restrict_params`] then
-/// drops the ones the kind does not take.
-fn location_parameters_strategy() -> impl Strategy<Value = LocationParameters> {
-    (
-        // `dir` is plain string and the only reasonable target for
-        // wide-value coverage among the typed slots, so route it through
-        // `percent_encoded_value_strategy` to exercise the encoder on a
-        // typed slot too.
-        prop::option::of(percent_encoded_value_strategy()),
-        // `host` matches Nix's accepted host shape
-        // (`[a-zA-Z0-9.-]*`); the parse-time validator rejects anything
-        // else, so the generator must not emit `_` or other characters
-        // outside the regex.
-        prop::option::of("[a-zA-Z0-9.\\-]{1,16}"),
-        prop::option::of("sha256-[a-zA-Z0-9_-]{8,32}"),
-        prop::option::of("[0-9]{1,12}"),
-        prop::option::of("[0-9]{1,8}"),
-        // `submodules` and `shallow` are typed `Option<bool>`. Display
-        // writes `1`/`0`, which parse back to the same bool.
-        prop::option::of(any::<bool>()),
-        prop::option::of(any::<bool>()),
-        git_typed_params_strategy(),
+        url_strategy(&["https", "http", "ssh", "file", "git", "foo"]),
+        opt(ref_strategy()),
+        opt(rev_strategy(expressible)),
+        (
+            flag_strategy(expressible),
+            flag_strategy(expressible),
+            flag_strategy(expressible),
+            flag_strategy(expressible),
+            lock_only(expressible, any::<bool>()),
+        ),
+        (
+            lock_only(expressible, nar_hash_strategy()),
+            lock_only(expressible, 0..1_000_000u64),
+            lock_only(expressible, 0..2_000_000_000u64),
+            lock_only(expressible, "[a-z]{1,8}"),
+            lock_only(expressible, "[0-9a-f]{40}-dirty"),
+        ),
     )
         .prop_map(
-            |(dir, host, nar_hash, last_modified, rev_count, submodules, shallow, git_typed)| {
-                let mut params = LocationParameters::default();
-                if let Some(d) = dir {
-                    params.set_dir(Some(d));
-                }
-                if let Some(h) = host {
-                    params.set_host(Some(h));
-                }
-                if let Some(n) = nar_hash {
-                    params.set_nar_hash(Some(n));
-                }
-                if let Some(lm) = last_modified {
-                    params.set_last_modified(Some(lm));
-                }
-                if let Some(rc) = rev_count {
-                    params.set_rev_count(Some(rc));
-                }
-                if let Some(s) = submodules {
-                    params.set_submodules(Some(s));
-                }
-                if let Some(s) = shallow {
-                    params.set_shallow(Some(s));
-                }
-                let (lfs, export_ignore, all_refs, verify_commit, keytype, public_key, public_keys) =
-                    git_typed;
-                params.set_lfs(lfs);
-                params.set_export_ignore(export_ignore);
-                params.set_all_refs(all_refs);
-                params.set_verify_commit(verify_commit);
-                params.set_keytype(keytype);
-                params.set_public_key(public_key);
-                params.set_public_keys(public_keys);
-                params
+            |(
+                url,
+                ref_,
+                rev,
+                (shallow, submodules, lfs, export_ignore, all_refs),
+                (nar_hash, rev_count, last_modified, name, dirty_rev),
+            )| {
+                let mut git = GitRepo::new(url);
+                git.ref_ = ref_;
+                git.rev = rev;
+                git.shallow = shallow;
+                git.submodules = submodules;
+                git.lfs = lfs;
+                git.export_ignore = export_ignore;
+                git.all_refs = all_refs;
+                git.nar_hash = nar_hash;
+                git.rev_count = rev_count;
+                git.last_modified = last_modified;
+                git.name = name;
+                git.dirty_short_rev = dirty_rev.as_ref().map(|r| format!("{}-dirty", &r[..7]));
+                git.dirty_rev = dirty_rev;
+                FlakeRefType::Git(git)
             },
         )
 }
 
-/// Drop the query parameters that `kind` does not take. Git forges only
-/// take `dir`, `host` and `narHash` (besides ref and rev, which live on the
-/// kind). `path:` takes `dir`, `narHash`, `lastModified` and `revCount`.
-/// The other kinds take every parameter.
-fn restrict_params(kind: &FlakeRefType, mut params: LocationParameters) -> LocationParameters {
-    let (keep_host, keep_counts) = match kind {
-        FlakeRefType::GitForge(_) => (true, false),
-        FlakeRefType::Path { .. } => (false, true),
-        FlakeRefType::Indirect { .. } | FlakeRefType::Resource(_) => return params,
-    };
-    if !keep_host {
-        params.set_host(None);
-    }
-    if !keep_counts {
-        params.set_last_modified(None);
-        params.set_rev_count(None);
-    }
-    params.set_submodules(None);
-    params.set_shallow(None);
-    params.set_lfs(None);
-    params.set_export_ignore(None);
-    params.set_all_refs(None);
-    params.set_verify_commit(None);
-    params.set_keytype(None);
-    params.set_public_key(None);
-    params.set_public_keys(None);
-    params
-}
-
-fn flake_ref_strategy() -> impl Strategy<Value = FlakeRef> {
+fn mercurial_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
     (
-        kind_strategy(),
-        fragment_strategy(),
-        location_parameters_strategy(),
+        url_strategy(&["https", "http", "ssh", "file"]),
+        opt(ref_strategy()),
+        opt(rev_strategy(expressible)),
+        lock_only(expressible, 0..1_000_000u64),
+        lock_only(expressible, nar_hash_strategy()),
+        lock_only(expressible, "[a-z]{1,8}"),
     )
-        .prop_map(|(kind, fragment, params)| {
-            let params = restrict_params(&kind, params);
-            FlakeRef::new(kind)
-                .with_fragment(fragment)
-                .with_params(params)
+        .prop_map(|(url, ref_, rev, rev_count, nar_hash, name)| {
+            let mut hg = MercurialRepo::new(url);
+            hg.ref_ = ref_;
+            hg.rev = rev;
+            hg.rev_count = rev_count;
+            hg.nar_hash = nar_hash;
+            hg.name = name;
+            FlakeRefType::Mercurial(hg)
         })
 }
 
-/// Installables take everything a flake input does, plus a fragment.
+fn download_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
+    (
+        url_strategy(&["https", "http", "file"]),
+        opt(nar_hash_strategy()),
+        lock_only(expressible, "[0-9a-f]{40}"),
+        lock_only(expressible, 0..1_000_000u64),
+        lock_only(expressible, 0..2_000_000_000u64),
+        lock_only(expressible, "[a-z]{1,8}"),
+        lock_only(expressible, any::<bool>()),
+        if expressible {
+            Just(false).boxed()
+        } else {
+            any::<bool>().boxed()
+        },
+    )
+        .prop_map(
+            |(url, nar_hash, rev, rev_count, last_modified, name, unpack, file)| {
+                let mut download = Download::new(url);
+                download.nar_hash = nar_hash;
+                download.rev = rev;
+                download.rev_count = rev_count;
+                download.last_modified = last_modified;
+                download.name = name;
+                download.unpack = unpack;
+                if file {
+                    FlakeRefType::File(download)
+                } else {
+                    FlakeRefType::Tarball(download)
+                }
+            },
+        )
+}
+
+fn kind_strategy(expressible: bool) -> impl Strategy<Value = FlakeRefType> {
+    prop_oneof![
+        git_forge_strategy(expressible),
+        indirect_strategy(expressible),
+        path_strategy(),
+        git_strategy(expressible),
+        mercurial_strategy(expressible),
+        download_strategy(expressible),
+    ]
+}
+
+fn flake_ref_strategy(expressible: bool) -> impl Strategy<Value = FlakeRef> {
+    (kind_strategy(expressible), opt(query_value_strategy()))
+        .prop_map(|(kind, dir)| FlakeRef::new(kind).with_dir(dir))
+}
+
 fn parse(s: &str) -> FlakeRef {
-    FlakeRef::parse(s, Context::Installable).expect("Display output failed to parse")
+    FlakeRef::parse(s, Context::Standalone)
+        .unwrap_or_else(|e| panic!("Display output {s:?} failed to parse: {e:?}"))
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
-    /// Every arbitrary `FlakeRef` survives a `Display` -> parse
-    /// round-trip.
+    /// The attributes carry every field.
     #[test]
-    fn roundtrip_via_string(flake_ref in flake_ref_strategy()) {
-        let parsed = parse(&flake_ref.to_string());
-        prop_assert_eq!(flake_ref, parsed);
+    fn attrs_round_trip(flake_ref in flake_ref_strategy(false)) {
+        let attrs = flake_ref.to_attrs();
+        prop_assert_eq!(FlakeRef::from_attrs(&attrs).unwrap(), flake_ref);
     }
 
-    /// Stronger: `Display` is the canonical form. `parse(Display(x))` then
-    /// `Display(...)` reproduces the first `Display` output exactly.
+    /// So does the JSON of a lock file node.
     #[test]
-    fn display_is_canonical(flake_ref in flake_ref_strategy()) {
-        let s1 = flake_ref.to_string();
-        let s2 = parse(&s1).to_string();
-        prop_assert_eq!(s1, s2);
+    fn json_round_trip(flake_ref in flake_ref_strategy(false)) {
+        let json = serde_json::to_string(&flake_ref).unwrap();
+        prop_assert_eq!(serde_json::from_str::<FlakeRef>(&json).unwrap(), flake_ref);
+    }
+
+    /// A value whose attributes a URL can carry survives `Display`.
+    #[test]
+    fn display_round_trip(flake_ref in flake_ref_strategy(true)) {
+        prop_assert_eq!(parse(&flake_ref.to_string()), flake_ref);
+    }
+
+    /// `Display` is a normal form: parsing it and rendering again gives the same string.
+    #[test]
+    fn display_is_idempotent(flake_ref in flake_ref_strategy(false)) {
+        let rendered = flake_ref.to_string();
+        prop_assert_eq!(parse(&rendered).to_string(), rendered);
     }
 }
