@@ -4,11 +4,11 @@ use nix_uri::FlakeRef;
 
 fn main() {
     let uri = "github:nixos/nixpkgs";
-    let r#ref = "nixos-unstable";
+    let branch = "nixos-unstable";
     let flake_ref: FlakeRef = uri.parse().unwrap();
-    let flake_ref = flake_ref.with_ref(Some(r#ref.to_owned())).unwrap();
+    let flake_ref = flake_ref.with_ref(Some(branch.to_owned())).unwrap();
 
     println!("The uri is: {uri}");
-    println!("The ref is: {ref}", ref = r#ref);
+    println!("The ref is: {branch}");
     println!("The changed uri is: {flake_ref}");
 }
