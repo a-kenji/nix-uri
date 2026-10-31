@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     error::NixUriResult,
     flakeref::{
@@ -57,14 +59,14 @@ impl GitRepo {
         }
     }
 
-    pub(crate) fn from_url(mut url: Url) -> NixUriResult<Self> {
+    pub(crate) fn from_url(mut url: Url<'_>) -> NixUriResult<Self> {
         let mut take = |key: &str| url.query.remove(key);
         let mut git = Self::new(String::new());
         git.ref_ = take("ref").map(|r| validated_ref_name(&r)).transpose()?;
-        git.rev = take("rev");
-        git.keytype = take("keytype");
-        git.public_key = take("publicKey");
-        git.public_keys = take("publicKeys");
+        git.rev = take("rev").map(Cow::into_owned);
+        git.keytype = take("keytype").map(Cow::into_owned);
+        git.public_key = take("publicKey").map(Cow::into_owned);
+        git.public_keys = take("publicKeys").map(Cow::into_owned);
         git.shallow = take("shallow").map(|v| query_bool(&v));
         git.submodules = take("submodules").map(|v| query_bool(&v));
         git.lfs = take("lfs").map(|v| query_bool(&v));
@@ -161,7 +163,7 @@ fn fix_git_url(url: &str) -> NixUriResult<String> {
     }
     let mut parsed = Url::parse(url)?;
     if let Some(transport) = parsed.scheme.strip_prefix("git+") {
-        parsed.scheme = transport.to_string();
+        parsed.scheme = transport;
     }
     Ok(parsed.to_string())
 }

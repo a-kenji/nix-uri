@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     error::{NixUriError, NixUriResult},
     flakeref::{
@@ -36,10 +38,14 @@ impl MercurialRepo {
         }
     }
 
-    pub(crate) fn from_url(mut url: Url) -> NixUriResult<Self> {
+    pub(crate) fn from_url(mut url: Url<'_>) -> NixUriResult<Self> {
         let mut hg = Self::new(String::new());
-        hg.ref_ = url.query.remove("ref").map(validated_hg_ref).transpose()?;
-        hg.rev = url.query.remove("rev");
+        hg.ref_ = url
+            .query
+            .remove("ref")
+            .map(|r| validated_hg_ref(r.into_owned()))
+            .transpose()?;
+        hg.rev = url.query.remove("rev").map(Cow::into_owned);
         url.strip_application();
         hg.url = url.to_string();
         Ok(hg)
