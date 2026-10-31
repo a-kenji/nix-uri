@@ -24,6 +24,7 @@ pub struct Download {
 pub(crate) const DOWNLOAD_TRANSPORTS: [&str; 3] = ["http", "https", "file"];
 
 impl Download {
+    #[must_use]
     pub fn new(url: String) -> Self {
         Self {
             url,

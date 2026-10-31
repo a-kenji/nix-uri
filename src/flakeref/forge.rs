@@ -31,6 +31,7 @@ impl GitForgePlatform {
     }
 
     /// The Nix type name.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::GitHub => "github",
@@ -40,6 +41,7 @@ impl GitForgePlatform {
     }
 
     /// The host Nix fetches from when no `host` is given.
+    #[must_use]
     pub fn default_host(self) -> &'static str {
         match self {
             Self::GitHub => "github.com",
@@ -72,6 +74,7 @@ pub struct GitForge {
 }
 
 impl GitForge {
+    #[must_use]
     pub fn new(platform: GitForgePlatform, owner: String, repo: String) -> Self {
         Self {
             platform,

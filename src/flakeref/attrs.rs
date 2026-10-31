@@ -23,10 +23,12 @@ pub enum AttrValue {
 }
 
 impl Attrs {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&AttrValue> {
         self.0.get(name)
     }
@@ -49,10 +51,12 @@ impl Attrs {
         self.0.iter().map(|(name, value)| (name.as_str(), value))
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

@@ -36,6 +36,7 @@ pub struct GitRepo {
 }
 
 impl GitRepo {
+    #[must_use]
     pub fn new(url: String) -> Self {
         Self {
             url,

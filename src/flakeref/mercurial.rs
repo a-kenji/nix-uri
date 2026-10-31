@@ -27,6 +27,7 @@ pub struct MercurialRepo {
 pub(crate) const HG_TRANSPORTS: [&str; 4] = ["http", "https", "ssh", "file"];
 
 impl MercurialRepo {
+    #[must_use]
     pub fn new(url: String) -> Self {
         Self {
             url,

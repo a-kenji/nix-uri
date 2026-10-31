@@ -21,6 +21,7 @@ pub struct PathRef {
 }
 
 impl PathRef {
+    #[must_use]
     pub fn new(path: String) -> Self {
         Self {
             path,

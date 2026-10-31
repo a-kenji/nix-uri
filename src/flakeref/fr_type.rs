@@ -22,6 +22,7 @@ pub enum FlakeRefType {
 
 impl FlakeRefType {
     /// The Nix type name, the `type` attribute.
+    #[must_use]
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::GitForge(forge) => forge.platform.as_str(),
