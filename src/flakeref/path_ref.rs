@@ -5,7 +5,7 @@ use crate::{
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
-        url::Url,
+        url::{Query, Url},
     },
 };
 
@@ -36,7 +36,7 @@ impl PathRef {
         Self::new(collapse_slashes(path))
     }
 
-    pub(crate) fn from_url(url: &Url) -> NixUriResult<Self> {
+    pub(crate) fn from_url(url: &Url<'_>) -> NixUriResult<Self> {
         if url.path.iter().any(|segment| segment.contains('/')) {
             return Err(NixUriError::InvalidUrl(url.to_string()));
         }
@@ -44,7 +44,7 @@ impl PathRef {
         if path.contains('\0') {
             return Err(nul_in_path(&path));
         }
-        if url.path.first().is_some_and(String::is_empty) && !path.starts_with('/') {
+        if url.path.first().is_some_and(|s| s.is_empty()) && !path.starts_with('/') {
             path.insert(0, '/');
         }
         Ok(Self::new(path))
@@ -52,21 +52,18 @@ impl PathRef {
 
     /// Apply the query of a path reference: `rev` and `narHash`, and the integers
     /// `revCount` and `lastModified`. Any other key is an error.
-    pub(crate) fn apply_query<'a>(
-        &mut self,
-        query: impl IntoIterator<Item = (&'a String, &'a String)>,
-    ) -> NixUriResult<()> {
+    pub(crate) fn apply_query(&mut self, query: &Query<'_>) -> NixUriResult<()> {
         for (key, value) in query {
-            match key.as_str() {
-                "rev" => self.rev = Some(value.clone()),
-                "narHash" => self.nar_hash = Some(value.clone()),
+            match key.as_ref() {
+                "rev" => self.rev = Some(value.to_string()),
+                "narHash" => self.nar_hash = Some(value.to_string()),
                 "revCount" => self.rev_count = Some(require_integer("revCount", value)?),
                 "lastModified" => {
                     self.last_modified = Some(require_integer("lastModified", value)?);
                 }
                 _ => {
                     return Err(NixUriError::Unsupported(UnsupportedReason::Param {
-                        name: key.clone(),
+                        name: key.to_string(),
                     }));
                 }
             }

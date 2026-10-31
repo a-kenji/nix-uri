@@ -1,7 +1,4 @@
-use crate::flakeref::{
-    Download, GitForge, GitRepo, Indirect, MercurialRepo, PathRef,
-    url::{Host, Url},
-};
+use crate::flakeref::{Download, GitForge, GitRepo, Indirect, MercurialRepo, PathRef, url::Url};
 
 /// The kind of a flake reference, one variant per Nix input type.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,7 +80,7 @@ impl FlakeRefType {
     }
 
     /// The `url` of a git repository, parsed.
-    fn git_url(&self) -> Option<Url> {
+    fn git_url(&self) -> Option<Url<'_>> {
         match self {
             Self::Git(git) => Url::parse(&git.url).ok(),
             _ => None,
@@ -128,11 +125,11 @@ impl FlakeRefType {
         }
         let url = self.git_url()?;
         let authority = url.authority.as_ref()?;
-        if authority.host == Host::Name(String::new()) {
+        if !authority.has_host() {
             return None;
         }
         let host = authority.host_str();
-        let default_port = match url.scheme.as_str() {
+        let default_port = match url.scheme {
             "https" => Some(443),
             "http" => Some(80),
             "ssh" => Some(22),

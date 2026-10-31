@@ -86,7 +86,7 @@ enum RenderBase<'a> {
     },
     Url {
         prefix: &'static str,
-        url: url::Url,
+        url: url::Url<'a>,
     },
     Verbatim {
         prefix: &'static str,
@@ -105,13 +105,10 @@ impl<'a> RenderUrl<'a> {
     pub(crate) fn from_url_string(url: &'a str, prefix: impl Fn(&str) -> &'static str) -> Self {
         match url::Url::parse(url) {
             Ok(mut parsed) => {
-                let query = std::mem::take(&mut parsed.query)
-                    .into_iter()
-                    .map(|(key, value)| (Cow::Owned(key), Cow::Owned(value)))
-                    .collect();
+                let query = std::mem::take(&mut parsed.query);
                 Self {
                     base: RenderBase::Url {
-                        prefix: prefix(&parsed.scheme),
+                        prefix: prefix(parsed.scheme),
                         url: parsed,
                     },
                     query,

@@ -4,6 +4,7 @@
 //! the query as a map from decoded key to decoded value (sorted, the first of a repeated
 //! key wins), and rendered back percent-encoded.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 
@@ -16,28 +17,32 @@ use crate::{
     },
 };
 
+/// A parsed URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Url {
-    pub(crate) scheme: String,
-    pub(crate) authority: Option<Authority>,
+pub(crate) struct Url<'a> {
+    pub(crate) scheme: &'a str,
+    pub(crate) authority: Option<Authority<'a>>,
     /// Decoded path segments. An absolute path starts with an empty segment, so `/a/b` is
     /// `["", "a", "b"]`.
-    pub(crate) path: Vec<String>,
-    pub(crate) query: BTreeMap<String, String>,
+    pub(crate) path: Vec<Cow<'a, str>>,
+    pub(crate) query: Query<'a>,
 }
 
+/// A decoded query, sorted.
+pub(crate) type Query<'a> = BTreeMap<Cow<'a, str>, Cow<'a, str>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Authority {
-    pub(crate) user: Option<String>,
-    pub(crate) password: Option<String>,
-    pub(crate) host: Host,
+pub(crate) struct Authority<'a> {
+    pub(crate) user: Option<Cow<'a, str>>,
+    pub(crate) password: Option<Cow<'a, str>>,
+    pub(crate) host: Host<'a>,
     pub(crate) port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Host {
+pub(crate) enum Host<'a> {
     /// A registered name or IPv4 address, decoded.
-    Name(String),
+    Name(Cow<'a, str>),
     /// The text between the brackets of an IP literal.
     Literal(String),
 }
@@ -64,7 +69,7 @@ pub(crate) fn scheme_of(input: &str) -> Option<&str> {
 /// Split a query into its decoded `key=value` pairs. A pair without `=` is ignored, and
 /// of a repeated key the first one wins. Unescaped spaces and `"` are tolerated. The
 /// escapes of the whole query must be well-formed, including those of ignored pairs.
-pub(crate) fn parse_query(query: &str) -> NixUriResult<BTreeMap<String, String>> {
+pub(crate) fn parse_query(query: &str) -> NixUriResult<Query<'_>> {
     if !query.chars().all(is_query_char) {
         return Err(NixUriError::InvalidUrl(query.into()));
     }
@@ -74,8 +79,8 @@ pub(crate) fn parse_query(query: &str) -> NixUriResult<BTreeMap<String, String>>
         let Some((key, value)) = pair.split_once('=') else {
             continue;
         };
-        let key = decode_percent(key)?.into_owned();
-        let value = decode_percent(value)?.into_owned();
+        let key = decode_percent(key)?;
+        let value = decode_percent(value)?;
         pairs.entry(key).or_insert(value);
     }
     Ok(pairs)
@@ -99,8 +104,8 @@ impl<K: AsRef<str>, V: AsRef<str>> Display for EncodedQuery<'_, K, V> {
     }
 }
 
-impl Url {
-    pub(crate) fn parse(input: &str) -> NixUriResult<Self> {
+impl<'a> Url<'a> {
+    pub(crate) fn parse(input: &'a str) -> NixUriResult<Self> {
         let invalid = || NixUriError::InvalidUrl(input.into());
         let scheme = scheme_of(input).ok_or_else(invalid)?;
         let rest = &input[scheme.len() + 1..];
@@ -113,7 +118,7 @@ impl Url {
             Some(after) => {
                 let end = after.find('/').unwrap_or(after.len());
                 let authority = Authority::parse(&after[..end], transport)?;
-                if transport == "file" && authority.host != Host::Name(String::new()) {
+                if transport == "file" && authority.has_host() {
                     return Err(invalid());
                 }
                 (Some(authority), &after[end..])
@@ -128,10 +133,10 @@ impl Url {
         }
         let path = encoded_path
             .split('/')
-            .map(|segment| decode_percent(segment).map(std::borrow::Cow::into_owned))
+            .map(decode_percent)
             .collect::<NixUriResult<Vec<_>>>()?;
         Ok(Self {
-            scheme: scheme.to_string(),
+            scheme,
             authority,
             path,
             query,
@@ -140,20 +145,20 @@ impl Url {
 
     /// Drop the application from the scheme: `git+https` becomes `https`.
     pub(crate) fn strip_application(&mut self) {
-        let (_, transport) = split_scheme(&self.scheme);
-        self.scheme = transport.to_string();
+        let (_, transport) = split_scheme(self.scheme);
+        self.scheme = transport;
     }
 
     pub(crate) fn non_empty_segments(&self) -> impl Iterator<Item = &str> {
         self.path
             .iter()
-            .map(String::as_str)
-            .filter(|s| !s.is_empty())
+            .map(AsRef::as_ref)
+            .filter(|s: &&str| !s.is_empty())
     }
 }
 
-impl Authority {
-    fn parse(input: &str, transport: &str) -> NixUriResult<Self> {
+impl<'a> Authority<'a> {
+    fn parse(input: &'a str, transport: &str) -> NixUriResult<Self> {
         let invalid = || NixUriError::InvalidUrl(input.into());
         let (userinfo, host_port) = match input.split_once('@') {
             Some((userinfo, host_port)) => (Some(userinfo), host_port),
@@ -168,10 +173,8 @@ impl Authority {
                     Some((user, password)) => (user, Some(password)),
                     None => (userinfo, None),
                 };
-                let password = password
-                    .map(|p| decode_percent(p).map(std::borrow::Cow::into_owned))
-                    .transpose()?;
-                (Some(decode_percent(user)?.into_owned()), password)
+                let password = password.map(decode_percent).transpose()?;
+                (Some(decode_percent(user)?), password)
             }
             None => (None, None),
         };
@@ -191,7 +194,7 @@ impl Authority {
             if !host.chars().all(is_reg_name_char) {
                 return Err(invalid());
             }
-            (Host::Name(decode_percent(host)?.into_owned()), port)
+            (Host::Name(decode_percent(host)?), port)
         };
         let port = match port {
             None | Some("") => None,
@@ -219,9 +222,13 @@ impl Authority {
     pub(crate) fn host_str(&self) -> String {
         self.host.to_string()
     }
+
+    pub(crate) fn has_host(&self) -> bool {
+        !matches!(&self.host, Host::Name(name) if name.is_empty())
+    }
 }
 
-impl Display for Host {
+impl Display for Host<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Name(name) => write!(f, "{}", encode_unreserved(name)),
@@ -230,7 +237,7 @@ impl Display for Host {
     }
 }
 
-impl Display for Authority {
+impl Display for Authority<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(user) = &self.user {
             write!(f, "{}", encode_unreserved(user))?;
@@ -247,7 +254,7 @@ impl Display for Authority {
     }
 }
 
-impl Display for Url {
+impl Display for Url<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:", self.scheme)?;
         if let Some(authority) = &self.authority {

@@ -1,10 +1,12 @@
+use std::borrow::Cow;
+
 use crate::{
     Context,
     error::{NixUriError, NixUriResult, UnsupportedReason},
     flakeref::{
         DOWNLOAD_TRANSPORTS, Download, FlakeRef, FlakeRefType, GitForge, GitForgePlatform, GitRepo,
         HG_TRANSPORTS, Indirect, MercurialRepo, PathRef, encoding, is_flake_id, nul_in_path,
-        url::{Url, parse_query, scheme_of, split_scheme},
+        url::{Authority, Url, parse_query, scheme_of, split_scheme},
         validators::{
             is_sha1_hash, is_sha1_hex, matches_ref_shape, validated_host_name, validated_ref_name,
         },
@@ -123,7 +125,7 @@ fn parse_url(head: &str) -> Result<FlakeRef, UrlFailure> {
         }
     };
     let mut url = Url::parse(head)?;
-    let dir = url.query.remove("dir");
+    let dir = url.query.remove("dir").map(Cow::into_owned);
     let kind = match kind {
         Scheme::Forge(platform) => FlakeRefType::GitForge(parse_git_forge(platform, &url)?),
         Scheme::Indirect => {
@@ -132,7 +134,7 @@ fn parse_url(head: &str) -> Result<FlakeRef, UrlFailure> {
             FlakeRefType::Indirect(Indirect::from_segments(&segments, head)?)
         }
         Scheme::Path => {
-            if url.authority.as_ref().is_some_and(|a| a.host_str() != "") {
+            if url.authority.as_ref().is_some_and(Authority::has_host) {
                 return Err(final_err(NixUriError::Unsupported(
                     UnsupportedReason::Authority { scheme: "path" },
                 )));
@@ -159,7 +161,7 @@ fn parse_url(head: &str) -> Result<FlakeRef, UrlFailure> {
 ///
 /// The query takes `ref`, `rev` (a SHA-1 hash), `host` and `narHash`. A ref or a revision
 /// is given once, and not both.
-fn parse_git_forge(platform: GitForgePlatform, url: &Url) -> Result<GitForge, UrlFailure> {
+fn parse_git_forge(platform: GitForgePlatform, url: &Url<'_>) -> Result<GitForge, UrlFailure> {
     let final_err = |err| UrlFailure::Final(err);
     let segments: Vec<&str> = url.non_empty_segments().collect();
     let [owner, repo, rest @ ..] = segments.as_slice() else {
@@ -181,24 +183,24 @@ fn parse_git_forge(platform: GitForgePlatform, url: &Url) -> Result<GitForge, Ur
     // final, every other failure leaves the input to be read as a path.
     let mut host = None;
     for (key, value) in &url.query {
-        match key.as_str() {
-            "narHash" => forge.nar_hash = Some(value.clone()),
+        match key.as_ref() {
+            "narHash" => forge.nar_hash = Some(value.to_string()),
             "host" => host = Some(value),
             "ref" => {
                 if forge.ref_.is_some() {
                     return Err(NixUriError::DuplicateField { field: "ref" }.into());
                 }
-                forge.ref_ = Some(value.clone());
+                forge.ref_ = Some(value.to_string());
             }
             "rev" => {
                 if forge.rev.is_some() {
                     return Err(NixUriError::DuplicateField { field: "rev" }.into());
                 }
-                forge.rev = Some(value.clone());
+                forge.rev = Some(value.to_string());
             }
             _ => {
                 return Err(NixUriError::Unsupported(UnsupportedReason::Param {
-                    name: key.clone(),
+                    name: key.to_string(),
                 })
                 .into());
             }
@@ -249,7 +251,7 @@ fn parse_path(head: &str, context: Context) -> NixUriResult<FlakeRef> {
         Some(query) => parse_query(query)?,
         None => Default::default(),
     };
-    let dir = query.remove("dir");
+    let dir = query.remove("dir").map(Cow::into_owned);
     path.apply_query(&query)?;
     Ok(FlakeRef::new(FlakeRefType::Path(path)).with_dir(dir))
 }

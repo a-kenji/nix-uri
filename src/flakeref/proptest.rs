@@ -4,7 +4,7 @@
 //! forge or indirect reference needs them, URLs in the form Nix stores them, and only the
 //! attributes each type takes.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 
 use proptest::prelude::*;
 
@@ -170,18 +170,25 @@ fn url_strategy(schemes: &'static [&'static str]) -> impl Strategy<Value = Strin
     )
         .prop_map(|(scheme, user, host, port, segments, query)| {
             let local = scheme == "file";
-            let mut path = vec![String::new()];
-            path.extend(segments);
+            let mut path = vec![Cow::Borrowed("")];
+            path.extend(segments.into_iter().map(Cow::Owned));
             let url = Url {
-                scheme: scheme.to_string(),
+                scheme,
                 authority: Some(Authority {
-                    user: if local { None } else { user },
+                    user: if local { None } else { user.map(Cow::Owned) },
                     password: None,
-                    host: Host::Name(if local { String::new() } else { host }),
+                    host: Host::Name(if local {
+                        Cow::Borrowed("")
+                    } else {
+                        host.into()
+                    }),
                     port: if local { None } else { port },
                 }),
                 path,
-                query: query.into_iter().collect::<BTreeMap<_, _>>(),
+                query: query
+                    .into_iter()
+                    .map(|(key, value)| (Cow::Owned(key), Cow::Owned(value)))
+                    .collect(),
             };
             // Rendering is not yet the normal form (`file://` stores as `file:///`), parsing the rendering is.
             Url::parse(&url.to_string()).unwrap().to_string()

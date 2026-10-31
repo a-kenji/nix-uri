@@ -37,10 +37,10 @@ impl Download {
     }
 
     /// `revCount` and `lastModified` that are not integers are dropped.
-    pub(crate) fn from_url(mut url: Url) -> Self {
+    pub(crate) fn from_url(mut url: Url<'_>) -> Self {
         let mut download = Self::new(String::new());
-        download.nar_hash = url.query.get("narHash").cloned();
-        download.rev = url.query.get("rev").cloned();
+        download.nar_hash = url.query.get("narHash").map(ToString::to_string);
+        download.rev = url.query.get("rev").map(ToString::to_string);
         download.rev_count = url.query.get("revCount").and_then(|n| n.parse().ok());
         download.last_modified = url.query.get("lastModified").and_then(|n| n.parse().ok());
         for key in [
