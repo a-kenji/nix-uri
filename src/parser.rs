@@ -400,7 +400,7 @@ mod ref_name_validation {
     //! string into a kind's typed `ref_` slot; these tests pin the
     //! user-visible behaviour of the rejection paths.
     use crate::{Context, FlakeRef, NixUriError};
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     #[test]
     fn query_ref_rejects_whitespace() {
@@ -460,8 +460,8 @@ mod host_name_validation {
     //! param-routing site; values outside it surface here as
     //! `InvalidValue`.
     use crate::{FlakeRef, NixUriError};
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     #[rstest]
     #[case("github:o/r?host=bad!host")]
@@ -494,7 +494,7 @@ mod rev_validation {
     //! validation. It must be a SHA-1 hash, and anything else
     //! surfaces as `InvalidValue { field: "rev", .. }`.
     use crate::{FlakeRef, NixUriError};
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     #[test]
     fn rev_query_40_hex_accepted() {
@@ -571,8 +571,8 @@ mod scp_style {
     //! rejects them, and a flake input reads them as relative paths, like
     //! any other string that is not a URL.
     use crate::{Context, FlakeRef, FlakeRefType, NixUriError, UnsupportedReason};
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     #[rstest]
     #[case("git@github.com:nixos/nixpkgs")]
@@ -629,8 +629,8 @@ mod arbitrary_query_keys {
     //! [`crate::LocationParameters`]'s arbitrary bag. Git forges and
     //! `path:` only take the keys their fetcher knows.
     use crate::{Context, FlakeRef, NixUriError, UnsupportedReason};
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     fn assert_value_preserved(input: &str, key: &str, value: &str) {
         let parsed = FlakeRef::parse(input, Context::Standalone)

@@ -56,8 +56,8 @@ impl Display for GitForgePlatform {
 mod owner_repo {
     //! Git-forge owners and repos are not validated beyond URL syntax, and
     //! each segment is percent-decoded after splitting on `/`.
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     use crate::{Context, FlakeRef, FlakeRefType, GitForge, NixUriError, UnsupportedReason};
 
@@ -153,9 +153,7 @@ mod owner_repo {
     fn missing_repo() {
         assert_matches!(
             FlakeRef::parse("github:owner", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) => {
-                assert_eq!(parameter, "repo");
-            }
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "repo"
         );
     }
 

@@ -75,7 +75,7 @@ impl Display for ResourceType {
 
 #[cfg(test)]
 mod res_url {
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     #[test]
     fn unknown_resource_scheme_routes_to_uri_type_unsupported() {
@@ -83,8 +83,7 @@ mod res_url {
 
         assert_matches!(
             crate::FlakeRef::parse("gat://x", crate::Context::default()),
-            Err(NixUriError::Unsupported(UnsupportedReason::UriType { ty }))
-                => assert_eq!(ty, "gat")
+            Err(NixUriError::Unsupported(UnsupportedReason::UriType { ty })) if ty == "gat"
         );
     }
 }

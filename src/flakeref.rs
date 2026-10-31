@@ -706,8 +706,8 @@ impl std::str::FromStr for FlakeRef {
 #[cfg(test)]
 mod tests {
 
-    use cool_asserts::assert_matches;
     use resource_url::{ResourceType, ResourceUrl};
+    use std::assert_matches;
 
     use super::*;
 
@@ -1438,8 +1438,7 @@ mod tests {
         );
         assert_matches!(
             FlakeRef::parse("git+foo://h/r", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::TransportLayer { ty }))
-                => assert_eq!("foo", ty)
+            Err(NixUriError::Unsupported(UnsupportedReason::TransportLayer { ty })) if "foo" == ty
         );
     }
 
@@ -1447,8 +1446,7 @@ mod tests {
     fn parse_github_missing_parameter_public_surface() {
         assert_matches!(
             FlakeRef::parse("github:", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. }))
-                => assert_eq!(parameter, "owner")
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "owner"
         );
     }
 
@@ -1456,8 +1454,7 @@ mod tests {
     fn parse_github_missing_parameter_repo_public_surface() {
         assert_matches!(
             FlakeRef::parse("github:nixos/", Context::Standalone),
-            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. }))
-                => assert_eq!(parameter, "repo")
+            Err(NixUriError::Unsupported(UnsupportedReason::MissingParameter { parameter, .. })) if parameter == "repo"
         );
     }
 
@@ -1498,7 +1495,7 @@ mod tests {
         let uri = "";
         assert_matches!(
             uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri) => assert_eq!("", uri)
+            NixUriError::InvalidUrl(uri) if uri.is_empty()
         );
     }
 
@@ -1507,7 +1504,7 @@ mod tests {
         let uri = "  ";
         assert_matches!(
             uri.parse::<FlakeRef>().unwrap_err(),
-            NixUriError::InvalidUrl(uri_match) => assert_eq!(uri, uri_match)
+            NixUriError::InvalidUrl(uri_match) if uri_match == uri
         );
     }
 
@@ -2044,7 +2041,7 @@ mod resource_prefix_strip {
     //! This matches Nix's canonical output for the curl-based fetcher,
     //! so a Display string handed to Nix's parser stays string-equal to
     //! what Nix would emit itself.
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     use super::*;
     use crate::{ResourceType, TransportLayer, flakeref::resource_url::ResourceUrl};
@@ -2470,8 +2467,8 @@ mod ref_rev_validation {
     //!   query side was the unguarded ingestion path.
     use super::*;
     use crate::error::NixUriError;
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     const HEX40: &str = "b2df4e4e80e04cbb33a350f87717f4bd6140d298";
 
@@ -2603,8 +2600,8 @@ mod path_authority_and_rev {
     //!   form `path:/nix/store/...?rev=...` round-trip cleanly.
     use super::*;
     use crate::error::{NixUriError, UnsupportedReason};
-    use cool_asserts::assert_matches;
     use rstest::rstest;
+    use std::assert_matches;
 
     const HEX40: &str = "b2df4e4e80e04cbb33a350f87717f4bd6140d298";
 

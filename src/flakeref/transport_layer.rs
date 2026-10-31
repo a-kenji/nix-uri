@@ -50,7 +50,7 @@ impl Display for TransportLayer {
 
 #[cfg(test)]
 mod inc_parse {
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     use super::*;
 
@@ -59,15 +59,14 @@ mod inc_parse {
         let err = TransportLayer::try_from("://").unwrap_err();
         assert_matches!(
             err,
-            NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty })
-                => assert_eq!(ty, "://")
+            NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty }) if ty == "://"
         );
     }
 }
 
 #[cfg(test)]
 mod err_msg {
-    use cool_asserts::assert_matches;
+    use std::assert_matches;
 
     use super::*;
 
@@ -79,8 +78,7 @@ mod err_msg {
         let err = TransportLayer::try_from("").unwrap_err();
         assert_matches!(
             err,
-            NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty })
-                => assert_eq!(ty, "")
+            NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty }) if ty.is_empty()
         );
     }
 
@@ -88,8 +86,7 @@ mod err_msg {
     fn unknown_transport_after_plus_routes_to_transport_layer_unsupported() {
         assert_matches!(
             crate::FlakeRef::parse("git+fizzbuzz://x", crate::Context::default()),
-            Err(NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty }))
-                => assert_eq!(ty, "fizzbuzz")
+            Err(NixUriError::Unsupported(crate::error::UnsupportedReason::TransportLayer { ty })) if ty == "fizzbuzz"
         );
     }
 }
