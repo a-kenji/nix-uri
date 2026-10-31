@@ -6,7 +6,8 @@ use crate::{
     flakeref::{
         RenderUrl,
         attrs::{AttrReader, Attrs},
-        validators::{render_nar_hash, rev_to_base16, validated_ref_name},
+        hash::{render_nar_hash, rev_to_base16},
+        validators::validated_ref_name,
     },
 };
 

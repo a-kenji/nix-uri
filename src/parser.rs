@@ -5,11 +5,11 @@ use crate::{
     error::{NixUriError, NixUriResult, UnsupportedReason},
     flakeref::{
         DOWNLOAD_TRANSPORTS, Download, FlakeRef, FlakeRefType, GitForge, GitForgePlatform, GitRepo,
-        HG_TRANSPORTS, Indirect, MercurialRepo, PathRef, encoding, is_flake_id, nul_in_path,
+        HG_TRANSPORTS, Indirect, MercurialRepo, PathRef, encoding,
+        hash::is_sha1_hash,
+        is_flake_id, nul_in_path,
         url::{Authority, Url, parse_query, scheme_of, split_scheme},
-        validators::{
-            is_sha1_hash, is_sha1_hex, matches_ref_shape, validated_host_name, validated_ref_name,
-        },
+        validators::{is_sha1_hex, matches_ref_shape, validated_host_name, validated_ref_name},
     },
 };
 
