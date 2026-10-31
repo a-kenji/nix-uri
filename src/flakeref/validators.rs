@@ -258,39 +258,30 @@ fn is_all_caps_name(s: &str) -> bool {
             && !s.ends_with('_'))
 }
 
-/// Diagnostic text shared by every parser site that funnels a ref-name
-/// rejection through [`NixUriError::InvalidValue`].
-pub(crate) const REF_NAME_REJECTION: &str =
-    "expected a Git branch or tag name (see `git check-ref-format`)";
-
 /// Validate a ref name with [`is_legal_ref_name`]. Returns the value owned
 /// on success so the caller can hand it directly into a typed slot.
 pub(crate) fn validated_ref_name(value: &str) -> Result<String, NixUriError> {
     if !is_legal_ref_name(value) {
         return Err(NixUriError::InvalidValue {
             field: "ref",
-            reason: REF_NAME_REJECTION.to_string(),
+            reason: "expected a Git branch or tag name (see `git check-ref-format`)".to_string(),
         });
     }
     Ok(value.to_string())
 }
 
 /// Returns `true` if `s` is a valid git-forge `?host=` value.
-pub(crate) fn validate_host_name(s: &str) -> bool {
+pub(crate) fn is_valid_host_name(s: &str) -> bool {
     s.bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
 }
 
-/// Diagnostic text shared by the routing site that funnels a `?host=`
-/// rejection through [`NixUriError::InvalidValue`].
-pub(crate) const HOST_NAME_REJECTION: &str = "expected a forge host (alphanumeric, '.', '-')";
-
 /// Validate a `?host=` candidate. Returns the value owned on success.
 pub(crate) fn validated_host_name(value: &str) -> Result<String, NixUriError> {
-    if !validate_host_name(value) {
+    if !is_valid_host_name(value) {
         return Err(NixUriError::InvalidValue {
             field: "host",
-            reason: HOST_NAME_REJECTION.to_string(),
+            reason: "expected a forge host (alphanumeric, '.', '-')".to_string(),
         });
     }
     Ok(value.to_string())
