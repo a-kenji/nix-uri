@@ -416,6 +416,132 @@ pub(super) const ACCEPTED: &[(&str, &str, &str)] = &[
         "git+foo://h/r",
     ),
     (
+        "git+:hs//x@h",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2B/hs//x@h\"}",
+        "git+ssh://git%2B/hs//x@h",
+    ),
+    (
+        "git+:x",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2B/x\"}",
+        "git+ssh://git%2B/x",
+    ),
+    (
+        "git+a+b:x",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Ba%2Bb/x\"}",
+        "git+ssh://git%2Ba%2Bb/x",
+    ),
+    (
+        "git+file:x",
+        "{\"type\":\"git\",\"url\":\"file:x\"}",
+        "git+file:x",
+    ),
+    (
+        "git+foo:%20",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/%2520\"}",
+        "git+ssh://git%2Bfoo/%2520",
+    ),
+    (
+        "git+foo:/",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/\"}",
+        "git+ssh://git%2Bfoo/",
+    ),
+    (
+        "git+foo:/abs",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/abs\"}",
+        "git+ssh://git%2Bfoo/abs",
+    ),
+    (
+        "git+foo:o/r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/o/r\"}",
+        "git+ssh://git%2Bfoo/o/r",
+    ),
+    (
+        "git+foo:o/r://x",
+        "{\"type\":\"git\",\"url\":\"foo:o/r://x\"}",
+        "git+foo:o/r://x",
+    ),
+    (
+        "git+foo:o/r?ref=main&x=1&shallow=1",
+        "{\"ref\":\"main\",\"shallow\":true,\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/o/r%3Fx%3D1\"}",
+        "git+ssh://git%2Bfoo/o/r%3Fx%3D1?ref=main&shallow=1",
+    ),
+    (
+        "git+foo:o/r?x=1",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/o/r%3Fx%3D1\"}",
+        "git+ssh://git%2Bfoo/o/r%3Fx%3D1",
+    ),
+    (
+        "git+foo:x?a=@[::1]:y",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/x%3Fa%3D@%255B::1%255D:y\"}",
+        "git+ssh://git%2Bfoo/x%3Fa%3D@%255B::1%255D:y",
+    ),
+    (
+        "git+foo:~u/r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bfoo/~u/r\"}",
+        "git+ssh://git%2Bfoo/~u/r",
+    ),
+    (
+        "git+ftp:x",
+        "{\"type\":\"git\",\"url\":\"ftp:x\"}",
+        "git+ftp:x",
+    ),
+    (
+        "git+ftps:x",
+        "{\"type\":\"git\",\"url\":\"ftps:x\"}",
+        "git+ftps:x",
+    ),
+    (
+        "git+git+https:x",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgit%2Bhttps/x\"}",
+        "git+ssh://git%2Bgit%2Bhttps/x",
+    ),
+    ("git+git:x", "{\"type\":\"git\",\"url\":\"git:x\"}", "git:x"),
+    (
+        "git+github:22/o/r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgithub/22/o/r\"}",
+        "git+ssh://git%2Bgithub/22/o/r",
+    ),
+    (
+        "git+github:o/r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgithub/o/r\"}",
+        "git+ssh://git%2Bgithub/o/r",
+    ),
+    (
+        "git+github:o/r//x",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgithub/o/r//x\"}",
+        "git+ssh://git%2Bgithub/o/r//x",
+    ),
+    (
+        "git+github:o:r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgithub/o:r\"}",
+        "git+ssh://git%2Bgithub/o:r",
+    ),
+    (
+        "git+github:o@r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2Bgithub/o@r\"}",
+        "git+ssh://git%2Bgithub/o@r",
+    ),
+    (
+        "git+HTTPS:o/r",
+        "{\"type\":\"git\",\"url\":\"ssh://git%2BHTTPS/o/r\"}",
+        "git+ssh://git%2BHTTPS/o/r",
+    ),
+    (
+        "git+http:o/r",
+        "{\"type\":\"git\",\"url\":\"http:o/r\"}",
+        "git+http:o/r",
+    ),
+    (
+        "git+https:o/r",
+        "{\"type\":\"git\",\"url\":\"https:o/r\"}",
+        "git+https:o/r",
+    ),
+    (
+        "git+ssh:o/r",
+        "{\"type\":\"git\",\"url\":\"ssh:o/r\"}",
+        "git+ssh:o/r",
+    ),
+    (
         "git://github.com/user/repo.git",
         "{\"type\":\"git\",\"url\":\"git://github.com/user/repo.git\"}",
         "git://github.com/user/repo.git",
@@ -2372,6 +2498,24 @@ pub(super) const RELATIVE_PATH_FALLBACK: &[(&str, Rejected, &str, &str)] = &[
         "path:/?narHash=sha256-x",
     ),
     (
+        "git+:",
+        Rejected::Malformed,
+        "{\"path\":\"git+:\",\"type\":\"path\"}",
+        "path:git%2B:",
+    ),
+    (
+        "git+foo:",
+        Rejected::Malformed,
+        "{\"path\":\"git+foo:\",\"type\":\"path\"}",
+        "path:git%2Bfoo:",
+    ),
+    (
+        "git+github:",
+        Rejected::Malformed,
+        "{\"path\":\"git+github:\",\"type\":\"path\"}",
+        "path:git%2Bgithub:",
+    ),
+    (
         "../",
         Rejected::RelativePath,
         "{\"path\":\"../\",\"type\":\"path\"}",
@@ -3161,6 +3305,11 @@ pub(super) const RELATIVE_PATH_FALLBACK: &[(&str, Rejected, &str, &str)] = &[
 
 /// Rejected in both contexts: (input, standalone, flake input).
 pub(super) const REJECTED: &[(&str, Rejected, Rejected)] = &[
+    (
+        "git+foo:?ref=main",
+        Rejected::Malformed,
+        Rejected::Malformed,
+    ),
     (
         "a/b/c/d",
         Rejected::TooManySegments,
