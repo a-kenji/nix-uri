@@ -122,9 +122,8 @@ fn rejected_in_both_contexts() {
     }
 }
 
-/// Nix reads an empty, blank or control-character input as a relative path.
+/// Nix reads a blank or control-character input as a relative path.
 #[rstest]
-#[case("")]
 #[case(" ")]
 #[case("\t")]
 #[case("\u{1}")]
@@ -2330,6 +2329,48 @@ pub(super) const ACCEPTED_NIX_CANNOT_RENDER: &[(&str, &str, &str, &str)] = &[
 /// Rejected standalone, a relative path in a flake input: (input, standalone rejection,
 /// attributes, `Display`).
 pub(super) const RELATIVE_PATH_FALLBACK: &[(&str, Rejected, &str, &str)] = &[
+    (
+        "",
+        Rejected::RelativePath,
+        "{\"path\":\"/\",\"type\":\"path\"}",
+        "path:/",
+    ),
+    (
+        "#",
+        Rejected::RelativePath,
+        "{\"path\":\"/\",\"type\":\"path\"}",
+        "path:/",
+    ),
+    (
+        "?",
+        Rejected::RelativePath,
+        "{\"path\":\"/\",\"type\":\"path\"}",
+        "path:/",
+    ),
+    (
+        "?#",
+        Rejected::RelativePath,
+        "{\"path\":\"/\",\"type\":\"path\"}",
+        "path:/",
+    ),
+    (
+        "?&",
+        Rejected::RelativePath,
+        "{\"path\":\"/\",\"type\":\"path\"}",
+        "path:/",
+    ),
+    (
+        "?dir=x",
+        Rejected::RelativePath,
+        "{\"dir\":\"x\",\"path\":\"/\",\"type\":\"path\"}",
+        "path:/?dir=x",
+    ),
+    (
+        "?narHash=sha256-x",
+        Rejected::RelativePath,
+        "{\"narHash\":\"sha256-x\",\"path\":\"/\",\"type\":\"path\"}",
+        "path:/?narHash=sha256-x",
+    ),
     (
         "../",
         Rejected::RelativePath,
