@@ -42,6 +42,7 @@ let
   cargoDeny = craneLib.cargoDeny (commonArgs // { inherit cargoArtifacts; });
   cargoTarpaulin = craneLib.cargoTarpaulin (commonArgs // { inherit cargoArtifacts; });
   cargoDoc = craneLib.cargoDoc (commonArgs // { inherit cargoArtifacts; });
+  cargoDocTest = craneLib.cargoDocTest (commonArgs // { inherit cargoArtifacts; });
   cargoTest = craneLib.cargoNextest (commonArgs // { inherit cargoArtifacts; });
   craneLibNightly = (self.inputs.crane.mkLib pkgs).overrideToolchain rust.rustLatestNightlyToolchain;
   fuzzArgs = commonArgs // rec {
@@ -82,6 +83,7 @@ in
     cargoDeny
     cargoTarpaulin
     cargoDoc
+    cargoDocTest
     cargoTest
     ;
 }
