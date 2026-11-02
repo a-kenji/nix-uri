@@ -11,6 +11,7 @@
           cargoArtifacts
           cargoClippy
           cargoDoc
+          cargoDocTest
           cargoTest
           cargoTarpaulin
           ;
